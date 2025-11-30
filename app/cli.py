@@ -196,6 +196,15 @@ Examples:
         output.error(f"Failed to start MCP servers: {exc}")
         sys.exit(1)
 
+    # Create log callback for verbose mode
+    def log_callback(level: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
+        if level == "error":
+            output.error(message)
+        elif level == "tool":
+            output.debug(message, data)
+        else:
+            output.debug(message, data)
+
     # Initialize planner
     from app.agent import AgenticPlanner
 
@@ -206,6 +215,8 @@ Examples:
         max_iterations=settings.agentic_max_iterations,
         max_tool_calls=settings.agentic_max_tool_calls,
         timeout_seconds=settings.agentic_timeout_seconds,
+        verbose=args.verbose,
+        log_callback=log_callback if args.verbose else None,
     )
 
     try:

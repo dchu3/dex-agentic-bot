@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import google.generativeai as genai
 
@@ -74,6 +75,9 @@ For token/pool lists, ALWAYS use Markdown tables:
 5. Be concise but informative
 """
 
+# Type alias for log callback
+LogCallback = Callable[[str, str, Optional[Dict[str, Any]]], None]
+
 
 class AgenticPlanner:
     """Gemini-based agentic planner with native function calling."""
@@ -86,12 +90,16 @@ class AgenticPlanner:
         max_iterations: int = 8,
         max_tool_calls: int = 30,
         timeout_seconds: int = 90,
+        verbose: bool = False,
+        log_callback: Optional[LogCallback] = None,
     ) -> None:
         self.mcp_manager = mcp_manager
         self.model_name = model_name
         self.max_iterations = max_iterations
         self.max_tool_calls = max_tool_calls
         self.timeout_seconds = timeout_seconds
+        self.verbose = verbose
+        self.log_callback = log_callback
 
         genai.configure(api_key=api_key)
 
@@ -105,12 +113,20 @@ class AgenticPlanner:
             system_instruction=AGENTIC_SYSTEM_PROMPT,
         )
 
+    def _log(self, level: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
+        """Log a message if verbose mode is enabled."""
+        if self.verbose and self.log_callback:
+            self.log_callback(level, message, data)
+
     async def run(
         self, message: str, context: Optional[Dict[str, Any]] = None
     ) -> PlannerResult:
         """Execute a query using the agentic loop."""
         context = context or {}
         agentic_ctx = AgenticContext()
+
+        self._log("info", f"Starting query: {message}")
+        self._log("debug", f"Model: {self.model_name}, Tools: {len(self.gemini_tools)}")
 
         # Build conversation history
         history = context.get("conversation_history", [])
@@ -124,6 +140,7 @@ class AgenticPlanner:
         except asyncio.TimeoutError:
             return self._build_timeout_result(agentic_ctx)
         except Exception as e:
+            self._log("error", f"Query failed: {str(e)}")
             return PlannerResult(message=f"Error: {str(e)}")
 
     async def _agentic_loop(
@@ -137,16 +154,22 @@ class AgenticPlanner:
 
         while ctx.iteration < self.max_iterations:
             ctx.iteration += 1
+            self._log("info", f"Iteration {ctx.iteration}/{self.max_iterations}")
 
             # Check if model wants to call tools
             function_calls = self._extract_function_calls(response)
 
             if not function_calls:
                 # No more tool calls - return final response
+                self._log("info", f"Complete. Total tool calls: {ctx.total_tool_calls}")
                 return PlannerResult(
                     message=self._extract_text(response),
                     tokens=ctx.tokens_found,
                 )
+
+            self._log("info", f"Tool calls requested: {len(function_calls)}")
+            for fc in function_calls:
+                self._log("tool", f"→ {fc['name']}", {"args": fc["args"]})
 
             # Check tool call limits
             if ctx.total_tool_calls + len(function_calls) > self.max_tool_calls:
@@ -237,13 +260,31 @@ class AgenticPlanner:
             result = await client.call_tool(method, args)
             tool_call.result = result
 
+            # Log success
+            result_preview = self._preview_result(result)
+            self._log("tool", f"✓ {name}", {"result_preview": result_preview})
+
             # Extract tokens for context
             self._extract_tokens(result, ctx)
 
             return result
         except Exception as e:
             tool_call.error = str(e)
+            self._log("error", f"✗ {name}: {str(e)}")
             raise
+
+    def _preview_result(self, result: Any) -> str:
+        """Create a short preview of a result for logging."""
+        if isinstance(result, dict):
+            if "pairs" in result:
+                return f"{len(result['pairs'])} pairs"
+            if "pools" in result:
+                return f"{len(result['pools'])} pools"
+            keys = list(result.keys())[:3]
+            return f"dict with keys: {keys}"
+        if isinstance(result, list):
+            return f"list with {len(result)} items"
+        return str(result)[:50]
 
     def _extract_tokens(self, result: Any, ctx: AgenticContext) -> None:
         """Extract token info from results for context tracking."""

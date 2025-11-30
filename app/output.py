@@ -195,6 +195,28 @@ class CLIOutput:
         else:
             print(f"ℹ️  {message}", file=self.stream)
 
+    def debug(self, message: str, data: Optional[Dict[str, Any]] = None) -> None:
+        """Output a debug message (only in verbose mode)."""
+        if not self.verbose:
+            return
+        if self.format == OutputFormat.JSON:
+            output = {"debug": message}
+            if data:
+                output["data"] = data
+            print(json.dumps(output), file=sys.stderr)
+            return
+        if self._console:
+            self._console.print(f"[dim]🔍 {message}[/dim]")
+            if data:
+                # Pretty print data
+                data_str = json.dumps(data, indent=2, default=str)
+                if len(data_str) < 200:
+                    self._console.print(f"[dim]   {data_str}[/dim]")
+        else:
+            print(f"🔍 {message}", file=sys.stderr)
+            if data:
+                print(f"   {data}", file=sys.stderr)
+
     def warning(self, message: str) -> None:
         """Output a warning message."""
         if self.format == OutputFormat.JSON:
