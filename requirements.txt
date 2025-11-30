@@ -1,0 +1,10 @@
+# Core
+google-generativeai>=0.8.5
+python-dotenv>=1.0.1
+pydantic>=2.8.2
+pydantic-settings>=2.4.0
+rich>=13.0.0
+
+# Dev
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
