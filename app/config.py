@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     )
 
     mcp_dexscreener_cmd: str = Field(
-        default="npx @mcp-dexscreener/server",
+        default="node /home/derekchudley/mcp-servers/mcp-dexscreener/index.js",
         alias="MCP_DEXSCREENER_CMD",
     )
     mcp_dexpaprika_cmd: str = Field(
