@@ -2,6 +2,12 @@
 
 A blockchain-agnostic CLI tool for querying token and pool information across DEXs. Powered by Gemini AI and MCP servers for DexScreener and DexPaprika.
 
+## Prerequisites
+
+- **Python 3.10+**
+- **Node.js 18+** (for MCP servers)
+- **npm** (comes with Node.js)
+
 ## Features
 
 - 🤖 **Agentic Mode** - Gemini AI decides which tools to call based on your query
@@ -110,6 +116,77 @@ pytest
 
 # Run the CLI directly
 python -m app "your query"
+```
+
+## MCP Server: DexScreener
+
+This project uses the DexScreener MCP server for querying DEX data.
+
+**GitHub Repository:** [https://github.com/janswist/mcp-dexscreener](https://github.com/janswist/mcp-dexscreener)
+
+### Installing DexScreener MCP Locally
+
+```bash
+# Clone the repository
+git clone https://github.com/janswist/mcp-dexscreener.git
+cd mcp-dexscreener
+
+# Install dependencies
+npm install
+
+# Run the server (STDIO mode)
+npm start
+
+# Or run SSE mode for remote hosting
+node index-sse.js
+```
+
+### Available DexScreener Tools
+
+| Tool | Description | Rate Limit |
+|------|-------------|------------|
+| `getLatestTokenProfiles` | Get the latest token profiles | 60/min |
+| `getLatestBoostedTokens` | Get the latest boosted tokens | 60/min |
+| `getMostActiveBoostedTokens` | Get tokens with most active boosts | 60/min |
+| `checkTokenOrders` | Check orders paid for a token | 60/min |
+| `getPairByChainAndAddress` | Get pairs by chain and pair address | 300/min |
+| `searchPairs` | Search for pairs matching a query | 300/min |
+| `getTokenPools` | Get pools for a given token address | 300/min |
+| `getPairsByToken` | Get pairs by token address | 300/min |
+
+### Configuring for Claude Desktop
+
+Add to your `claude_desktop_config.json`:
+
+**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Windows:** `%AppData%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "dexscreener": {
+      "command": "node",
+      "args": ["/path/to/mcp-dexscreener/index.js"]
+    }
+  }
+}
+```
+
+### Configuring for VS Code / Cursor
+
+Add to your MCP settings:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "dexscreener": {
+        "command": "node",
+        "args": ["/path/to/mcp-dexscreener/index.js"]
+      }
+    }
+  }
+}
 ```
 
 ## License
