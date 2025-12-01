@@ -142,7 +142,11 @@ class CLIOutput:
 
         table = Table(show_header=True, header_style="bold cyan")
         for header in headers:
-            table.add_column(header)
+            # Detect link columns and prevent truncation
+            if any(kw in header.lower() for kw in ["link", "dexscreener", "url", "address"]):
+                table.add_column(header, no_wrap=True, overflow="fold")
+            else:
+                table.add_column(header)
 
         # Parse data rows (skip separator line)
         for line in lines[2:]:
