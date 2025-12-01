@@ -67,6 +67,14 @@ For token/pool lists, ALWAYS use Markdown tables:
 |-------|-------|------------|--------|-----------|
 | PEPE/WETH | $0.00001234 | +15.2% | $1.2M | $500K |
 
+For boosted/trending tokens, use this format:
+
+| Token | Contract Address | Chain | DexScreener |
+|-------|------------------|-------|-------------|
+| BILLY | 5xyzFullAddress123 | solana | [View](https://dexscreener.com/solana/5xyzFullAddress123) |
+
+Do NOT include long descriptions - keep rows concise and show full contract addresses.
+
 ## Guidelines
 1. Call tools to get real data - don't make up prices or stats
 2. Format numbers nicely (use K, M, B suffixes)
