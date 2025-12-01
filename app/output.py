@@ -163,15 +163,13 @@ class CLIOutput:
 
         table = Table(title="Discovered Tokens")
         table.add_column("Symbol", style="cyan")
-        table.add_column("Address", style="dim")
+        table.add_column("Address", style="dim", no_wrap=True)
         table.add_column("Chain", style="magenta")
 
         for token in tokens[:10]:
-            addr = token.get("address", "?")
-            addr_display = addr[:16] + "..." if len(addr) > 16 else addr
             table.add_row(
                 token.get("symbol", "?"),
-                addr_display,
+                token.get("address", "?"),
                 token.get("chainId", "?"),
             )
 
