@@ -1,6 +1,6 @@
 # DEX Agentic Bot
 
-A blockchain-agnostic CLI tool for querying token and pool information across DEXs. Powered by Gemini AI and MCP servers for DexScreener and DexPaprika.
+A blockchain-agnostic CLI tool for querying token and pool information across DEXs. Powered by Gemini AI and MCP servers for DexScreener, DexPaprika, and Honeypot detection.
 
 ## Prerequisites
 
@@ -12,6 +12,7 @@ A blockchain-agnostic CLI tool for querying token and pool information across DE
 
 - 🤖 **Agentic Mode** - Gemini AI decides which tools to call based on your query
 - 🔗 **Blockchain Agnostic** - Works with Ethereum, Base, Solana, Arbitrum, and more
+- 🛡️ **Honeypot Detection** - Automatic safety checks for tokens on Ethereum, BSC, and Base
 - 📊 **Table Output** - Results displayed in clean, formatted tables
 - 💬 **Interactive Mode** - REPL with conversation memory
 
@@ -34,6 +35,7 @@ GEMINI_MODEL=gemini-2.5-flash
 # MCP Server commands
 MCP_DEXSCREENER_CMD=npx @mcp-dexscreener/server
 MCP_DEXPAPRIKA_CMD=npx dexpaprika-mcp
+MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 ```
 
 ### Usage
@@ -58,6 +60,7 @@ MCP_DEXPAPRIKA_CMD=npx dexpaprika-mcp
 | `top pools on base` | Top pools by volume on Base |
 | `new pools on ethereum` | Recently created pools |
 | `token info for 0x...` | Get info for specific token |
+| `is 0x... a honeypot on base` | Check token safety (Ethereum/BSC/Base only) |
 
 ## CLI Options
 
@@ -93,16 +96,16 @@ MCP_DEXPAPRIKA_CMD=npx dexpaprika-mcp
 │  - Table-formatted responses                                │
 └─────────────────────────┬───────────────────────────────────┘
                           │
-          ┌───────────────┴───────────────┐
-          ▼                               ▼
-┌─────────────────┐             ┌─────────────────┐
-│   DexScreener   │             │   DexPaprika    │
-│     (MCP)       │             │     (MCP)       │
-├─────────────────┤             ├─────────────────┤
-│ • searchPairs   │             │ • getNetworkPools│
-│ • getTrending   │             │ • getPoolDetails │
-│ • getTokenInfo  │             │ • getNetworks    │
-└─────────────────┘             └─────────────────┘
+        ┌─────────────────┼─────────────────┐
+        ▼                 ▼                 ▼
+┌───────────────┐ ┌───────────────┐ ┌───────────────┐
+│  DexScreener  │ │  DexPaprika   │ │   Honeypot    │
+│    (MCP)      │ │    (MCP)      │ │    (MCP)      │
+├───────────────┤ ├───────────────┤ ├───────────────┤
+│ • searchPairs │ │ • getPools    │ │ • check_      │
+│ • getTrending │ │ • getDetails  │ │   honeypot    │
+│ • getTokenInfo│ │ • getNetworks │ │               │
+└───────────────┘ └───────────────┘ └───────────────┘
 ```
 
 ## Development
@@ -188,6 +191,59 @@ Add to your MCP settings:
   }
 }
 ```
+
+## MCP Server: Honeypot Detection
+
+This project uses a honeypot detection MCP server to check token safety using the [honeypot.is](https://honeypot.is) API.
+
+### Supported Chains
+
+| Chain | Status |
+|-------|--------|
+| Ethereum | ✅ Supported |
+| BSC | ✅ Supported |
+| Base | ✅ Supported |
+| Solana | ❌ Not supported (marked as Unverified) |
+| Other chains | ❌ Not supported (marked as Unverified) |
+
+### Safety Status Meanings
+
+| Status | Meaning |
+|--------|---------|
+| ✅ Safe | Honeypot check passed - low risk, not a honeypot |
+| ⚠️ Risky | Honeypot check shows concerns - high taxes or medium/high risk |
+| ❌ Honeypot | Confirmed honeypot - avoid trading |
+| Unverified | Chain not supported or check failed |
+
+### Installing Honeypot MCP
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/dex-honeypot-mcp.git
+cd dex-honeypot-mcp
+
+# Install dependencies
+npm install
+
+# Build
+npm run build
+```
+
+### Configuration
+
+Add to your `.env`:
+
+```env
+MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
+```
+
+Optional: Set `HONEYPOT_API_KEY` environment variable for higher rate limits (see [honeypot.is docs](https://docs.honeypot.is)).
+
+### Available Tool
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `check_honeypot` | Check if a token is a honeypot | `address` (required), `chain` (optional: ethereum/bsc/base) |
 
 ## License
 
