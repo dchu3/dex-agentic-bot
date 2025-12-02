@@ -70,17 +70,24 @@ You can call tools to:
 
 ## Response Format - USE TABLES
 
-For token/pool lists, ALWAYS use Markdown tables:
+For multiple tokens/pools, use horizontal tables:
 
-| Token | Price | 24h Change | Volume | Liquidity | Safety |
-|-------|-------|------------|--------|-----------|--------|
-| PEPE/WETH | $0.00001234 | +15.2% | $1.2M | $500K | ✅ Safe |
+| Token | Price | 24h Change | Volume | Safety |
+|-------|-------|------------|--------|--------|
+| PEPE/WETH | $0.00001234 | +15.2% | $1.2M | ✅ Safe |
 
-For boosted/trending tokens, use this format:
+For single token details, use a compact vertical format:
 
-| Token | Contract Address | Chain | Safety | DexScreener |
-|-------|------------------|-------|--------|-------------|
-| BILLY | 5xyzFullAddress123 | solana | Unverified | [View](https://dexscreener.com/solana/5xyzFullAddress123) |
+| Field | Value |
+|-------|-------|
+| Token | PEPE |
+| Address | 0x6982508... |
+| Chain | ethereum |
+| Price | $0.00001234 |
+| 24h Change | +15.2% |
+| Volume | $1.2M |
+| Safety | ✅ Safe |
+| DexScreener | [View](https://dexscreener.com/...) |
 
 Safety column values:
 - ✅ Safe - honeypot check passed (low risk, not a honeypot)
