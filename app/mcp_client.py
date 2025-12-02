@@ -290,33 +290,45 @@ class MCPManager:
         self,
         dexscreener_cmd: str,
         dexpaprika_cmd: str,
+        honeypot_cmd: str = "",
     ) -> None:
         self.dexscreener = MCPClient("dexscreener", dexscreener_cmd)
         self.dexpaprika = MCPClient("dexpaprika", dexpaprika_cmd)
+        self.honeypot = MCPClient("honeypot", honeypot_cmd) if honeypot_cmd else None
 
     async def start(self) -> None:
-        await asyncio.gather(
+        tasks = [
             self.dexscreener.start(),
             self.dexpaprika.start(),
-        )
+        ]
+        if self.honeypot:
+            tasks.append(self.honeypot.start())
+        await asyncio.gather(*tasks)
 
     async def shutdown(self) -> None:
-        await asyncio.gather(
+        tasks = [
             self.dexscreener.stop(),
             self.dexpaprika.stop(),
-        )
+        ]
+        if self.honeypot:
+            tasks.append(self.honeypot.stop())
+        await asyncio.gather(*tasks)
 
     def get_gemini_functions(self) -> List["genai.protos.FunctionDeclaration"]:
         """Get all MCP tools as Gemini function declarations."""
         all_functions: List["genai.protos.FunctionDeclaration"] = []
-        for client in [self.dexscreener, self.dexpaprika]:
+        clients = [self.dexscreener, self.dexpaprika]
+        if self.honeypot:
+            clients.append(self.honeypot)
+        for client in clients:
             all_functions.extend(client.to_gemini_functions())
         return all_functions
 
     def get_client(self, name: str) -> Optional[MCPClient]:
         """Get an MCP client by name."""
-        clients = {
+        clients: Dict[str, Optional[MCPClient]] = {
             "dexscreener": self.dexscreener,
             "dexpaprika": self.dexpaprika,
+            "honeypot": self.honeypot,
         }
         return clients.get(name)

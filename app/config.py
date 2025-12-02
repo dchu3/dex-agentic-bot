@@ -32,6 +32,10 @@ class Settings(BaseSettings):
         default="npx dexpaprika-mcp",
         alias="MCP_DEXPAPRIKA_CMD",
     )
+    mcp_honeypot_cmd: str = Field(
+        default="node /path/to/dex-honeypot-mcp/dist/index.js",
+        alias="MCP_HONEYPOT_CMD",
+    )
 
     agentic_max_iterations: int = Field(
         default=8, alias="AGENTIC_MAX_ITERATIONS", ge=1, le=15

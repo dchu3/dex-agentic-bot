@@ -187,6 +187,7 @@ Examples:
     mcp_manager = MCPManager(
         dexscreener_cmd=settings.mcp_dexscreener_cmd,
         dexpaprika_cmd=settings.mcp_dexpaprika_cmd,
+        honeypot_cmd=settings.mcp_honeypot_cmd,
     )
 
     try:
