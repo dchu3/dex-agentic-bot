@@ -57,11 +57,11 @@ You can call tools to:
 | "check honeypot" | honeypot_check_honeypot | address, chain (ethereum/bsc/base only) |
 
 ## Honeypot Detection
-- Use honeypot_check_honeypot to verify token safety on ethereum, bsc, or base chains
-- ONLY call honeypot checks for tokens on: ethereum, bsc, base
-- For other chains (solana, arbitrum, polygon, etc.): mark as "Unverified" - do NOT call the honeypot tool
+- **IMPORTANT**: When displaying token/pool results on ethereum, bsc, or base chains, AUTOMATICALLY call honeypot_check_honeypot for each unique token address before showing results
+- Call honeypot checks in parallel for efficiency when showing multiple tokens
+- The chain parameter values are: "ethereum", "bsc", "base" (lowercase)
+- For tokens on other chains (solana, arbitrum, polygon, etc.): mark as "Unverified" without calling the tool
 - If the honeypot check returns an error: mark the token as "Unverified" in your response
-- Include honeypot status in token tables when relevant (e.g., when user asks about token safety)
 
 ## Blockchain Agnostic
 - Work with ANY blockchain the user mentions (ethereum, base, solana, arbitrum, etc.)
