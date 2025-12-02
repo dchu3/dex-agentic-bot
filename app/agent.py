@@ -342,7 +342,7 @@ class AgenticPlanner:
                     ctx.tokens_found.append({
                         "address": token["id"],
                         "symbol": token["symbol"],
-                        "chainId": pool.get("network", "unknown"),
+                        "chainId": pool.get("chain") or pool.get("network", "unknown"),
                     })
 
     def _convert_history(
