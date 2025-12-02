@@ -41,6 +41,7 @@ AGENTIC_SYSTEM_PROMPT = """You are a crypto/DeFi assistant that helps users find
 You can call tools to:
 - Search tokens and get prices (dexscreener)
 - Get pool/liquidity data across DEXs (dexpaprika)
+- Check if tokens are honeypots (honeypot) - ONLY for ethereum, bsc, base chains
 
 ## Tool Selection Guide
 
@@ -53,6 +54,14 @@ You can call tools to:
 | "new pools" | dexpaprika_getNetworkPools | orderBy="created_at" |
 | "pool details" | dexpaprika_getPoolDetails | network, poolAddress |
 | "available networks" | dexpaprika_getNetworks | - |
+| "check honeypot" | honeypot_check_honeypot | address, chain (ethereum/bsc/base only) |
+
+## Honeypot Detection
+- **IMPORTANT**: When displaying token/pool results on ethereum, bsc, or base chains, AUTOMATICALLY call honeypot_check_honeypot for each unique token address before showing results
+- Call honeypot checks in parallel for efficiency when showing multiple tokens
+- The chain parameter values are: "ethereum", "bsc", "base" (lowercase)
+- For tokens on other chains (solana, arbitrum, polygon, etc.): mark as "Unverified" without calling the tool
+- If the honeypot check returns an error: mark the token as "Unverified" in your response
 
 ## Blockchain Agnostic
 - Work with ANY blockchain the user mentions (ethereum, base, solana, arbitrum, etc.)
@@ -61,17 +70,30 @@ You can call tools to:
 
 ## Response Format - USE TABLES
 
-For token/pool lists, ALWAYS use Markdown tables:
+For multiple tokens/pools, use horizontal tables:
 
-| Token | Price | 24h Change | Volume | Liquidity |
-|-------|-------|------------|--------|-----------|
-| PEPE/WETH | $0.00001234 | +15.2% | $1.2M | $500K |
+| Token | Price | 24h Change | Volume | Safety |
+|-------|-------|------------|--------|--------|
+| PEPE/WETH | $0.00001234 | +15.2% | $1.2M | ✅ Safe |
 
-For boosted/trending tokens, use this format:
+For single token details, use a compact vertical format:
 
-| Token | Contract Address | Chain | DexScreener |
-|-------|------------------|-------|-------------|
-| BILLY | 5xyzFullAddress123 | solana | [View](https://dexscreener.com/solana/5xyzFullAddress123) |
+| Field | Value |
+|-------|-------|
+| Token | PEPE |
+| Address | 0x6982508... |
+| Chain | ethereum |
+| Price | $0.00001234 |
+| 24h Change | +15.2% |
+| Volume | $1.2M |
+| Safety | ✅ Safe |
+| DexScreener | [View](https://dexscreener.com/...) |
+
+Safety column values:
+- ✅ Safe - honeypot check passed (low risk, not a honeypot)
+- ⚠️ Risky - honeypot check shows concerns (high taxes, medium/high risk)
+- ❌ Honeypot - confirmed honeypot, avoid
+- Unverified - chain not supported or check failed
 
 Do NOT include long descriptions - keep rows concise and show full contract addresses.
 
@@ -81,6 +103,7 @@ Do NOT include long descriptions - keep rows concise and show full contract addr
 3. Include relevant links when available
 4. If a tool fails, explain what happened and suggest alternatives
 5. Be concise but informative
+6. Never let a honeypot check failure block your main response - just mark as Unverified
 """
 
 # Type alias for log callback
@@ -319,7 +342,7 @@ class AgenticPlanner:
                     ctx.tokens_found.append({
                         "address": token["id"],
                         "symbol": token["symbol"],
-                        "chainId": pool.get("network", "unknown"),
+                        "chainId": pool.get("chain") or pool.get("network", "unknown"),
                     })
 
     def _convert_history(
