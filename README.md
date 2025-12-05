@@ -219,7 +219,7 @@ This project uses a honeypot detection MCP server to check token safety using th
 
 ```bash
 # Clone the repository
-git clone https://github.com/ACTUAL_USERNAME_OR_ORG/dex-honeypot-mcp.git
+git clone https://github.com/dchu3/dex-honeypot-mcp.git
 cd dex-honeypot-mcp
 
 # Install dependencies
