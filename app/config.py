@@ -29,7 +29,7 @@ class Settings(BaseSettings):
         alias="MCP_DEXSCREENER_CMD",
     )
     mcp_dexpaprika_cmd: str = Field(
-        default="npx dexpaprika-mcp",
+        default="dexpaprika-mcp",
         alias="MCP_DEXPAPRIKA_CMD",
     )
     mcp_honeypot_cmd: str = Field(

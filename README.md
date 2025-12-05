@@ -34,7 +34,7 @@ GEMINI_MODEL=gemini-2.5-flash
 
 # MCP Server commands
 MCP_DEXSCREENER_CMD=npx @mcp-dexscreener/server
-MCP_DEXPAPRIKA_CMD=npx dexpaprika-mcp
+MCP_DEXPAPRIKA_CMD=dexpaprika-mcp
 MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 ```
 
