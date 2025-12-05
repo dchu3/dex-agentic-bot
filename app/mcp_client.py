@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shlex
+import sys
 import uuid
 from asyncio.subprocess import Process
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
@@ -159,7 +160,9 @@ class MCPClient:
                 line = await process.stderr.readline()
                 if not line:
                     break
-                # Silently ignore stderr for cleaner output
+                text = line.decode("utf-8", errors="replace").rstrip()
+                if text:
+                    print(f"[{self.name} stderr] {text}", file=sys.stderr)
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -201,13 +204,14 @@ class MCPClient:
                     "clientInfo": CLIENT_INFO,
                     "capabilities": {},
                 },
+                timeout=60.0,
             )
 
             # Send initialized notification
             await self._notify("notifications/initialized", {})
 
             # Fetch tools
-            tools_result = await self._request("tools/list", {})
+            tools_result = await self._request("tools/list", {}, timeout=60.0)
             self._tools = tools_result.get("tools", [])
 
             self._initialized = True
@@ -234,7 +238,9 @@ class MCPClient:
             return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             self._pending.pop(request_id, None)
-            raise RuntimeError(f"MCP request timed out: {method}")
+            raise RuntimeError(
+                f"MCP request timed out: {method} ({self.name}: {self._command_repr})"
+            )
 
     async def _notify(self, method: str, params: Dict[str, Any]) -> None:
         async with self._lock:
