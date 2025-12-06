@@ -75,9 +75,15 @@ For comparison queries (e.g., "compare Uniswap vs SushiSwap"):
 2. Get pools/volume for second DEX
 3. Present comparison table
 
-For OHLCV data:
-1. First find the pool address using search or getTokenPools
-2. Then call dexpaprika_getPoolOHLCV with network, poolAddress, interval, limit
+For OHLCV data on a specific DEX (e.g., "SOL/USDC on Raydium"):
+1. Use dexpaprika_getDexPools with network and dex to find the pool
+2. Or use dexscreener_searchPairs as fallback
+3. Then call dexpaprika_getPoolOHLCV with network, poolAddress, interval, start date (e.g., 7 days ago)
+
+If a tool fails (e.g., search returns error), try alternative approaches:
+- Use getDexPools to list pools on the specific DEX
+- Use getTokenPools with one of the token addresses
+- Use dexscreener_searchPairs for broader search
 
 Note: Visual chart plotting is not available. OHLCV data is returned as a formatted table.
 If user asks to "plot" or "chart", explain this limitation and provide the data in table
