@@ -79,6 +79,10 @@ For OHLCV data:
 1. First find the pool address using search or getTokenPools
 2. Then call dexpaprika_getPoolOHLCV with network, poolAddress, interval, limit
 
+Note: Visual chart plotting is not available. OHLCV data is returned as a formatted table.
+If user asks to "plot" or "chart", explain this limitation and provide the data in table
+format for manual charting or analysis in external tools.
+
 For transaction analysis (buy vs sell pressure):
 1. Get pool transactions
 2. Summarize: count buys vs sells, total buy volume vs sell volume
