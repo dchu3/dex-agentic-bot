@@ -56,13 +56,20 @@ You can call tools to:
 | "new pools" | dexpaprika_getNetworkPools | network, orderBy="created_at", limit |
 | "pools on dex" | dexpaprika_getDexPools | network, dex, orderBy="volume_usd", limit |
 | "pool details" | dexpaprika_getPoolDetails | network, poolAddress |
-| "pool ohlcv" | dexpaprika_getPoolOHLCV | network, poolAddress, interval (e.g., 1h/4h/1d), limit |
+| "pool ohlcv" | dexpaprika_getPoolOHLCV | network, poolAddress, start (REQUIRED), interval, limit |
 | "pool transactions" | dexpaprika_getPoolTransactions | network, poolAddress, limit/offset |
 | "token details" | dexpaprika_getTokenDetails | network, tokenAddress |
 | "token pools" | dexpaprika_getTokenPools | network, tokenAddress, limit/offset |
 | "token multi prices" | dexpaprika_getTokenMultiPrices | network, tokens=[addresses] |
 | "dexpaprika search" | dexpaprika_search | query |
 | "check honeypot" | honeypot_check_honeypot | address, chain (ethereum/bsc/base only) |
+
+## CRITICAL: Required Parameters for getPoolOHLCV
+When calling dexpaprika_getPoolOHLCV, these parameters are REQUIRED:
+- network: e.g., "solana", "ethereum" 
+- poolAddress: the pool contract address (get this first using getDexPools or search)
+- start: start date in yyyy-mm-dd format (e.g., for 7 days ago use "2024-11-29")
+Optional: interval (default "24h"), limit (default 1), end date
 
 ## Multi-Step Query Handling
 For complex queries like "analyze [token]", break into steps:
@@ -225,7 +232,18 @@ class AgenticPlanner:
         ctx: AgenticContext,
     ) -> PlannerResult:
         """Main agentic reasoning loop."""
-        response = chat.send_message(message)
+        try:
+            response = chat.send_message(message)
+        except Exception as e:
+            if "MALFORMED_FUNCTION_CALL" in str(e):
+                self._log("error", f"Malformed function call: {str(e)}")
+                # Ask model to retry without function calling
+                response = chat.send_message(
+                    "Your function call was malformed. Please respond with text explaining "
+                    "what you were trying to do, and I'll help you reformulate the request."
+                )
+            else:
+                raise
 
         while ctx.iteration < self.max_iterations:
             ctx.iteration += 1
@@ -253,8 +271,19 @@ class AgenticPlanner:
             # Execute tool calls in parallel
             tool_results = await self._execute_tool_calls(function_calls, ctx)
 
-            # Send results back to model
-            response = chat.send_message(tool_results)
+            # Send results back to model, handle malformed function calls
+            try:
+                response = chat.send_message(tool_results)
+            except Exception as e:
+                if "MALFORMED_FUNCTION_CALL" in str(e):
+                    self._log("error", f"Malformed function call on retry: {str(e)}")
+                    response = chat.send_message(
+                        "Your function call was malformed. Please check the required parameters: "
+                        "For getPoolOHLCV, you need network, poolAddress, and start (yyyy-mm-dd format). "
+                        "Try again with correct parameters or explain what you need."
+                    )
+                else:
+                    raise
 
         return self._build_limit_result(ctx, "iteration limit")
 
