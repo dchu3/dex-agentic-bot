@@ -70,6 +70,7 @@ MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 | `-o, --output {text,json,table}` | Output format (default: table) |
 | `-v, --verbose` | Show debug information |
 | `--stdin` | Read query from stdin |
+| `--no-honeypot` | Disable honeypot MCP server (faster startup) |
 
 ## Interactive Commands
 
