@@ -50,11 +50,38 @@ You can call tools to:
 | "search for [token]" | dexscreener_searchPairs | query=token name/symbol |
 | "trending tokens" | dexscreener_getLatestBoostedTokens | - |
 | "token info for 0x..." | dexscreener_getTokenPairs | tokenAddress |
-| "top pools on [chain]" | dexpaprika_getNetworkPools | network, orderBy="volume_usd" |
-| "new pools" | dexpaprika_getNetworkPools | orderBy="created_at" |
-| "pool details" | dexpaprika_getPoolDetails | network, poolAddress |
 | "available networks" | dexpaprika_getNetworks | - |
+| "dexes on [network]" | dexpaprika_getNetworkDexes | network |
+| "top pools on [chain]" | dexpaprika_getNetworkPools | network, orderBy="volume_usd", limit |
+| "new pools" | dexpaprika_getNetworkPools | network, orderBy="created_at", limit |
+| "pools on dex" | dexpaprika_getDexPools | network, dex, orderBy="volume_usd", limit |
+| "pool details" | dexpaprika_getPoolDetails | network, poolAddress |
+| "pool ohlcv" | dexpaprika_getPoolOHLCV | network, poolAddress, interval (e.g., 1h/4h/1d), limit |
+| "pool transactions" | dexpaprika_getPoolTransactions | network, poolAddress, limit/offset |
+| "token details" | dexpaprika_getTokenDetails | network, tokenAddress |
+| "token pools" | dexpaprika_getTokenPools | network, tokenAddress, limit/offset |
+| "token multi prices" | dexpaprika_getTokenMultiPrices | network, tokens=[addresses] |
+| "dexpaprika search" | dexpaprika_search | query |
 | "check honeypot" | honeypot_check_honeypot | address, chain (ethereum/bsc/base only) |
+
+## Multi-Step Query Handling
+For complex queries like "analyze [token]", break into steps:
+1. Search for the token to get address
+2. Get token details (price, volume)
+3. Get token pools (liquidity info)
+
+For comparison queries (e.g., "compare Uniswap vs SushiSwap"):
+1. Get pools/volume for first DEX
+2. Get pools/volume for second DEX
+3. Present comparison table
+
+For OHLCV data:
+1. First find the pool address using search or getTokenPools
+2. Then call dexpaprika_getPoolOHLCV with network, poolAddress, interval, limit
+
+For transaction analysis (buy vs sell pressure):
+1. Get pool transactions
+2. Summarize: count buys vs sells, total buy volume vs sell volume
 
 ## Honeypot Detection
 - **IMPORTANT**: When displaying token/pool results on ethereum, bsc, or base chains, AUTOMATICALLY call honeypot_check_honeypot for each unique token address before showing results
@@ -64,9 +91,10 @@ You can call tools to:
 - If the honeypot check returns an error: mark the token as "Unverified" in your response
 
 ## Blockchain Agnostic
-- Work with ANY blockchain the user mentions (ethereum, base, solana, arbitrum, etc.)
+- Work with ANY blockchain the user mentions (ethereum, base, solana, arbitrum, fantom, etc.)
 - If user doesn't specify a chain, search across all or ask for clarification
 - Use the network parameter appropriately for each chain
+- When using dexpaprika tools, ensure required params (network, poolAddress or tokenAddress, interval for OHLCV) are present; if missing, ask the user or pick sensible defaults (e.g., interval=1h, limit=10) and state them
 
 ## Response Format - USE TABLES
 
@@ -88,6 +116,12 @@ For single token details, use a compact vertical format:
 | Volume | $1.2M |
 | Safety | ✅ Safe |
 | DexScreener | [View](https://dexscreener.com/...) |
+
+For OHLCV data, use a table format:
+
+| Time | Open | High | Low | Close | Volume |
+|------|------|------|-----|-------|--------|
+| 2024-01-01 00:00 | $100.50 | $102.30 | $99.80 | $101.20 | $1.5M |
 
 Safety column values:
 - ✅ Safe - honeypot check passed (low risk, not a honeypot)
@@ -289,6 +323,7 @@ class AgenticPlanner:
 
         try:
             result = await client.call_tool(method, args)
+
             tool_call.result = result
 
             # Log success

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import shlex
+import shutil
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.config import load_settings
@@ -110,6 +113,25 @@ async def run_interactive(
             output.error(f"Error: {exc}")
 
 
+def _validate_command_exists(command: str, label: str, optional: bool = False) -> None:
+    """Ensure the first token of a command is available on PATH or as a file."""
+    if not command:
+        if optional:
+            return
+        raise ValueError(f"{label} command is empty.")
+    parts = shlex.split(command)
+    if not parts:
+        if optional:
+            return
+        raise ValueError(f"{label} command is invalid.")
+    binary = parts[0]
+    if shutil.which(binary) or Path(binary).exists():
+        return
+    raise FileNotFoundError(
+        f"{label} command not found: '{binary}'. Install it or update MCP settings."
+    )
+
+
 async def async_main() -> None:
     """Async CLI entrypoint."""
     parser = argparse.ArgumentParser(
@@ -185,6 +207,19 @@ Examples:
     except Exception as exc:
         output.error(f"Failed to load settings: {exc}")
         output.info("Ensure .env file exists with GEMINI_API_KEY set")
+        sys.exit(1)
+
+    # Validate external MCP commands early
+    try:
+        _validate_command_exists(settings.mcp_dexscreener_cmd, "DexScreener")
+        _validate_command_exists(settings.mcp_dexpaprika_cmd, "DexPaprika")
+        _validate_command_exists(
+            settings.mcp_honeypot_cmd,
+            "Honeypot",
+            optional=args.no_honeypot or not settings.mcp_honeypot_cmd,
+        )
+    except Exception as exc:
+        output.error(str(exc))
         sys.exit(1)
 
     # Initialize MCP manager

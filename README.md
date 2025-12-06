@@ -61,6 +61,8 @@ MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 | `new pools on ethereum` | Recently created pools |
 | `token info for 0x...` | Get info for specific token |
 | `is 0x... a honeypot on base` | Check token safety (Ethereum/BSC/Base only) |
+| `pool ohlcv for <pool> on solana` | DexPaprika OHLCV for a pool (interval defaults to 1h) |
+| `network dexes on ethereum` | List Dexes on a network via DexPaprika |
 
 ## CLI Options
 
