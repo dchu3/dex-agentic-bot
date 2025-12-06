@@ -150,6 +150,11 @@ Examples:
         action="store_true",
         help="Read query from stdin",
     )
+    parser.add_argument(
+        "--no-honeypot",
+        action="store_true",
+        help="Disable honeypot MCP server (faster startup)",
+    )
 
     args = parser.parse_args()
 
@@ -187,7 +192,7 @@ Examples:
     mcp_manager = MCPManager(
         dexscreener_cmd=settings.mcp_dexscreener_cmd,
         dexpaprika_cmd=settings.mcp_dexpaprika_cmd,
-        honeypot_cmd=settings.mcp_honeypot_cmd,
+        honeypot_cmd="" if args.no_honeypot else settings.mcp_honeypot_cmd,
     )
 
     try:
