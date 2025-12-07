@@ -84,10 +84,12 @@ def mcp_tool_to_gemini_function(
         input_schema = tool.get("inputSchema", {})
 
         # Convert to Gemini parameters schema
-        if input_schema and input_schema.get("properties"):
+        # Always provide a schema, even for parameterless tools
+        if input_schema:
             parameters = convert_json_schema_to_gemini_schema(input_schema)
         else:
-            parameters = None
+            # Provide empty object schema for parameterless tools
+            parameters = genai.protos.Schema(type=genai.protos.Type.OBJECT)
 
         return genai.protos.FunctionDeclaration(
             name=full_name,

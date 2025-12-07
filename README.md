@@ -61,8 +61,11 @@ MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 | `new pools on ethereum` | Recently created pools |
 | `token info for 0x...` | Get info for specific token |
 | `is 0x... a honeypot on base` | Check token safety (Ethereum/BSC/Base only) |
-| `pool ohlcv for <pool> on solana` | DexPaprika OHLCV for a pool (interval defaults to 1h) |
-| `network dexes on ethereum` | List Dexes on a network via DexPaprika |
+| `get 7-day OHLCV for SOL/USDC on Raydium` | Get OHLCV data for a pool (returns table) |
+| `compare Uniswap vs SushiSwap volume` | Compare trading volume between DEXs |
+| `network dexes on ethereum` | List DEXs on a network via DexPaprika |
+
+> **Note:** Chart plotting is not available. OHLCV data is returned as formatted tables.
 
 ## CLI Options
 
@@ -159,6 +162,35 @@ node index-sse.js
 | `searchPairs` | Search for pairs matching a query | 300/min |
 | `getTokenPools` | Get pools for a given token address | 300/min |
 | `getPairsByToken` | Get pairs by token address | 300/min |
+
+## MCP Server: DexPaprika
+
+This project uses the DexPaprika MCP server for querying pool and token data across networks.
+
+### Installing DexPaprika MCP
+
+```bash
+pip install dexpaprika-mcp
+```
+
+Or install from source: [https://github.com/coinpaprika/dexpaprika-mcp](https://github.com/coinpaprika/dexpaprika-mcp)
+
+### Available DexPaprika Tools
+
+| Tool | Description |
+|------|-------------|
+| `getNetworks` | Get all supported blockchain networks |
+| `getNetworkDexes` | Get DEXs available on a specific network |
+| `getNetworkPools` | Get top pools on a network (by volume, liquidity, etc.) |
+| `getDexPools` | Get pools from a specific DEX |
+| `getPoolDetails` | Get detailed info for a specific pool |
+| `getPoolOHLCV` | Get OHLCV price data for a pool (requires `start` date) |
+| `getPoolTransactions` | Get recent transactions for a pool |
+| `getTokenDetails` | Get detailed info for a token |
+| `getTokenPools` | Get pools containing a specific token |
+| `getTokenMultiPrices` | Get prices for multiple tokens |
+| `search` | Search across all networks for tokens/pools |
+| `getStats` | Get ecosystem statistics |
 
 ### Configuring for Claude Desktop
 
