@@ -172,9 +172,14 @@ class AgenticPlanner:
         history = context.get("conversation_history", [])
         
         # Create chat config with tools
+        # Wrap FunctionDeclarations in a Tool object
+        tool_config = None
+        if self.gemini_tools:
+            tool_config = [types.Tool(functionDeclarations=self.gemini_tools)]
+        
         config = types.GenerateContentConfig(
             systemInstruction=self.system_prompt,
-            tools=self.gemini_tools,
+            tools=tool_config,
         )
         
         # Start chat session
@@ -224,6 +229,16 @@ class AgenticPlanner:
             if not function_calls:
                 # No more tool calls - return final response
                 self._log("info", f"Complete. Total tool calls: {ctx.total_tool_calls}")
+                # Debug: log response structure if empty
+                if response.candidates:
+                    for i, candidate in enumerate(response.candidates):
+                        if candidate.content and candidate.content.parts:
+                            part_types = [type(p).__name__ for p in candidate.content.parts]
+                            self._log("debug", f"Candidate {i} parts: {part_types}")
+                        else:
+                            self._log("debug", f"Candidate {i}: no content or parts")
+                            if candidate.finish_reason:
+                                self._log("debug", f"Finish reason: {candidate.finish_reason}")
                 return PlannerResult(
                     message=self._extract_text(response),
                     tokens=ctx.tokens_found,
@@ -279,23 +294,40 @@ class AgenticPlanner:
     def _extract_text(self, response: Any) -> str:
         """Extract text from Gemini response."""
         texts = []
+        thoughts = []
+        
         if not response.candidates:
             # Log why we have no response
             if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
                 return f"Response blocked: {response.prompt_feedback}"
             return "No response generated. The model returned no candidates."
+        
         for candidate in response.candidates:
             # Check for finish reason that might indicate issues
             if hasattr(candidate, 'finish_reason') and candidate.finish_reason:
                 finish_reason = str(candidate.finish_reason)
                 if 'SAFETY' in finish_reason or 'BLOCK' in finish_reason:
                     return f"Response blocked due to safety filters: {finish_reason}"
+            
             if not candidate.content or not candidate.content.parts:
                 continue
+            
             for part in candidate.content.parts:
+                # Extract regular text
                 if hasattr(part, "text") and part.text:
                     texts.append(part.text)
-        return "\n".join(texts) if texts else "No response generated. The model returned empty content."
+                # Also check for thought content (model thinking)
+                if hasattr(part, "thought") and part.thought:
+                    thoughts.append(f"[Thought: {part.thought}]")
+        
+        if texts:
+            return "\n".join(texts)
+        if thoughts:
+            # Model only returned thoughts, no actionable response
+            self._log("debug", f"Model returned only thoughts: {thoughts}")
+            return "The model is processing but returned no actionable response. Please try rephrasing your query."
+        
+        return "No response generated. The model returned empty content."
 
     async def _execute_tool_calls(
         self, function_calls: List[Dict[str, Any]], ctx: AgenticContext
