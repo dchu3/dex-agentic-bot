@@ -296,7 +296,11 @@ class AgenticPlanner:
     def _extract_function_calls(self, response: Any) -> List[Dict[str, Any]]:
         """Extract function calls from Gemini response."""
         calls = []
+        if not response.candidates:
+            return calls
         for candidate in response.candidates:
+            if not candidate.content or not candidate.content.parts:
+                continue
             for part in candidate.content.parts:
                 if hasattr(part, "function_call") and part.function_call:
                     fc = part.function_call
@@ -309,7 +313,11 @@ class AgenticPlanner:
     def _extract_text(self, response: Any) -> str:
         """Extract text from Gemini response."""
         texts = []
+        if not response.candidates:
+            return "No response generated."
         for candidate in response.candidates:
+            if not candidate.content or not candidate.content.parts:
+                continue
             for part in candidate.content.parts:
                 if hasattr(part, "text") and part.text:
                     texts.append(part.text)
