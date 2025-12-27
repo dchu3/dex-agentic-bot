@@ -330,6 +330,24 @@ class MCPManager:
             all_functions.extend(client.to_gemini_functions())
         return all_functions
 
+    def get_available_tools_summary(self) -> str:
+        """Get a summary of all available tools for the system prompt."""
+        lines = []
+        clients = [self.dexscreener, self.dexpaprika]
+        if self.honeypot:
+            clients.append(self.honeypot)
+        for client in clients:
+            if client.tools:
+                lines.append(f"\n### {client.name} tools:")
+                for tool in client.tools:
+                    name = tool.get("name", "unknown")
+                    desc = tool.get("description", "No description")
+                    # Truncate long descriptions
+                    if len(desc) > 100:
+                        desc = desc[:97] + "..."
+                    lines.append(f"- {client.name}_{name}: {desc}")
+        return "\n".join(lines)
+
     def get_client(self, name: str) -> Optional[MCPClient]:
         """Get an MCP client by name."""
         clients: Dict[str, Optional[MCPClient]] = {
