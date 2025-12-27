@@ -345,7 +345,21 @@ class MCPManager:
                     # Truncate long descriptions
                     if len(desc) > 100:
                         desc = desc[:97] + "..."
-                    lines.append(f"- {client.name}_{name}: {desc}")
+                    
+                    # Extract required parameters from inputSchema
+                    input_schema = tool.get("inputSchema", {})
+                    required_params = input_schema.get("required", [])
+                    properties = input_schema.get("properties", {})
+                    
+                    param_info = ""
+                    if required_params:
+                        param_details = []
+                        for param in required_params:
+                            param_type = properties.get(param, {}).get("type", "string")
+                            param_details.append(f"{param}:{param_type}")
+                        param_info = f" [REQUIRED: {', '.join(param_details)}]"
+                    
+                    lines.append(f"- {client.name}_{name}: {desc}{param_info}")
         return "\n".join(lines)
 
     def get_client(self, name: str) -> Optional[MCPClient]:
