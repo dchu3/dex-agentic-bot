@@ -4,38 +4,38 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-import google.generativeai as genai
+from google.genai import types
 
 
-def mcp_type_to_gemini_type(mcp_type: str) -> genai.protos.Type:
-    """Convert MCP/JSON Schema type to Gemini proto type."""
+def mcp_type_to_gemini_type(mcp_type: str) -> str:
+    """Convert MCP/JSON Schema type to Gemini type string."""
     type_map = {
-        "string": genai.protos.Type.STRING,
-        "number": genai.protos.Type.NUMBER,
-        "integer": genai.protos.Type.INTEGER,
-        "boolean": genai.protos.Type.BOOLEAN,
-        "array": genai.protos.Type.ARRAY,
-        "object": genai.protos.Type.OBJECT,
+        "string": "STRING",
+        "number": "NUMBER",
+        "integer": "INTEGER",
+        "boolean": "BOOLEAN",
+        "array": "ARRAY",
+        "object": "OBJECT",
     }
-    return type_map.get(mcp_type, genai.protos.Type.STRING)
+    return type_map.get(mcp_type, "STRING")
 
 
 def convert_json_schema_to_gemini_schema(
     schema: Dict[str, Any], depth: int = 0
-) -> genai.protos.Schema:
-    """Recursively convert JSON Schema to Gemini Schema proto."""
+) -> Dict[str, Any]:
+    """Recursively convert JSON Schema to Gemini Schema dict."""
     if depth > 5:
-        return genai.protos.Schema(type=genai.protos.Type.STRING)
+        return {"type": "STRING"}
 
     schema_type = schema.get("type", "string")
 
     # Handle arrays
     if schema_type == "array":
         items_schema = schema.get("items", {"type": "string"})
-        return genai.protos.Schema(
-            type=genai.protos.Type.ARRAY,
-            items=convert_json_schema_to_gemini_schema(items_schema, depth + 1),
-        )
+        return {
+            "type": "ARRAY",
+            "items": convert_json_schema_to_gemini_schema(items_schema, depth + 1),
+        }
 
     # Handle objects
     if schema_type == "object":
@@ -48,11 +48,13 @@ def convert_json_schema_to_gemini_schema(
                 prop_schema, depth + 1
             )
 
-        return genai.protos.Schema(
-            type=genai.protos.Type.OBJECT,
-            properties=gemini_properties,
-            required=required if required else None,
-        )
+        result: Dict[str, Any] = {
+            "type": "OBJECT",
+            "properties": gemini_properties,
+        }
+        if required:
+            result["required"] = required
+        return result
 
     # Handle primitives
     gemini_type = mcp_type_to_gemini_type(schema_type)
@@ -64,12 +66,12 @@ def convert_json_schema_to_gemini_schema(
     if "enum" in schema:
         kwargs["enum"] = schema["enum"]
 
-    return genai.protos.Schema(**kwargs)
+    return kwargs
 
 
 def mcp_tool_to_gemini_function(
     client_name: str, tool: Dict[str, Any]
-) -> Optional[genai.protos.FunctionDeclaration]:
+) -> Optional[types.FunctionDeclaration]:
     """Convert a single MCP tool to a Gemini FunctionDeclaration."""
     try:
         tool_name = tool.get("name")
@@ -89,9 +91,9 @@ def mcp_tool_to_gemini_function(
             parameters = convert_json_schema_to_gemini_schema(input_schema)
         else:
             # Provide empty object schema for parameterless tools
-            parameters = genai.protos.Schema(type=genai.protos.Type.OBJECT)
+            parameters = {"type": "OBJECT"}
 
-        return genai.protos.FunctionDeclaration(
+        return types.FunctionDeclaration(
             name=full_name,
             description=description,
             parameters=parameters,
@@ -102,7 +104,7 @@ def mcp_tool_to_gemini_function(
 
 def convert_mcp_tools_to_gemini(
     client_name: str, tools: List[Dict[str, Any]]
-) -> List[genai.protos.FunctionDeclaration]:
+) -> List[types.FunctionDeclaration]:
     """Convert a list of MCP tools to Gemini function declarations."""
     declarations = []
     for tool in tools:

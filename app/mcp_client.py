@@ -11,7 +11,7 @@ from asyncio.subprocess import Process
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import google.generativeai as genai
+    from google.genai import types
 
 JSONRPC_VERSION = "2.0"
 DEFAULT_PROTOCOL_VERSION = "2024-10-07"
@@ -48,7 +48,7 @@ class MCPClient:
         """Return the list of tools available on this server."""
         return self._tools
 
-    def to_gemini_functions(self) -> List["genai.protos.FunctionDeclaration"]:
+    def to_gemini_functions(self) -> List["types.FunctionDeclaration"]:
         """Convert MCP tools to Gemini function declarations."""
         from app.tool_converter import convert_mcp_tools_to_gemini
         return convert_mcp_tools_to_gemini(self.name, self._tools)
@@ -320,9 +320,9 @@ class MCPManager:
             tasks.append(self.honeypot.stop())
         await asyncio.gather(*tasks)
 
-    def get_gemini_functions(self) -> List["genai.protos.FunctionDeclaration"]:
+    def get_gemini_functions(self) -> List["types.FunctionDeclaration"]:
         """Get all MCP tools as Gemini function declarations."""
-        all_functions: List["genai.protos.FunctionDeclaration"] = []
+        all_functions: List["types.FunctionDeclaration"] = []
         clients = [self.dexscreener, self.dexpaprika]
         if self.honeypot:
             clients.append(self.honeypot)

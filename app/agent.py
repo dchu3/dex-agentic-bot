@@ -7,7 +7,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from app.mcp_client import MCPManager
 from app.types import PlannerResult
@@ -183,17 +184,11 @@ class AgenticPlanner:
         self.verbose = verbose
         self.log_callback = log_callback
 
-        genai.configure(api_key=api_key)
+        # Initialize the client
+        self.client = genai.Client(api_key=api_key)
 
         # Get tools from MCP servers
         self.gemini_tools = mcp_manager.get_gemini_functions()
-
-        # Create model with tools
-        self.model = genai.GenerativeModel(
-            model_name=model_name,
-            tools=self.gemini_tools,
-            system_instruction=AGENTIC_SYSTEM_PROMPT,
-        )
 
     def _log(self, level: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
         """Log a message if verbose mode is enabled."""
@@ -212,7 +207,19 @@ class AgenticPlanner:
 
         # Build conversation history
         history = context.get("conversation_history", [])
-        chat = self.model.start_chat(history=self._convert_history(history))
+        
+        # Create chat config with tools
+        config = types.GenerateContentConfig(
+            system_instruction=AGENTIC_SYSTEM_PROMPT,
+            tools=self.gemini_tools,
+        )
+        
+        # Start chat session
+        chat = self.client.chats.create(
+            model=self.model_name,
+            config=config,
+            history=self._convert_history(history),
+        )
 
         try:
             return await asyncio.wait_for(
@@ -227,7 +234,7 @@ class AgenticPlanner:
 
     async def _agentic_loop(
         self,
-        chat: genai.ChatSession,
+        chat: Any,
         message: str,
         ctx: AgenticContext,
     ) -> PlannerResult:
@@ -237,7 +244,6 @@ class AgenticPlanner:
         except Exception as e:
             if "MALFORMED_FUNCTION_CALL" in str(e):
                 self._log("error", f"Malformed function call: {str(e)}")
-                # Ask model to retry without function calling
                 response = chat.send_message(
                     "Your function call was malformed. Please respond with text explaining "
                     "what you were trying to do, and I'll help you reformulate the request."
@@ -311,7 +317,7 @@ class AgenticPlanner:
 
     async def _execute_tool_calls(
         self, function_calls: List[Dict[str, Any]], ctx: AgenticContext
-    ) -> List[genai.protos.Part]:
+    ) -> List[types.Part]:
         """Execute tool calls and return results for Gemini."""
         tasks = []
         for fc in function_calls:
@@ -328,11 +334,9 @@ class AgenticPlanner:
                 response_data = result
 
             parts.append(
-                genai.protos.Part(
-                    function_response=genai.protos.FunctionResponse(
-                        name=fc["name"],
-                        response={"result": response_data},
-                    )
+                types.Part.from_function_response(
+                    name=fc["name"],
+                    response={"result": response_data},
                 )
             )
 
@@ -421,15 +425,15 @@ class AgenticPlanner:
 
     def _convert_history(
         self, history: List[Dict[str, str]]
-    ) -> List[genai.protos.Content]:
+    ) -> List[types.Content]:
         """Convert conversation history to Gemini format."""
         contents = []
         for msg in history:
             role = "user" if msg.get("role") == "user" else "model"
             contents.append(
-                genai.protos.Content(
+                types.Content(
                     role=role,
-                    parts=[genai.protos.Part(text=msg.get("content", ""))],
+                    parts=[types.Part.from_text(text=msg.get("content", ""))],
                 )
             )
         return contents
