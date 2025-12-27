@@ -56,9 +56,13 @@ For complex queries like "analyze [token]", break into steps:
 
 If a tool fails or doesn't exist, try alternative approaches using available tools.
 
-## Honeypot Detection
-- When displaying token/pool results on ethereum, bsc, or base chains, call honeypot check for safety
-- For tokens on other chains (solana, arbitrum, polygon, etc.): mark as "Unverified"
+## Honeypot Detection - CRITICAL SAFETY
+- AUTOMATICALLY call honeypot_check_honeypot for EVERY token/pool you display on ethereum, bsc, or base chains
+- Call honeypot checks in parallel for efficiency when showing multiple tokens
+- The chain parameter values are: "ethereum", "bsc", "base" (lowercase)
+- For tokens on other chains (solana, arbitrum, polygon, etc.): mark as "Unverified" without calling the tool
+- If honeypot check fails or returns an error: mark the token as "Unverified" in your response
+- Never let a honeypot check failure block your main response - just mark as Unverified
 
 ## Blockchain Agnostic
 - Work with ANY blockchain the user mentions (ethereum, base, solana, arbitrum, fantom, etc.)
@@ -126,8 +130,20 @@ class AgenticPlanner:
         self.gemini_tools = mcp_manager.get_gemini_functions()
         
         # Build dynamic system prompt with actual tool names
-        tools_summary = mcp_manager.get_available_tools_summary()
-        self.system_prompt = AGENTIC_SYSTEM_PROMPT_BASE + "\n## Available Tools\n" + tools_summary
+        tools_summary = mcp_manager.format_tools_for_system_prompt()
+        if tools_summary.strip():
+            self.system_prompt = (
+                AGENTIC_SYSTEM_PROMPT_BASE
+                + "\n## Available Tools\n"
+                + tools_summary
+            )
+        else:
+            self.system_prompt = (
+                AGENTIC_SYSTEM_PROMPT_BASE
+                + "\n## Available Tools\n"
+                + "No external tools are currently available. "
+                + "Answer using your own knowledge and inform the user that tool-based data is unavailable."
+            )
 
     def _log(self, level: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
         """Log a message if verbose mode is enabled."""
@@ -149,7 +165,7 @@ class AgenticPlanner:
         
         # Create chat config with tools
         config = types.GenerateContentConfig(
-            system_instruction=self.system_prompt,
+            systemInstruction=self.system_prompt,
             tools=self.gemini_tools,
         )
         

@@ -330,8 +330,8 @@ class MCPManager:
             all_functions.extend(client.to_gemini_functions())
         return all_functions
 
-    def get_available_tools_summary(self) -> str:
-        """Get a summary of all available tools for the system prompt."""
+    def format_tools_for_system_prompt(self) -> str:
+        """Format all available tools as a string for inclusion in the system prompt."""
         lines = []
         clients = [self.dexscreener, self.dexpaprika]
         if self.honeypot:
@@ -342,9 +342,8 @@ class MCPManager:
                 for tool in client.tools:
                     name = tool.get("name", "unknown")
                     desc = tool.get("description", "No description")
-                    # Truncate long descriptions
-                    if len(desc) > 100:
-                        desc = desc[:97] + "..."
+                    # Truncate long descriptions at word boundary
+                    desc = self._truncate_description(desc, max_length=100)
                     
                     # Extract required parameters from inputSchema
                     input_schema = tool.get("inputSchema", {})
@@ -361,6 +360,18 @@ class MCPManager:
                     
                     lines.append(f"- {client.name}_{name}: {desc}{param_info}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _truncate_description(desc: str, max_length: int = 100) -> str:
+        """Truncate description at word boundary."""
+        if len(desc) <= max_length:
+            return desc
+        # Find last space before max_length
+        truncated = desc[:max_length]
+        last_space = truncated.rfind(" ")
+        if last_space > max_length // 2:
+            return truncated[:last_space] + "..."
+        return truncated + "..."
 
     def get_client(self, name: str) -> Optional[MCPClient]:
         """Get an MCP client by name."""
