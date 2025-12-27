@@ -116,7 +116,8 @@ def convert_mcp_tools_to_gemini(
 
 def parse_function_call_name(name: str) -> tuple[str, str]:
     """Parse a namespaced function name into (client, method)."""
+    name = name.strip()
     parts = name.split("_", 1)
     if len(parts) == 2:
-        return parts[0], parts[1]
+        return parts[0].strip(), parts[1].strip()
     return "", name

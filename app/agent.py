@@ -304,10 +304,13 @@ class AgenticPlanner:
             for part in candidate.content.parts:
                 if hasattr(part, "function_call") and part.function_call:
                     fc = part.function_call
-                    calls.append({
-                        "name": fc.name,
-                        "args": dict(fc.args) if fc.args else {},
-                    })
+                    # Ensure name is stripped of whitespace
+                    name = fc.name.strip() if fc.name else ""
+                    if name:
+                        calls.append({
+                            "name": name,
+                            "args": dict(fc.args) if fc.args else {},
+                        })
         return calls
 
     def _extract_text(self, response: Any) -> str:
