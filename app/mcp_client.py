@@ -11,7 +11,7 @@ from asyncio.subprocess import Process
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import google.generativeai as genai
+    from google.genai import types
 
 JSONRPC_VERSION = "2.0"
 DEFAULT_PROTOCOL_VERSION = "2024-10-07"
@@ -48,7 +48,7 @@ class MCPClient:
         """Return the list of tools available on this server."""
         return self._tools
 
-    def to_gemini_functions(self) -> List["genai.protos.FunctionDeclaration"]:
+    def to_gemini_functions(self) -> List["types.FunctionDeclaration"]:
         """Convert MCP tools to Gemini function declarations."""
         from app.tool_converter import convert_mcp_tools_to_gemini
         return convert_mcp_tools_to_gemini(self.name, self._tools)
@@ -320,15 +320,58 @@ class MCPManager:
             tasks.append(self.honeypot.stop())
         await asyncio.gather(*tasks)
 
-    def get_gemini_functions(self) -> List["genai.protos.FunctionDeclaration"]:
+    def get_gemini_functions(self) -> List["types.FunctionDeclaration"]:
         """Get all MCP tools as Gemini function declarations."""
-        all_functions: List["genai.protos.FunctionDeclaration"] = []
+        all_functions: List["types.FunctionDeclaration"] = []
         clients = [self.dexscreener, self.dexpaprika]
         if self.honeypot:
             clients.append(self.honeypot)
         for client in clients:
             all_functions.extend(client.to_gemini_functions())
         return all_functions
+
+    def format_tools_for_system_prompt(self) -> str:
+        """Format all available tools as a string for inclusion in the system prompt."""
+        lines = []
+        clients = [self.dexscreener, self.dexpaprika]
+        if self.honeypot:
+            clients.append(self.honeypot)
+        for client in clients:
+            if client.tools:
+                lines.append(f"\n### {client.name} tools:")
+                for tool in client.tools:
+                    name = tool.get("name", "unknown")
+                    desc = tool.get("description", "No description")
+                    # Truncate long descriptions at word boundary
+                    desc = self._truncate_description(desc, max_length=100)
+                    
+                    # Extract required parameters from inputSchema
+                    input_schema = tool.get("inputSchema", {})
+                    required_params = input_schema.get("required", [])
+                    properties = input_schema.get("properties", {})
+                    
+                    param_info = ""
+                    if required_params:
+                        param_details = []
+                        for param in required_params:
+                            param_type = properties.get(param, {}).get("type", "string")
+                            param_details.append(f"{param}:{param_type}")
+                        param_info = f" [REQUIRED: {', '.join(param_details)}]"
+                    
+                    lines.append(f"- {client.name}_{name}: {desc}{param_info}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _truncate_description(desc: str, max_length: int = 100) -> str:
+        """Truncate description at word boundary."""
+        if len(desc) <= max_length:
+            return desc
+        # Find last space before max_length
+        truncated = desc[:max_length]
+        last_space = truncated.rfind(" ")
+        if last_space > max_length // 2:
+            return truncated[:last_space] + "..."
+        return truncated + "..."
 
     def get_client(self, name: str) -> Optional[MCPClient]:
         """Get an MCP client by name."""

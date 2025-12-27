@@ -7,7 +7,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from app.mcp_client import MCPManager
 from app.types import PlannerResult
@@ -35,7 +36,7 @@ class AgenticContext:
     tokens_found: List[Dict[str, str]] = field(default_factory=list)
 
 
-AGENTIC_SYSTEM_PROMPT = """You are a crypto/DeFi assistant that helps users find token and pool information across multiple blockchains.
+AGENTIC_SYSTEM_PROMPT_BASE = """You are a crypto/DeFi assistant that helps users find token and pool information across multiple blockchains.
 
 ## Your Capabilities
 You can call tools to:
@@ -43,33 +44,9 @@ You can call tools to:
 - Get pool/liquidity data across DEXs (dexpaprika)
 - Check if tokens are honeypots (honeypot) - ONLY for ethereum, bsc, base chains
 
-## Tool Selection Guide
-
-| User Intent | Primary Tool | Parameters |
-|-------------|--------------|------------|
-| "search for [token]" | dexscreener_searchPairs | query=token name/symbol |
-| "trending tokens" | dexscreener_getLatestBoostedTokens | - |
-| "token info for 0x..." | dexscreener_getTokenPairs | tokenAddress |
-| "available networks" | dexpaprika_getNetworks | - |
-| "dexes on [network]" | dexpaprika_getNetworkDexes | network |
-| "top pools on [chain]" | dexpaprika_getNetworkPools | network, orderBy="volume_usd", limit |
-| "new pools" | dexpaprika_getNetworkPools | network, orderBy="created_at", limit |
-| "pools on dex" | dexpaprika_getDexPools | network, dex, orderBy="volume_usd", limit |
-| "pool details" | dexpaprika_getPoolDetails | network, poolAddress |
-| "pool ohlcv" | dexpaprika_getPoolOHLCV | network, poolAddress, start (REQUIRED), interval, limit |
-| "pool transactions" | dexpaprika_getPoolTransactions | network, poolAddress, limit/offset |
-| "token details" | dexpaprika_getTokenDetails | network, tokenAddress |
-| "token pools" | dexpaprika_getTokenPools | network, tokenAddress, limit/offset |
-| "token multi prices" | dexpaprika_getTokenMultiPrices | network, tokens=[addresses] |
-| "dexpaprika search" | dexpaprika_search | query |
-| "check honeypot" | honeypot_check_honeypot | address, chain (ethereum/bsc/base only) |
-
-## CRITICAL: Required Parameters for getPoolOHLCV
-When calling dexpaprika_getPoolOHLCV, these parameters are REQUIRED:
-- network: e.g., "solana", "ethereum" 
-- poolAddress: the pool contract address (get this first using getDexPools or search)
-- start: start date in yyyy-mm-dd format (e.g., for 7 days ago use "2024-11-29")
-Optional: interval (default "24h"), limit (default 1), end date
+## IMPORTANT: Use Only Available Tools
+You MUST only call tools that are listed in the "Available Tools" section below.
+Do NOT invent or guess tool names. If a tool doesn't exist, use an alternative or explain the limitation.
 
 ## Multi-Step Query Handling
 For complex queries like "analyze [token]", break into steps:
@@ -77,41 +54,19 @@ For complex queries like "analyze [token]", break into steps:
 2. Get token details (price, volume)
 3. Get token pools (liquidity info)
 
-For comparison queries (e.g., "compare Uniswap vs SushiSwap"):
-1. Get pools/volume for first DEX
-2. Get pools/volume for second DEX
-3. Present comparison table
+If a tool fails or doesn't exist, try alternative approaches using available tools.
 
-For OHLCV data on a specific DEX (e.g., "SOL/USDC on Raydium"):
-1. Use dexpaprika_getDexPools with network and dex to find the pool
-2. Or use dexscreener_searchPairs as fallback
-3. Then call dexpaprika_getPoolOHLCV with network, poolAddress, interval, start date (e.g., 7 days ago)
-
-If a tool fails (e.g., search returns error), try alternative approaches:
-- Use getDexPools to list pools on the specific DEX
-- Use getTokenPools with one of the token addresses
-- Use dexscreener_searchPairs for broader search
-
-Note: Visual chart plotting is not available. OHLCV data is returned as a formatted table.
-If user asks to "plot" or "chart", explain this limitation and provide the data in table
-format for manual charting or analysis in external tools.
-
-For transaction analysis (buy vs sell pressure):
-1. Get pool transactions
-2. Summarize: count buys vs sells, total buy volume vs sell volume
-
-## Honeypot Detection
-- **IMPORTANT**: When displaying token/pool results on ethereum, bsc, or base chains, AUTOMATICALLY call honeypot_check_honeypot for each unique token address before showing results
+## Honeypot Detection - CRITICAL SAFETY
+- AUTOMATICALLY call honeypot_check_honeypot for EVERY token/pool you display on ethereum, bsc, or base chains
 - Call honeypot checks in parallel for efficiency when showing multiple tokens
 - The chain parameter values are: "ethereum", "bsc", "base" (lowercase)
 - For tokens on other chains (solana, arbitrum, polygon, etc.): mark as "Unverified" without calling the tool
-- If the honeypot check returns an error: mark the token as "Unverified" in your response
+- If honeypot check fails or returns an error: mark the token as "Unverified" in your response
+- Never let a honeypot check failure block your main response - just mark as Unverified
 
 ## Blockchain Agnostic
 - Work with ANY blockchain the user mentions (ethereum, base, solana, arbitrum, fantom, etc.)
 - If user doesn't specify a chain, search across all or ask for clarification
-- Use the network parameter appropriately for each chain
-- When using dexpaprika tools, ensure required params (network, poolAddress or tokenAddress, interval for OHLCV) are present; if missing, ask the user or pick sensible defaults (e.g., interval=1h, limit=10) and state them
 
 ## Response Format - USE TABLES
 
@@ -127,26 +82,12 @@ For single token details, use a compact vertical format:
 |-------|-------|
 | Token | PEPE |
 | Address | 0x6982508... |
-| Chain | ethereum |
-| Price | $0.00001234 |
-| 24h Change | +15.2% |
-| Volume | $1.2M |
-| Safety | ✅ Safe |
-| DexScreener | [View](https://dexscreener.com/...) |
-
-For OHLCV data, use a table format:
-
-| Time | Open | High | Low | Close | Volume |
-|------|------|------|-----|-------|--------|
-| 2024-01-01 00:00 | $100.50 | $102.30 | $99.80 | $101.20 | $1.5M |
 
 Safety column values:
-- ✅ Safe - honeypot check passed (low risk, not a honeypot)
-- ⚠️ Risky - honeypot check shows concerns (high taxes, medium/high risk)
+- ✅ Safe - honeypot check passed
+- ⚠️ Risky - honeypot check shows concerns
 - ❌ Honeypot - confirmed honeypot, avoid
 - Unverified - chain not supported or check failed
-
-Do NOT include long descriptions - keep rows concise and show full contract addresses.
 
 ## Guidelines
 1. Call tools to get real data - don't make up prices or stats
@@ -154,7 +95,6 @@ Do NOT include long descriptions - keep rows concise and show full contract addr
 3. Include relevant links when available
 4. If a tool fails, explain what happened and suggest alternatives
 5. Be concise but informative
-6. Never let a honeypot check failure block your main response - just mark as Unverified
 """
 
 # Type alias for log callback
@@ -183,17 +123,27 @@ class AgenticPlanner:
         self.verbose = verbose
         self.log_callback = log_callback
 
-        genai.configure(api_key=api_key)
+        # Initialize the client
+        self.client = genai.Client(api_key=api_key)
 
         # Get tools from MCP servers
         self.gemini_tools = mcp_manager.get_gemini_functions()
-
-        # Create model with tools
-        self.model = genai.GenerativeModel(
-            model_name=model_name,
-            tools=self.gemini_tools,
-            system_instruction=AGENTIC_SYSTEM_PROMPT,
-        )
+        
+        # Build dynamic system prompt with actual tool names
+        tools_summary = mcp_manager.format_tools_for_system_prompt()
+        if tools_summary.strip():
+            self.system_prompt = (
+                AGENTIC_SYSTEM_PROMPT_BASE
+                + "\n## Available Tools\n"
+                + tools_summary
+            )
+        else:
+            self.system_prompt = (
+                AGENTIC_SYSTEM_PROMPT_BASE
+                + "\n## Available Tools\n"
+                + "No external tools are currently available. "
+                + "Answer using your own knowledge and inform the user that tool-based data is unavailable."
+            )
 
     def _log(self, level: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
         """Log a message if verbose mode is enabled."""
@@ -212,7 +162,19 @@ class AgenticPlanner:
 
         # Build conversation history
         history = context.get("conversation_history", [])
-        chat = self.model.start_chat(history=self._convert_history(history))
+        
+        # Create chat config with tools
+        config = types.GenerateContentConfig(
+            systemInstruction=self.system_prompt,
+            tools=self.gemini_tools,
+        )
+        
+        # Start chat session
+        chat = self.client.chats.create(
+            model=self.model_name,
+            config=config,
+            history=self._convert_history(history),
+        )
 
         try:
             return await asyncio.wait_for(
@@ -227,7 +189,7 @@ class AgenticPlanner:
 
     async def _agentic_loop(
         self,
-        chat: genai.ChatSession,
+        chat: Any,
         message: str,
         ctx: AgenticContext,
     ) -> PlannerResult:
@@ -237,7 +199,6 @@ class AgenticPlanner:
         except Exception as e:
             if "MALFORMED_FUNCTION_CALL" in str(e):
                 self._log("error", f"Malformed function call: {str(e)}")
-                # Ask model to retry without function calling
                 response = chat.send_message(
                     "Your function call was malformed. Please respond with text explaining "
                     "what you were trying to do, and I'll help you reformulate the request."
@@ -290,20 +251,31 @@ class AgenticPlanner:
     def _extract_function_calls(self, response: Any) -> List[Dict[str, Any]]:
         """Extract function calls from Gemini response."""
         calls = []
+        if not response.candidates:
+            return calls
         for candidate in response.candidates:
+            if not candidate.content or not candidate.content.parts:
+                continue
             for part in candidate.content.parts:
                 if hasattr(part, "function_call") and part.function_call:
                     fc = part.function_call
-                    calls.append({
-                        "name": fc.name,
-                        "args": dict(fc.args) if fc.args else {},
-                    })
+                    # Ensure name is stripped of whitespace
+                    name = fc.name.strip() if fc.name else ""
+                    if name:
+                        calls.append({
+                            "name": name,
+                            "args": dict(fc.args) if fc.args else {},
+                        })
         return calls
 
     def _extract_text(self, response: Any) -> str:
         """Extract text from Gemini response."""
         texts = []
+        if not response.candidates:
+            return "No response generated."
         for candidate in response.candidates:
+            if not candidate.content or not candidate.content.parts:
+                continue
             for part in candidate.content.parts:
                 if hasattr(part, "text") and part.text:
                     texts.append(part.text)
@@ -311,7 +283,7 @@ class AgenticPlanner:
 
     async def _execute_tool_calls(
         self, function_calls: List[Dict[str, Any]], ctx: AgenticContext
-    ) -> List[genai.protos.Part]:
+    ) -> List[types.Part]:
         """Execute tool calls and return results for Gemini."""
         tasks = []
         for fc in function_calls:
@@ -328,11 +300,9 @@ class AgenticPlanner:
                 response_data = result
 
             parts.append(
-                genai.protos.Part(
-                    function_response=genai.protos.FunctionResponse(
-                        name=fc["name"],
-                        response={"result": response_data},
-                    )
+                types.Part.from_function_response(
+                    name=fc["name"],
+                    response={"result": response_data},
                 )
             )
 
@@ -421,15 +391,15 @@ class AgenticPlanner:
 
     def _convert_history(
         self, history: List[Dict[str, str]]
-    ) -> List[genai.protos.Content]:
+    ) -> List[types.Content]:
         """Convert conversation history to Gemini format."""
         contents = []
         for msg in history:
             role = "user" if msg.get("role") == "user" else "model"
             contents.append(
-                genai.protos.Content(
+                types.Content(
                     role=role,
-                    parts=[genai.protos.Part(text=msg.get("content", ""))],
+                    parts=[types.Part.from_text(text=msg.get("content", ""))],
                 )
             )
         return contents

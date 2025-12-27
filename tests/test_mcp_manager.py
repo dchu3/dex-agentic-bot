@@ -49,3 +49,106 @@ def test_mcp_manager_get_client_without_honeypot():
     
     client = manager.get_client("honeypot")
     assert client is None
+
+
+def test_format_tools_for_system_prompt_with_tools():
+    """Test format_tools_for_system_prompt generates correct output with tools."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        honeypot_cmd="",
+    )
+    
+    # Simulate tools being loaded
+    manager.dexscreener._tools = [
+        {
+            "name": "searchPairs",
+            "description": "Search for token pairs by query",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        },
+        {
+            "name": "getTokenInfo",
+            "description": "Get token information",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"address": {"type": "string"}},
+                "required": [],
+            },
+        },
+    ]
+    manager.dexpaprika._tools = []
+    
+    result = manager.format_tools_for_system_prompt()
+    
+    assert "### dexscreener tools:" in result
+    assert "dexscreener_searchPairs" in result
+    assert "[REQUIRED: query:string]" in result
+    assert "dexscreener_getTokenInfo" in result
+    # getTokenInfo has no required params, so no [REQUIRED: ...] tag
+    assert "- dexscreener_getTokenInfo: Get token information" in result
+
+
+def test_format_tools_for_system_prompt_empty_tools():
+    """Test format_tools_for_system_prompt returns empty string when no tools."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        honeypot_cmd="",
+    )
+    
+    # No tools loaded
+    manager.dexscreener._tools = []
+    manager.dexpaprika._tools = []
+    
+    result = manager.format_tools_for_system_prompt()
+    
+    assert result == ""
+
+
+def test_format_tools_for_system_prompt_description_truncation():
+    """Test that long descriptions are truncated at word boundaries."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        honeypot_cmd="",
+    )
+    
+    long_description = "This is a very long description that should be truncated at a word boundary to avoid cutting words in half"
+    manager.dexscreener._tools = [
+        {
+            "name": "testTool",
+            "description": long_description,
+            "inputSchema": {"type": "object", "properties": {}, "required": []},
+        },
+    ]
+    manager.dexpaprika._tools = []
+    
+    result = manager.format_tools_for_system_prompt()
+    
+    # Should be truncated and end with ...
+    assert "..." in result
+    # Should not contain the full description
+    assert long_description not in result
+    # Should not cut mid-word
+    assert "bounda..." not in result
+
+
+def test_truncate_description_short():
+    """Test _truncate_description returns short descriptions unchanged."""
+    result = MCPManager._truncate_description("Short description", max_length=100)
+    assert result == "Short description"
+
+
+def test_truncate_description_at_word_boundary():
+    """Test _truncate_description truncates at word boundary."""
+    desc = "This is a test description that is longer than the maximum allowed length"
+    result = MCPManager._truncate_description(desc, max_length=30)
+    
+    assert result.endswith("...")
+    assert len(result) <= 33  # 30 + "..."
+    # Should break at word boundary
+    assert result in ["This is a test description...", "This is a test..."]
