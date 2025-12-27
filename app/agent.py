@@ -44,15 +44,23 @@ You can call tools to:
 - Get pool/liquidity data across DEXs (dexpaprika)
 - Check if tokens are honeypots (honeypot) - ONLY for ethereum, bsc, base chains
 
+## CRITICAL: Always Use Tools for Data
+You MUST call tools to get real-time data. NEVER respond without calling tools first when:
+- User asks about any token (search for it)
+- User asks for "more info" or "details" about something (search and get details)
+- User mentions a token name, symbol, or address (search for it)
+- User asks about prices, pools, volume, liquidity (use appropriate tools)
+
 ## IMPORTANT: Use Only Available Tools
 You MUST only call tools that are listed in the "Available Tools" section below.
 Do NOT invent or guess tool names. If a tool doesn't exist, use an alternative or explain the limitation.
 
 ## Multi-Step Query Handling
-For complex queries like "analyze [token]", break into steps:
-1. Search for the token to get address
-2. Get token details (price, volume)
+For complex queries like "analyze [token]" or "get more info on [token]", break into steps:
+1. Search for the token by name/symbol to get its address and chain
+2. Get token details (price, volume, market data)
 3. Get token pools (liquidity info)
+4. Check honeypot status if on ethereum/bsc/base
 
 If a tool fails or doesn't exist, try alternative approaches using available tools.
 
@@ -272,14 +280,22 @@ class AgenticPlanner:
         """Extract text from Gemini response."""
         texts = []
         if not response.candidates:
-            return "No response generated."
+            # Log why we have no response
+            if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                return f"Response blocked: {response.prompt_feedback}"
+            return "No response generated. The model returned no candidates."
         for candidate in response.candidates:
+            # Check for finish reason that might indicate issues
+            if hasattr(candidate, 'finish_reason') and candidate.finish_reason:
+                finish_reason = str(candidate.finish_reason)
+                if 'SAFETY' in finish_reason or 'BLOCK' in finish_reason:
+                    return f"Response blocked due to safety filters: {finish_reason}"
             if not candidate.content or not candidate.content.parts:
                 continue
             for part in candidate.content.parts:
                 if hasattr(part, "text") and part.text:
                     texts.append(part.text)
-        return "\n".join(texts) if texts else "No response generated."
+        return "\n".join(texts) if texts else "No response generated. The model returned empty content."
 
     async def _execute_tool_calls(
         self, function_calls: List[Dict[str, Any]], ctx: AgenticContext
