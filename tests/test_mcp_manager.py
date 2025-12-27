@@ -89,7 +89,7 @@ def test_format_tools_for_system_prompt_with_tools():
     assert "[REQUIRED: query:string]" in result
     assert "dexscreener_getTokenInfo" in result
     # getTokenInfo has no required params, so no [REQUIRED: ...] tag
-    assert "getTokenInfo: Get token information\n" in result or "getTokenInfo: Get token information" in result
+    assert "- dexscreener_getTokenInfo: Get token information" in result
 
 
 def test_format_tools_for_system_prompt_empty_tools():
