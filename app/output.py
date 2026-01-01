@@ -135,7 +135,7 @@ class CLIOutput:
 
         # Parse header
         header_line = lines[0]
-        headers = [h.strip() for h in header_line.split("|") if h.strip()]
+        headers = [self._clean_cell_content(h) for h in header_line.split("|") if h.strip()]
 
         if not headers:
             return None
@@ -148,7 +148,7 @@ class CLIOutput:
         for line in lines[2:]:
             if "---" in line:
                 continue
-            cells = [c.strip() for c in line.split("|") if c.strip()]
+            cells = [self._clean_cell_content(c) for c in line.split("|") if c.strip()]
             if cells:
                 # Pad cells if needed
                 while len(cells) < len(headers):
@@ -252,3 +252,25 @@ class CLIOutput:
         result = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", result)
 
         return result
+
+    @staticmethod
+    def _clean_cell_content(text: str) -> str:
+        """Clean HTML tags and normalize markdown in table cell content."""
+        if not text:
+            return ""
+
+        result = text.strip()
+
+        # Replace <br> tags with space
+        result = re.sub(r"<br\s*/?>", " ", result, flags=re.IGNORECASE)
+
+        # Remove HTML tags like <strong>, </strong>, etc.
+        result = re.sub(r"</?[a-zA-Z][^>]*>", "", result)
+
+        # Convert **bold** to plain text (strip the markers)
+        result = re.sub(r"\*\*([^*]+)\*\*", r"\1", result)
+
+        # Clean up multiple spaces
+        result = re.sub(r" +", " ", result)
+
+        return result.strip()
