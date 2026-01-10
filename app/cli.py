@@ -40,6 +40,7 @@ async def run_interactive(
     planner: Any,
     output: CLIOutput,
     watchlist_db: WatchlistDB,
+    mcp_manager: MCPManager,
     poller: Optional[WatchlistPoller] = None,
 ) -> None:
     """Run interactive REPL session."""
@@ -86,7 +87,7 @@ async def run_interactive(
             # Handle commands
             if query.startswith("/"):
                 handled = await _handle_command(
-                    query, output, watchlist_db, poller,
+                    query, output, watchlist_db, poller, mcp_manager,
                     conversation_history, recent_tokens
                 )
                 if handled == "quit":
@@ -129,6 +130,7 @@ async def _handle_command(
     output: CLIOutput,
     db: WatchlistDB,
     poller: Optional[WatchlistPoller],
+    mcp_manager: MCPManager,
     conversation_history: List[Dict[str, str]],
     recent_tokens: List[Dict[str, str]],
 ) -> Optional[str]:
@@ -181,7 +183,7 @@ async def _handle_command(
 
     # Watchlist commands
     if cmd == "/watch":
-        await _cmd_watch(parts[1:], output, db, recent_tokens)
+        await _cmd_watch(parts[1:], output, db, mcp_manager, recent_tokens)
         return True
 
     if cmd == "/unwatch":
@@ -204,10 +206,75 @@ async def _handle_command(
     return True
 
 
+async def _search_token(
+    symbol: str,
+    chain: Optional[str],
+    mcp_manager: MCPManager,
+) -> Optional[Dict[str, str]]:
+    """Search for a token using MCP tools and return its info."""
+    # Try DexScreener first
+    dexscreener = mcp_manager.get_client("dexscreener")
+    if dexscreener:
+        try:
+            # Search for the token
+            query = f"{symbol} {chain}" if chain else symbol
+            result = await dexscreener.call_tool("searchPairs", {"query": query})
+            
+            if isinstance(result, dict) and result.get("pairs"):
+                pairs = result["pairs"]
+                
+                # Filter by chain if specified
+                for pair in pairs:
+                    base_token = pair.get("baseToken", {})
+                    pair_chain = pair.get("chainId", "").lower()
+                    
+                    if base_token.get("symbol", "").upper() == symbol.upper():
+                        if chain is None or pair_chain == chain.lower():
+                            return {
+                                "address": base_token.get("address", ""),
+                                "symbol": base_token.get("symbol", symbol),
+                                "chain": pair_chain,
+                            }
+                
+                # If exact match not found, return first result
+                if pairs:
+                    first_pair = pairs[0]
+                    base_token = first_pair.get("baseToken", {})
+                    return {
+                        "address": base_token.get("address", ""),
+                        "symbol": base_token.get("symbol", symbol),
+                        "chain": first_pair.get("chainId", chain or "unknown"),
+                    }
+        except Exception:
+            pass
+
+    # Fallback to DexPaprika search
+    dexpaprika = mcp_manager.get_client("dexpaprika")
+    if dexpaprika:
+        try:
+            result = await dexpaprika.call_tool("search", {"query": symbol})
+            
+            if isinstance(result, dict):
+                tokens = result.get("tokens", [])
+                for token in tokens:
+                    token_chain = token.get("network", "").lower()
+                    if chain is None or token_chain == chain.lower():
+                        return {
+                            "address": token.get("address", ""),
+                            "symbol": token.get("symbol", symbol),
+                            "chain": token_chain,
+                        }
+        except Exception:
+            pass
+
+    return None
+
+
 async def _cmd_watch(
     args: List[str],
     output: CLIOutput,
     db: WatchlistDB,
+    mcp_manager: MCPManager,
     recent_tokens: List[Dict[str, str]],
 ) -> None:
     """Handle /watch command."""
@@ -253,17 +320,21 @@ async def _cmd_watch(
             addr_short = entry.token_address[:10] + "..."
             output.info(f"✅ Added {symbol} ({addr_short}) on {entry.chain} to watchlist")
         else:
-            # No match in context - add with placeholder
-            if not chain:
-                output.warning(f"Token {symbol} not in context. Specify chain: /watch {symbol} <chain>")
-                return
-
-            entry = await db.add_entry(
-                token_address=symbol.lower(),  # Use symbol as placeholder address
-                symbol=symbol,
-                chain=chain,
-            )
-            output.info(f"✅ Added {symbol} on {chain} to watchlist (search for token to update address)")
+            # No match in context - auto-search for the token
+            output.status(f"Searching for {symbol}...")
+            
+            search_result = await _search_token(symbol, chain, mcp_manager)
+            
+            if search_result and search_result.get("address"):
+                entry = await db.add_entry(
+                    token_address=search_result["address"],
+                    symbol=search_result.get("symbol", symbol),
+                    chain=search_result.get("chain", chain or "unknown"),
+                )
+                addr_short = entry.token_address[:10] + "..."
+                output.info(f"✅ Added {entry.symbol} ({addr_short}) on {entry.chain} to watchlist")
+            else:
+                output.error(f"Could not find token {symbol}. Try: /watch <address> <chain>")
 
 
 async def _cmd_unwatch(args: List[str], output: CLIOutput, db: WatchlistDB) -> None:
@@ -539,7 +610,7 @@ Examples:
 
     try:
         if args.interactive:
-            await run_interactive(planner, output, watchlist_db, poller)
+            await run_interactive(planner, output, watchlist_db, mcp_manager, poller)
         elif query:
             await run_single_query(planner, query, output, context={})
     except KeyboardInterrupt:
