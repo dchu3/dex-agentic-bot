@@ -6,9 +6,13 @@ import json
 import re
 import sys
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from app.types import PlannerResult
+
+if TYPE_CHECKING:
+    from app.watchlist import WatchlistEntry, AlertRecord
+    from app.watchlist_poller import TriggeredAlert
 
 
 class OutputFormat(Enum):
@@ -274,3 +278,160 @@ class CLIOutput:
         result = re.sub(r" +", " ", result)
 
         return result.strip()
+
+    # --- Watchlist Output Methods ---
+
+    def watchlist_table(self, entries: List["WatchlistEntry"]) -> None:
+        """Display watchlist entries in a table."""
+        if not entries:
+            self.info("Watchlist is empty")
+            return
+
+        if self.format == OutputFormat.JSON:
+            output = [
+                {
+                    "symbol": e.symbol,
+                    "address": e.token_address,
+                    "chain": e.chain,
+                    "last_price": e.last_price,
+                    "alert_above": e.alert_above,
+                    "alert_below": e.alert_below,
+                }
+                for e in entries
+            ]
+            print(json.dumps(output, indent=2), file=self.stream)
+            return
+
+        if not self._console:
+            # Plain text fallback
+            for e in entries:
+                price = f"${e.last_price:.8f}" if e.last_price else "-"
+                above = f"${e.alert_above:.8f}" if e.alert_above else "-"
+                below = f"${e.alert_below:.8f}" if e.alert_below else "-"
+                print(f"{e.symbol} ({e.chain}): {price} | Above: {above} | Below: {below}")
+            return
+
+        from rich.table import Table
+
+        table = Table(title="📋 Watchlist", show_header=True, header_style="bold cyan")
+        table.add_column("Symbol", style="cyan", no_wrap=True)
+        table.add_column("Address", style="dim", no_wrap=True)
+        table.add_column("Chain", style="magenta")
+        table.add_column("Last Price", style="green", justify="right")
+        table.add_column("Alert Above", justify="right")
+        table.add_column("Alert Below", justify="right")
+
+        for entry in entries:
+            addr_short = entry.token_address[:10] + "..." if len(entry.token_address) > 10 else entry.token_address
+            price = self._format_price(entry.last_price) if entry.last_price else "-"
+            above = self._format_price(entry.alert_above) if entry.alert_above else "-"
+            below = self._format_price(entry.alert_below) if entry.alert_below else "-"
+
+            table.add_row(
+                entry.symbol,
+                addr_short,
+                entry.chain,
+                price,
+                above,
+                below,
+            )
+
+        self._console.print(table)
+
+    def alert_notification(self, alert: "TriggeredAlert") -> None:
+        """Display a triggered alert notification."""
+        if alert.alert_type == "above":
+            emoji = "🔺"
+            direction = "crossed above"
+            color = "green"
+        else:
+            emoji = "🔻"
+            direction = "dropped below"
+            color = "red"
+
+        threshold = self._format_price(alert.threshold)
+        current = self._format_price(alert.current_price)
+
+        if self.format == OutputFormat.JSON:
+            output = {
+                "alert": True,
+                "symbol": alert.symbol,
+                "chain": alert.chain,
+                "type": alert.alert_type,
+                "threshold": alert.threshold,
+                "current_price": alert.current_price,
+            }
+            print(json.dumps(output), file=self.stream)
+            return
+
+        message = f"{emoji} ALERT: {alert.symbol} ({alert.chain}) {direction} {threshold} (current: {current})"
+
+        if self._console:
+            self._console.print(f"[bold {color}]{message}[/bold {color}]")
+        else:
+            print(f"🔔 {message}", file=self.stream)
+
+    def alerts_table(self, alerts: List["AlertRecord"]) -> None:
+        """Display alert history in a table."""
+        if not alerts:
+            self.info("No alerts")
+            return
+
+        if self.format == OutputFormat.JSON:
+            output = [
+                {
+                    "symbol": a.symbol,
+                    "chain": a.chain,
+                    "type": a.alert_type,
+                    "threshold": a.threshold,
+                    "triggered_price": a.triggered_price,
+                    "triggered_at": a.triggered_at.isoformat(),
+                    "acknowledged": a.acknowledged,
+                }
+                for a in alerts
+            ]
+            print(json.dumps(output, indent=2), file=self.stream)
+            return
+
+        if not self._console:
+            for a in alerts:
+                status = "✓" if a.acknowledged else "•"
+                print(f"{status} {a.symbol}: {a.alert_type} {a.threshold} @ {a.triggered_price}")
+            return
+
+        from rich.table import Table
+
+        table = Table(title="🔔 Alerts", show_header=True, header_style="bold cyan")
+        table.add_column("Symbol", style="cyan")
+        table.add_column("Chain", style="magenta")
+        table.add_column("Type")
+        table.add_column("Threshold", justify="right")
+        table.add_column("Triggered At", justify="right")
+        table.add_column("Time", style="dim")
+
+        for alert in alerts:
+            alert_type = "🔺 above" if alert.alert_type == "above" else "🔻 below"
+            threshold = self._format_price(alert.threshold)
+            triggered = self._format_price(alert.triggered_price)
+            time_str = alert.triggered_at.strftime("%Y-%m-%d %H:%M")
+
+            table.add_row(
+                alert.symbol or "?",
+                alert.chain or "?",
+                alert_type,
+                threshold,
+                triggered,
+                time_str,
+            )
+
+        self._console.print(table)
+
+    @staticmethod
+    def _format_price(price: float) -> str:
+        """Format price with appropriate precision."""
+        if price >= 1:
+            return f"${price:,.4f}"
+        elif price >= 0.0001:
+            return f"${price:.6f}"
+        else:
+            return f"${price:.10f}"
