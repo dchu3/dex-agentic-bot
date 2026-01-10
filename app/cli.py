@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import shlex
 import shutil
 import sys
@@ -14,6 +15,8 @@ from app.config import load_settings
 from app.mcp_client import MCPManager
 from app.output import CLIOutput, OutputFormat
 from app.types import PlannerResult
+from app.watchlist import WatchlistDB
+from app.watchlist_poller import WatchlistPoller, TriggeredAlert
 
 
 async def run_single_query(
@@ -36,81 +39,332 @@ async def run_single_query(
 async def run_interactive(
     planner: Any,
     output: CLIOutput,
+    watchlist_db: WatchlistDB,
+    poller: Optional[WatchlistPoller] = None,
 ) -> None:
     """Run interactive REPL session."""
     output.info("DEX Agentic Bot - Interactive Mode")
-    output.info("Type your queries, or use /quit to exit, /clear to reset context")
+    output.info("Type your queries, or use /help for commands")
     output.info("-" * 50)
 
     context: Dict[str, Any] = {}
     conversation_history: List[Dict[str, str]] = []
     recent_tokens: List[Dict[str, str]] = []
 
-    while True:
-        try:
-            query = input("\n> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            output.info("\nGoodbye!")
-            break
+    # Alert queue for background notifications
+    alert_queue: asyncio.Queue[TriggeredAlert] = asyncio.Queue()
 
-        if not query:
-            continue
+    def alert_callback(alert: TriggeredAlert) -> None:
+        """Queue alerts for display."""
+        alert_queue.put_nowait(alert)
 
-        # Handle commands
-        if query.startswith("/"):
-            cmd = query.lower()
-            if cmd in ("/quit", "/exit", "/q"):
-                output.info("Goodbye!")
+    # Start poller if enabled
+    if poller:
+        poller.alert_callback = alert_callback
+        await poller.start()
+        output.info("📡 Background price monitoring started")
+
+    try:
+        while True:
+            # Check for pending alerts
+            while not alert_queue.empty():
+                try:
+                    alert = alert_queue.get_nowait()
+                    output.alert_notification(alert)
+                except asyncio.QueueEmpty:
+                    break
+
+            try:
+                query = input("\n> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                output.info("\nGoodbye!")
                 break
-            elif cmd in ("/clear", "/reset"):
-                conversation_history.clear()
-                recent_tokens.clear()
-                output.info("Context cleared.")
-                continue
-            elif cmd in ("/context", "/ctx"):
-                if recent_tokens:
-                    output.info("Recent tokens in context:")
-                    for t in recent_tokens:
-                        symbol = t.get("symbol", "?")
-                        addr = t.get("address", "?")
-                        addr_short = addr[:10] + "..." if len(addr) > 10 else addr
-                        chain = t.get("chainId", "unknown")
-                        output.info(f"  • {symbol} ({addr_short}) on {chain}")
-                else:
-                    output.info("No tokens in context")
-                output.info(f"\nConversation history: {len(conversation_history)} messages")
-                continue
-            elif cmd in ("/help", "/h"):
-                output.info("Commands: /quit, /clear, /context, /help")
-                continue
-            else:
-                output.warning(f"Unknown command: {query}")
+
+            if not query:
                 continue
 
-        # Build context
-        context = {
-            "conversation_history": conversation_history,
-            "recent_tokens": recent_tokens,
-        }
+            # Handle commands
+            if query.startswith("/"):
+                handled = await _handle_command(
+                    query, output, watchlist_db, poller,
+                    conversation_history, recent_tokens
+                )
+                if handled == "quit":
+                    break
+                if handled:
+                    continue
 
-        try:
-            result = await planner.run(query, context)
-            output.result(result)
+            # Build context
+            context = {
+                "conversation_history": conversation_history,
+                "recent_tokens": recent_tokens,
+            }
 
-            # Update conversation history
-            conversation_history.append({"role": "user", "content": query})
-            conversation_history.append({"role": "assistant", "content": result.message})
+            try:
+                result = await planner.run(query, context)
+                output.result(result)
 
-            # Keep history bounded
-            if len(conversation_history) > 20:
-                conversation_history = conversation_history[-20:]
+                # Update conversation history
+                conversation_history.append({"role": "user", "content": query})
+                conversation_history.append({"role": "assistant", "content": result.message})
 
-            # Update token context
-            if result.tokens:
-                recent_tokens = result.tokens[:10]
+                # Keep history bounded
+                if len(conversation_history) > 20:
+                    conversation_history = conversation_history[-20:]
 
-        except Exception as exc:
-            output.error(f"Error: {exc}")
+                # Update token context
+                if result.tokens:
+                    recent_tokens = result.tokens[:10]
+
+            except Exception as exc:
+                output.error(f"Error: {exc}")
+
+    finally:
+        if poller:
+            await poller.stop()
+
+
+async def _handle_command(
+    query: str,
+    output: CLIOutput,
+    db: WatchlistDB,
+    poller: Optional[WatchlistPoller],
+    conversation_history: List[Dict[str, str]],
+    recent_tokens: List[Dict[str, str]],
+) -> Optional[str]:
+    """Handle slash commands. Returns 'quit' to exit, True if handled, None otherwise."""
+    parts = query.split()
+    cmd = parts[0].lower()
+
+    # Exit commands
+    if cmd in ("/quit", "/exit", "/q"):
+        output.info("Goodbye!")
+        return "quit"
+
+    # Clear context
+    if cmd in ("/clear", "/reset"):
+        conversation_history.clear()
+        recent_tokens.clear()
+        output.info("Context cleared.")
+        return True
+
+    # Show context
+    if cmd in ("/context", "/ctx"):
+        if recent_tokens:
+            output.info("Recent tokens in context:")
+            for t in recent_tokens:
+                symbol = t.get("symbol", "?")
+                addr = t.get("address", "?")
+                addr_short = addr[:10] + "..." if len(addr) > 10 else addr
+                chain = t.get("chainId", "unknown")
+                output.info(f"  • {symbol} ({addr_short}) on {chain}")
+        else:
+            output.info("No tokens in context")
+        output.info(f"\nConversation history: {len(conversation_history)} messages")
+        return True
+
+    # Help
+    if cmd in ("/help", "/h"):
+        output.info("Commands:")
+        output.info("  /quit, /q         - Exit the CLI")
+        output.info("  /clear            - Clear conversation context")
+        output.info("  /context          - Show recent tokens in context")
+        output.info("  /watch <token> [chain] - Add token to watchlist")
+        output.info("  /unwatch <token>  - Remove token from watchlist")
+        output.info("  /watchlist        - Show all watched tokens")
+        output.info("  /alert <token> above|below <price> - Set price alert")
+        output.info("  /alerts           - Show triggered alerts")
+        output.info("  /alerts clear     - Acknowledge all alerts")
+        output.info("  /alerts history   - Show alert history")
+        output.info("  /help             - Show this help")
+        return True
+
+    # Watchlist commands
+    if cmd == "/watch":
+        await _cmd_watch(parts[1:], output, db, recent_tokens)
+        return True
+
+    if cmd == "/unwatch":
+        await _cmd_unwatch(parts[1:], output, db)
+        return True
+
+    if cmd == "/watchlist":
+        await _cmd_watchlist(output, db, poller)
+        return True
+
+    if cmd == "/alert":
+        await _cmd_alert(parts[1:], output, db)
+        return True
+
+    if cmd == "/alerts":
+        await _cmd_alerts(parts[1:], output, db)
+        return True
+
+    output.warning(f"Unknown command: {query}. Use /help for available commands.")
+    return True
+
+
+async def _cmd_watch(
+    args: List[str],
+    output: CLIOutput,
+    db: WatchlistDB,
+    recent_tokens: List[Dict[str, str]],
+) -> None:
+    """Handle /watch command."""
+    if not args:
+        output.error("Usage: /watch <token_address_or_symbol> [chain]")
+        return
+
+    token_input = args[0]
+    chain = args[1].lower() if len(args) > 1 else None
+
+    # Check if it's an address (starts with 0x or is long alphanumeric)
+    is_address = token_input.startswith("0x") or len(token_input) > 20
+
+    if is_address:
+        # Direct address - need chain
+        if not chain:
+            output.error("Chain required when using address. Usage: /watch <address> <chain>")
+            return
+
+        entry = await db.add_entry(
+            token_address=token_input,
+            symbol=token_input[:8].upper(),  # Placeholder symbol
+            chain=chain,
+        )
+        output.info(f"✅ Added {token_input[:10]}... on {chain} to watchlist")
+    else:
+        # Symbol - look in recent tokens first
+        symbol = token_input.upper()
+        found = None
+
+        for t in recent_tokens:
+            if t.get("symbol", "").upper() == symbol:
+                if chain is None or t.get("chainId", "").lower() == chain:
+                    found = t
+                    break
+
+        if found:
+            entry = await db.add_entry(
+                token_address=found.get("address", ""),
+                symbol=symbol,
+                chain=found.get("chainId", chain or "unknown"),
+            )
+            addr_short = entry.token_address[:10] + "..."
+            output.info(f"✅ Added {symbol} ({addr_short}) on {entry.chain} to watchlist")
+        else:
+            # No match in context - add with placeholder
+            if not chain:
+                output.warning(f"Token {symbol} not in context. Specify chain: /watch {symbol} <chain>")
+                return
+
+            entry = await db.add_entry(
+                token_address=symbol.lower(),  # Use symbol as placeholder address
+                symbol=symbol,
+                chain=chain,
+            )
+            output.info(f"✅ Added {symbol} on {chain} to watchlist (search for token to update address)")
+
+
+async def _cmd_unwatch(args: List[str], output: CLIOutput, db: WatchlistDB) -> None:
+    """Handle /unwatch command."""
+    if not args:
+        output.error("Usage: /unwatch <token_address_or_symbol> [chain]")
+        return
+
+    token_input = args[0]
+    chain = args[1].lower() if len(args) > 1 else None
+
+    is_address = token_input.startswith("0x") or len(token_input) > 20
+
+    if is_address:
+        removed = await db.remove_entry(token_input, chain)
+    else:
+        removed = await db.remove_entry_by_symbol(token_input.upper(), chain)
+
+    if removed:
+        output.info(f"✅ Removed {token_input} from watchlist")
+    else:
+        output.warning(f"Token {token_input} not found in watchlist")
+
+
+async def _cmd_watchlist(
+    output: CLIOutput,
+    db: WatchlistDB,
+    poller: Optional[WatchlistPoller],
+) -> None:
+    """Handle /watchlist command."""
+    entries = await db.list_entries()
+
+    # Optionally trigger a price refresh
+    if poller and entries:
+        output.status("Refreshing prices...")
+        await poller.check_now()
+        entries = await db.list_entries()  # Reload with updated prices
+
+    output.watchlist_table(entries)
+
+
+async def _cmd_alert(args: List[str], output: CLIOutput, db: WatchlistDB) -> None:
+    """Handle /alert command."""
+    # Parse: /alert <token> above|below <price>
+    if len(args) < 3:
+        output.error("Usage: /alert <token> above|below <price>")
+        return
+
+    token_input = args[0]
+    direction = args[1].lower()
+    price_str = args[2]
+
+    if direction not in ("above", "below"):
+        output.error("Direction must be 'above' or 'below'")
+        return
+
+    try:
+        price = float(price_str.replace("$", "").replace(",", ""))
+    except ValueError:
+        output.error(f"Invalid price: {price_str}")
+        return
+
+    # Find the entry
+    is_address = token_input.startswith("0x") or len(token_input) > 20
+    if is_address:
+        entry = await db.get_entry(token_address=token_input)
+    else:
+        entry = await db.get_entry(symbol=token_input.upper())
+
+    if not entry:
+        output.error(f"Token {token_input} not in watchlist. Add it first with /watch")
+        return
+
+    # Update alert
+    if direction == "above":
+        await db.update_alert(entry.id, alert_above=price)
+    else:
+        await db.update_alert(entry.id, alert_below=price)
+
+    output.info(f"✅ Alert set: {entry.symbol} {direction} ${price}")
+
+
+async def _cmd_alerts(args: List[str], output: CLIOutput, db: WatchlistDB) -> None:
+    """Handle /alerts command."""
+    if args and args[0].lower() == "clear":
+        count = await db.acknowledge_alerts()
+        output.info(f"✅ Cleared {count} alert(s)")
+        return
+
+    if args and args[0].lower() == "history":
+        history = await db.get_alert_history(limit=20)
+        output.alerts_table(history)
+        return
+
+    # Default: show unacknowledged alerts
+    alerts = await db.get_unacknowledged_alerts()
+    if not alerts:
+        output.info("No pending alerts")
+        return
+
+    output.alerts_table(alerts)
 
 
 def _validate_command_exists(command: str, label: str, optional: bool = False) -> None:
@@ -177,6 +431,11 @@ Examples:
         action="store_true",
         help="Disable honeypot MCP server (faster startup)",
     )
+    parser.add_argument(
+        "--no-polling",
+        action="store_true",
+        help="Disable background price polling for watchlist alerts",
+    )
 
     args = parser.parse_args()
 
@@ -237,6 +496,24 @@ Examples:
         output.error(f"Failed to start MCP servers: {exc}")
         sys.exit(1)
 
+    # Initialize watchlist database
+    watchlist_db = WatchlistDB(db_path=settings.watchlist_db_path)
+    try:
+        await watchlist_db.connect()
+    except Exception as exc:
+        output.error(f"Failed to initialize watchlist database: {exc}")
+        await mcp_manager.shutdown()
+        sys.exit(1)
+
+    # Initialize poller if enabled
+    poller: Optional[WatchlistPoller] = None
+    if args.interactive and settings.watchlist_poll_enabled and not args.no_polling:
+        poller = WatchlistPoller(
+            db=watchlist_db,
+            mcp_manager=mcp_manager,
+            poll_interval=settings.watchlist_poll_interval,
+        )
+
     # Create log callback for verbose mode
     def log_callback(level: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
         if level == "error":
@@ -262,13 +539,14 @@ Examples:
 
     try:
         if args.interactive:
-            await run_interactive(planner, output)
+            await run_interactive(planner, output, watchlist_db, poller)
         elif query:
             await run_single_query(planner, query, output, context={})
     except KeyboardInterrupt:
         output.info("\nInterrupted")
     finally:
-        output.status("Shutting down MCP servers...")
+        output.status("Shutting down...")
+        await watchlist_db.close()
         await mcp_manager.shutdown()
 
 

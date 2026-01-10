@@ -76,6 +76,7 @@ MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 | `-v, --verbose` | Show debug information |
 | `--stdin` | Read query from stdin |
 | `--no-honeypot` | Disable honeypot MCP server (faster startup) |
+| `--no-polling` | Disable background price polling for watchlist alerts |
 
 ## Interactive Commands
 
@@ -84,7 +85,59 @@ MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 | `/quit` | Exit the CLI |
 | `/clear` | Clear conversation context |
 | `/context` | View stored tokens |
+| `/watch <token> [chain]` | Add token to watchlist |
+| `/unwatch <token>` | Remove token from watchlist |
+| `/watchlist` | Show all watched tokens with prices |
+| `/alert <token> above\|below <price>` | Set price alert threshold |
+| `/alerts` | Show triggered alerts |
+| `/alerts clear` | Acknowledge all alerts |
+| `/alerts history` | Show alert history |
 | `/help` | Show available commands |
+
+## Watchlist & Alerts
+
+The bot includes a persistent watchlist with background price monitoring and alerts.
+
+### Features
+
+- **Persistent Storage**: Watchlist stored in SQLite at `~/.dex-bot/watchlist.db`
+- **Background Polling**: Automatic price checks every 60 seconds (configurable)
+- **Price Alerts**: Set thresholds to be notified when prices cross above or below targets
+- **Alert History**: All triggered alerts are logged and can be reviewed
+
+### Configuration
+
+Add these optional settings to your `.env`:
+
+```env
+# Watchlist settings
+WATCHLIST_DB_PATH=~/.dex-bot/watchlist.db
+WATCHLIST_POLL_INTERVAL=60          # Seconds between price checks
+WATCHLIST_POLL_ENABLED=true         # Enable/disable background polling
+```
+
+### Example Usage
+
+```bash
+# Start interactive mode
+./scripts/start.sh --interactive
+
+# Add a token to watchlist (from recent search results)
+> /watch PEPE ethereum
+
+# Set a price alert
+> /alert PEPE above 0.00002
+
+# View your watchlist
+> /watchlist
+
+# Background alerts appear automatically:
+# 🔺 ALERT: PEPE (ethereum) crossed above $0.00002 (current: $0.000021)
+
+# View and clear alerts
+> /alerts
+> /alerts clear
+```
 
 ## Architecture
 

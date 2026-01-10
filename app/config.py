@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 from pydantic import Field, ValidationError
@@ -48,6 +49,18 @@ class Settings(BaseSettings):
     )
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+
+    # Watchlist settings
+    watchlist_db_path: Path = Field(
+        default=Path.home() / ".dex-bot" / "watchlist.db",
+        alias="WATCHLIST_DB_PATH",
+    )
+    watchlist_poll_interval: int = Field(
+        default=60, alias="WATCHLIST_POLL_INTERVAL", ge=10, le=3600
+    )
+    watchlist_poll_enabled: bool = Field(
+        default=True, alias="WATCHLIST_POLL_ENABLED"
+    )
 
 
 @lru_cache(maxsize=1)
