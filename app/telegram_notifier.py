@@ -146,7 +146,7 @@ class TelegramNotifier:
 
     async def _handle_command(self, command: str) -> None:
         """Handle a bot command."""
-        cmd = command.split()[0]
+        cmd = command.split()[0].split("@")[0]
         
         if cmd in ("/help", "/start"):
             await self.send_message(HELP_MESSAGE)

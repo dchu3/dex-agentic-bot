@@ -86,7 +86,8 @@ async def run_interactive(
                     break
 
             try:
-                query = input("\n> ").strip()
+                loop = asyncio.get_running_loop()
+                query = (await loop.run_in_executor(None, input, "\n> ")).strip()
             except (EOFError, KeyboardInterrupt):
                 output.info("\nGoodbye!")
                 break
