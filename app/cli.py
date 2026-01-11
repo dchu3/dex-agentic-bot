@@ -64,11 +64,25 @@ async def run_interactive(
         if telegram and telegram.is_configured:
             asyncio.create_task(_send_telegram_alert(telegram, alert, output))
 
+    # Background task to display alerts immediately
+    async def alert_display_loop() -> None:
+        """Monitor queue and display alerts in real-time."""
+        while True:
+            try:
+                alert = await alert_queue.get()
+                output.alert_notification(alert)
+            except asyncio.CancelledError:
+                break
+
+    alert_display_task: Optional[asyncio.Task] = None
+
     # Start poller if enabled
     if poller:
         poller.alert_callback = alert_callback
         await poller.start()
         output.info("📡 Background price monitoring started")
+        # Start alert display task
+        alert_display_task = asyncio.create_task(alert_display_loop())
 
     # Start Telegram polling if enabled
     if telegram and telegram.is_configured:
@@ -77,14 +91,6 @@ async def run_interactive(
 
     try:
         while True:
-            # Check for pending alerts
-            while not alert_queue.empty():
-                try:
-                    alert = alert_queue.get_nowait()
-                    output.alert_notification(alert)
-                except asyncio.QueueEmpty:
-                    break
-
             try:
                 loop = asyncio.get_running_loop()
                 query = (await loop.run_in_executor(None, input, "\n> ")).strip()
@@ -132,6 +138,12 @@ async def run_interactive(
                 output.error(f"Error: {exc}")
 
     finally:
+        if alert_display_task:
+            alert_display_task.cancel()
+            try:
+                await alert_display_task
+            except asyncio.CancelledError:
+                pass
         if poller:
             await poller.stop()
         if telegram:
