@@ -141,7 +141,7 @@ class WatchlistPoller:
                 try:
                     result = await dexscreener.call_tool(
                         "getTokenPools",
-                        {"tokenAddress": entry.token_address},
+                        {"chainId": chain, "tokenAddress": entry.token_address},
                     )
                     price = self._extract_price_from_dexscreener(result)
                     if price is not None:
@@ -170,10 +170,14 @@ class WatchlistPoller:
 
     def _extract_price_from_dexscreener(self, result: Any) -> Optional[float]:
         """Extract price from DexScreener response."""
-        if not isinstance(result, dict):
+        # Handle list response (direct array of pairs)
+        if isinstance(result, list):
+            pairs = result
+        elif isinstance(result, dict):
+            pairs = result.get("pairs", [])
+        else:
             return None
 
-        pairs = result.get("pairs", [])
         if not pairs:
             return None
 
