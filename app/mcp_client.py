@@ -297,10 +297,12 @@ class MCPManager:
         dexscreener_cmd: str,
         dexpaprika_cmd: str,
         honeypot_cmd: str = "",
+        rugcheck_cmd: str = "",
     ) -> None:
         self.dexscreener = MCPClient("dexscreener", dexscreener_cmd)
         self.dexpaprika = MCPClient("dexpaprika", dexpaprika_cmd)
         self.honeypot = MCPClient("honeypot", honeypot_cmd) if honeypot_cmd else None
+        self.rugcheck = MCPClient("rugcheck", rugcheck_cmd) if rugcheck_cmd else None
 
     async def start(self) -> None:
         tasks = [
@@ -309,6 +311,8 @@ class MCPManager:
         ]
         if self.honeypot:
             tasks.append(self.honeypot.start())
+        if self.rugcheck:
+            tasks.append(self.rugcheck.start())
         await asyncio.gather(*tasks)
 
     async def shutdown(self) -> None:
@@ -318,6 +322,8 @@ class MCPManager:
         ]
         if self.honeypot:
             tasks.append(self.honeypot.stop())
+        if self.rugcheck:
+            tasks.append(self.rugcheck.stop())
         await asyncio.gather(*tasks)
 
     def get_gemini_functions(self) -> List["types.FunctionDeclaration"]:
@@ -326,6 +332,8 @@ class MCPManager:
         clients = [self.dexscreener, self.dexpaprika]
         if self.honeypot:
             clients.append(self.honeypot)
+        if self.rugcheck:
+            clients.append(self.rugcheck)
         for client in clients:
             all_functions.extend(client.to_gemini_functions())
         return all_functions
@@ -336,6 +344,8 @@ class MCPManager:
         clients = [self.dexscreener, self.dexpaprika]
         if self.honeypot:
             clients.append(self.honeypot)
+        if self.rugcheck:
+            clients.append(self.rugcheck)
         for client in clients:
             if client.tools:
                 lines.append(f"\n### {client.name} tools:")
@@ -379,5 +389,6 @@ class MCPManager:
             "dexscreener": self.dexscreener,
             "dexpaprika": self.dexpaprika,
             "honeypot": self.honeypot,
+            "rugcheck": self.rugcheck,
         }
         return clients.get(name)
