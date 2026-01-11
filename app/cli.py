@@ -70,9 +70,10 @@ async def run_interactive(
         await poller.start()
         output.info("📡 Background price monitoring started")
 
-    # Show Telegram status
+    # Start Telegram polling if enabled
     if telegram and telegram.is_configured:
-        output.info("📱 Telegram notifications enabled")
+        await telegram.start_polling()
+        output.info("📱 Telegram notifications enabled (send /help to bot)")
 
     try:
         while True:

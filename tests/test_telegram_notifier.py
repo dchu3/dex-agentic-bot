@@ -212,7 +212,7 @@ def test_format_price():
 
 @pytest.mark.asyncio
 async def test_close(notifier):
-    """Test close method closes the client."""
+    """Test close method closes the client and stops polling."""
     # Create a mock client
     mock_client = AsyncMock()
     mock_client.is_closed = False
@@ -222,3 +222,113 @@ async def test_close(notifier):
 
     mock_client.aclose.assert_called_once()
     assert notifier._client is None
+
+
+@pytest.mark.asyncio
+async def test_start_stop_polling(notifier):
+    """Test starting and stopping polling."""
+    assert notifier.is_polling is False
+
+    await notifier.start_polling()
+    assert notifier.is_polling is True
+
+    await notifier.stop_polling()
+    assert notifier.is_polling is False
+
+
+@pytest.mark.asyncio
+async def test_start_polling_unconfigured(unconfigured_notifier):
+    """Test that polling doesn't start when not configured."""
+    await unconfigured_notifier.start_polling()
+    assert unconfigured_notifier.is_polling is False
+
+
+@pytest.mark.asyncio
+async def test_handle_help_command(notifier):
+    """Test handling /help command sends help message."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"ok": True}
+
+    with patch.object(notifier, "_get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        await notifier._handle_command("/help")
+
+        mock_client.post.assert_called_once()
+        call_args = mock_client.post.call_args
+        message_text = call_args[1]["json"]["text"]
+
+        assert "DEX Agentic Bot" in message_text
+        assert "/watch" in message_text
+        assert "/alert" in message_text
+
+
+@pytest.mark.asyncio
+async def test_handle_start_command(notifier):
+    """Test handling /start command sends help message."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"ok": True}
+
+    with patch.object(notifier, "_get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        await notifier._handle_command("/start")
+
+        mock_client.post.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_status_command(notifier):
+    """Test handling /status command sends status message."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"ok": True}
+
+    with patch.object(notifier, "_get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        await notifier._handle_command("/status")
+
+        mock_client.post.assert_called_once()
+        call_args = mock_client.post.call_args
+        message_text = call_args[1]["json"]["text"]
+
+        assert "Bot Status" in message_text
+        assert "Online" in message_text
+
+
+@pytest.mark.asyncio
+async def test_handle_update_from_correct_chat(notifier):
+    """Test that updates from the configured chat are processed."""
+    update = {
+        "update_id": 12345,
+        "message": {
+            "chat": {"id": 987654321},
+            "text": "/help",
+        }
+    }
+
+    with patch.object(notifier, "_handle_command", new_callable=AsyncMock) as mock_handle:
+        await notifier._handle_update(update)
+        mock_handle.assert_called_once_with("/help")
+
+
+@pytest.mark.asyncio
+async def test_handle_update_from_wrong_chat(notifier):
+    """Test that updates from other chats are ignored."""
+    update = {
+        "update_id": 12345,
+        "message": {
+            "chat": {"id": 111111111},  # Wrong chat ID
+            "text": "/help",
+        }
+    }
+
+    with patch.object(notifier, "_handle_command", new_callable=AsyncMock) as mock_handle:
+        await notifier._handle_update(update)
+        mock_handle.assert_not_called()
