@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from app.config import load_settings
 from app.mcp_client import MCPManager
 from app.output import CLIOutput, OutputFormat
+from app.telegram_notifier import TelegramNotifier
 from app.types import PlannerResult
 from app.watchlist import WatchlistDB
 from app.watchlist_poller import WatchlistPoller, TriggeredAlert
@@ -42,6 +43,7 @@ async def run_interactive(
     watchlist_db: WatchlistDB,
     mcp_manager: MCPManager,
     poller: Optional[WatchlistPoller] = None,
+    telegram: Optional[TelegramNotifier] = None,
 ) -> None:
     """Run interactive REPL session."""
     output.info("DEX Agentic Bot - Interactive Mode")
@@ -56,14 +58,22 @@ async def run_interactive(
     alert_queue: asyncio.Queue[TriggeredAlert] = asyncio.Queue()
 
     def alert_callback(alert: TriggeredAlert) -> None:
-        """Queue alerts for display."""
+        """Queue alerts for display and send to Telegram."""
         alert_queue.put_nowait(alert)
+        # Send to Telegram in background (fire and forget)
+        if telegram and telegram.is_configured:
+            asyncio.create_task(_send_telegram_alert(telegram, alert, output))
 
     # Start poller if enabled
     if poller:
         poller.alert_callback = alert_callback
         await poller.start()
         output.info("📡 Background price monitoring started")
+
+    # Start Telegram polling if enabled
+    if telegram and telegram.is_configured:
+        await telegram.start_polling()
+        output.info("📱 Telegram notifications enabled (send /help to bot)")
 
     try:
         while True:
@@ -76,7 +86,8 @@ async def run_interactive(
                     break
 
             try:
-                query = input("\n> ").strip()
+                loop = asyncio.get_running_loop()
+                query = (await loop.run_in_executor(None, input, "\n> ")).strip()
             except (EOFError, KeyboardInterrupt):
                 output.info("\nGoodbye!")
                 break
@@ -123,6 +134,22 @@ async def run_interactive(
     finally:
         if poller:
             await poller.stop()
+        if telegram:
+            await telegram.close()
+
+
+async def _send_telegram_alert(
+    telegram: TelegramNotifier,
+    alert: TriggeredAlert,
+    output: CLIOutput,
+) -> None:
+    """Send alert to Telegram in background."""
+    try:
+        success = await telegram.send_alert(alert)
+        if not success:
+            output.debug("Failed to send Telegram alert")
+    except Exception as e:
+        output.debug(f"Telegram error: {e}")
 
 
 async def _handle_command(
@@ -167,18 +194,7 @@ async def _handle_command(
 
     # Help
     if cmd in ("/help", "/h"):
-        output.info("Commands:")
-        output.info("  /quit, /q         - Exit the CLI")
-        output.info("  /clear            - Clear conversation context")
-        output.info("  /context          - Show recent tokens in context")
-        output.info("  /watch <token> [chain] - Add token to watchlist")
-        output.info("  /unwatch <token>  - Remove token from watchlist")
-        output.info("  /watchlist        - Show all watched tokens")
-        output.info("  /alert <token> above|below <price> - Set price alert")
-        output.info("  /alerts           - Show triggered alerts")
-        output.info("  /alerts clear     - Acknowledge all alerts")
-        output.info("  /alerts history   - Show alert history")
-        output.info("  /help             - Show this help")
+        output.help_panel()
         return True
 
     # Watchlist commands
@@ -507,6 +523,11 @@ Examples:
         action="store_true",
         help="Disable background price polling for watchlist alerts",
     )
+    parser.add_argument(
+        "--no-telegram",
+        action="store_true",
+        help="Disable Telegram notifications",
+    )
 
     args = parser.parse_args()
 
@@ -585,6 +606,20 @@ Examples:
             poll_interval=settings.watchlist_poll_interval,
         )
 
+    # Initialize Telegram notifier if enabled
+    telegram: Optional[TelegramNotifier] = None
+    if (
+        args.interactive
+        and settings.telegram_alerts_enabled
+        and not args.no_telegram
+        and settings.telegram_bot_token
+        and settings.telegram_chat_id
+    ):
+        telegram = TelegramNotifier(
+            bot_token=settings.telegram_bot_token,
+            chat_id=settings.telegram_chat_id,
+        )
+
     # Create log callback for verbose mode
     def log_callback(level: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
         if level == "error":
@@ -610,7 +645,7 @@ Examples:
 
     try:
         if args.interactive:
-            await run_interactive(planner, output, watchlist_db, mcp_manager, poller)
+            await run_interactive(planner, output, watchlist_db, mcp_manager, poller, telegram)
         elif query:
             await run_single_query(planner, query, output, context={})
     except KeyboardInterrupt:

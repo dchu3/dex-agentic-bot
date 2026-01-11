@@ -426,6 +426,96 @@ class CLIOutput:
 
         self._console.print(table)
 
+    def help_panel(self, version: str = "0.1.0") -> None:
+        """Display help information panel."""
+        if self.format == OutputFormat.JSON:
+            output = {
+                "name": "DEX Agentic Bot",
+                "version": version,
+                "commands": {
+                    "/quit, /q": "Exit the CLI",
+                    "/clear": "Clear conversation context",
+                    "/context": "Show recent tokens in context",
+                    "/watch <token> [chain]": "Add token to watchlist",
+                    "/unwatch <token>": "Remove token from watchlist",
+                    "/watchlist": "Show watched tokens with prices",
+                    "/alert <token> above|below <price>": "Set price alert",
+                    "/alerts": "Show triggered alerts",
+                    "/alerts clear": "Acknowledge all alerts",
+                    "/alerts history": "Show alert history",
+                    "/help": "Show this help",
+                },
+            }
+            print(json.dumps(output, indent=2), file=self.stream)
+            return
+
+        if not self._console:
+            # Plain text fallback
+            print(f"\n🤖 DEX Agentic Bot v{version}")
+            print("Blockchain-agnostic token & pool info across DEXs\n")
+            print("Commands:")
+            print("  /quit, /q         Exit the CLI")
+            print("  /clear            Clear conversation context")
+            print("  /context          Show recent tokens in context")
+            print("\nWatchlist:")
+            print("  /watch <token> [chain]       Add token to watchlist")
+            print("  /unwatch <token>             Remove from watchlist")
+            print("  /watchlist                   Show watched tokens")
+            print("  /alert <token> above|below <price>  Set price alert")
+            print("  /alerts                      Show triggered alerts")
+            print("  /alerts clear                Acknowledge alerts")
+            print("  /alerts history              Show alert history")
+            print("\n  /help             Show this help")
+            print("\nExamples:")
+            print("  > search for PEPE on ethereum")
+            print("  > /watch PEPE ethereum")
+            print("  > /alert PEPE above 0.00002")
+            return
+
+        from rich.panel import Panel
+        from rich.text import Text
+        from rich.table import Table
+        from rich.console import Group
+
+        # Header
+        header = Text()
+        header.append(f"🤖 DEX Agentic Bot v{version}\n", style="bold cyan")
+        header.append("Blockchain-agnostic token & pool info across DEXs", style="dim")
+
+        # Commands table
+        cmd_table = Table(show_header=False, box=None, padding=(0, 2))
+        cmd_table.add_column("Command", style="green")
+        cmd_table.add_column("Description")
+
+        cmd_table.add_row("", "")
+        cmd_table.add_row("[bold]General[/bold]", "")
+        cmd_table.add_row("  /quit, /q", "Exit the CLI")
+        cmd_table.add_row("  /clear", "Clear conversation context")
+        cmd_table.add_row("  /context", "Show recent tokens in context")
+        cmd_table.add_row("", "")
+        cmd_table.add_row("[bold]Watchlist[/bold]", "")
+        cmd_table.add_row("  /watch <token> [chain]", "Add token to watchlist")
+        cmd_table.add_row("  /unwatch <token>", "Remove from watchlist")
+        cmd_table.add_row("  /watchlist", "Show watched tokens with prices")
+        cmd_table.add_row("  /alert <token> above|below <price>", "Set price alert")
+        cmd_table.add_row("  /alerts", "Show triggered alerts")
+        cmd_table.add_row("  /alerts clear", "Acknowledge all alerts")
+        cmd_table.add_row("  /alerts history", "Show alert history")
+        cmd_table.add_row("", "")
+        cmd_table.add_row("  /help", "Show this help")
+
+        # Examples
+        examples = Text()
+        examples.append("\n📝 Examples:\n", style="bold")
+        examples.append("  > search for PEPE on ethereum\n", style="dim italic")
+        examples.append("  > /watch PEPE ethereum\n", style="dim italic")
+        examples.append("  > /alert PEPE above 0.00002", style="dim italic")
+
+        # Combine into panel
+        content = Group(header, cmd_table, examples)
+        panel = Panel(content, border_style="cyan", padding=(1, 2))
+        self._console.print(panel)
+
     @staticmethod
     def _format_price(price: float) -> str:
         """Format price with appropriate precision."""

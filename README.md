@@ -77,6 +77,7 @@ MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 | `--stdin` | Read query from stdin |
 | `--no-honeypot` | Disable honeypot MCP server (faster startup) |
 | `--no-polling` | Disable background price polling for watchlist alerts |
+| `--no-telegram` | Disable Telegram notifications |
 
 ## Interactive Commands
 
@@ -104,6 +105,7 @@ The bot includes a persistent watchlist with background price monitoring and ale
 - **Background Polling**: Automatic price checks every 60 seconds (configurable)
 - **Price Alerts**: Set thresholds to be notified when prices cross above or below targets
 - **Alert History**: All triggered alerts are logged and can be reviewed
+- **Telegram Notifications**: Receive alerts via Telegram bot (optional)
 
 ### Configuration
 
@@ -114,6 +116,43 @@ Add these optional settings to your `.env`:
 WATCHLIST_DB_PATH=~/.dex-bot/watchlist.db
 WATCHLIST_POLL_INTERVAL=60          # Seconds between price checks
 WATCHLIST_POLL_ENABLED=true         # Enable/disable background polling
+
+# Telegram notifications (optional)
+TELEGRAM_BOT_TOKEN=your-bot-token   # From @BotFather
+TELEGRAM_CHAT_ID=your-chat-id       # Your Telegram user/chat ID
+TELEGRAM_ALERTS_ENABLED=true        # Enable Telegram notifications
+```
+
+### Telegram Setup
+
+To receive alerts via Telegram:
+
+1. **Create a bot**: Message [@BotFather](https://t.me/BotFather) on Telegram
+   - Send `/newbot` and follow the prompts
+   - Copy the bot token (e.g., `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
+
+2. **Get your chat ID**: Message [@userinfobot](https://t.me/userinfobot)
+   - It will reply with your user ID (e.g., `987654321`)
+
+3. **Start your bot**: Open your bot in Telegram and click "Start"
+
+4. **Configure**: Add to your `.env`:
+   ```env
+   TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
+   TELEGRAM_CHAT_ID=987654321
+   TELEGRAM_ALERTS_ENABLED=true
+   ```
+
+When alerts trigger, you'll receive messages like:
+```
+🔔 Price Alert
+
+Token: PEPE
+Chain: ethereum
+Type: 🔺 Crossed above $0.00002
+Current Price: $0.000021
+
+⏰ 2026-01-11 11:15:00 UTC
 ```
 
 ### Example Usage
