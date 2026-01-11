@@ -192,18 +192,7 @@ async def _handle_command(
 
     # Help
     if cmd in ("/help", "/h"):
-        output.info("Commands:")
-        output.info("  /quit, /q         - Exit the CLI")
-        output.info("  /clear            - Clear conversation context")
-        output.info("  /context          - Show recent tokens in context")
-        output.info("  /watch <token> [chain] - Add token to watchlist")
-        output.info("  /unwatch <token>  - Remove token from watchlist")
-        output.info("  /watchlist        - Show all watched tokens")
-        output.info("  /alert <token> above|below <price> - Set price alert")
-        output.info("  /alerts           - Show triggered alerts")
-        output.info("  /alerts clear     - Acknowledge all alerts")
-        output.info("  /alerts history   - Show alert history")
-        output.info("  /help             - Show this help")
+        output.help_panel()
         return True
 
     # Watchlist commands
