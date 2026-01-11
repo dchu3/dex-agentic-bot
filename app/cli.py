@@ -531,6 +531,11 @@ Examples:
         help="Disable honeypot MCP server (faster startup)",
     )
     parser.add_argument(
+        "--no-rugcheck",
+        action="store_true",
+        help="Disable rugcheck MCP server (faster startup)",
+    )
+    parser.add_argument(
         "--no-polling",
         action="store_true",
         help="Disable background price polling for watchlist alerts",
@@ -581,6 +586,11 @@ Examples:
             "Honeypot",
             optional=args.no_honeypot or not settings.mcp_honeypot_cmd,
         )
+        _validate_command_exists(
+            settings.mcp_rugcheck_cmd,
+            "Rugcheck",
+            optional=args.no_rugcheck or not settings.mcp_rugcheck_cmd,
+        )
     except Exception as exc:
         output.error(str(exc))
         sys.exit(1)
@@ -591,6 +601,7 @@ Examples:
         dexscreener_cmd=settings.mcp_dexscreener_cmd,
         dexpaprika_cmd=settings.mcp_dexpaprika_cmd,
         honeypot_cmd="" if args.no_honeypot else settings.mcp_honeypot_cmd,
+        rugcheck_cmd="" if args.no_rugcheck else settings.mcp_rugcheck_cmd,
     )
 
     try:

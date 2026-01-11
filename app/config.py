@@ -37,6 +37,10 @@ class Settings(BaseSettings):
         default="node /path/to/dex-honeypot-mcp/dist/index.js",
         alias="MCP_HONEYPOT_CMD",
     )
+    mcp_rugcheck_cmd: str = Field(
+        default="",
+        alias="MCP_RUGCHECK_CMD",
+    )
 
     agentic_max_iterations: int = Field(
         default=8, alias="AGENTIC_MAX_ITERATIONS", ge=1, le=15

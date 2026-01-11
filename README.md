@@ -76,6 +76,7 @@ MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 | `-v, --verbose` | Show debug information |
 | `--stdin` | Read query from stdin |
 | `--no-honeypot` | Disable honeypot MCP server (faster startup) |
+| `--no-rugcheck` | Disable rugcheck MCP server (faster startup) |
 | `--no-polling` | Disable background price polling for watchlist alerts |
 | `--no-telegram` | Disable Telegram notifications |
 
@@ -194,16 +195,16 @@ Current Price: $0.000021
 │  - Table-formatted responses                                │
 └─────────────────────────┬───────────────────────────────────┘
                           │
-        ┌─────────────────┼─────────────────┐
-        ▼                 ▼                 ▼
-┌───────────────┐ ┌───────────────┐ ┌───────────────┐
-│  DexScreener  │ │  DexPaprika   │ │   Honeypot    │
-│    (MCP)      │ │    (MCP)      │ │    (MCP)      │
-├───────────────┤ ├───────────────┤ ├───────────────┤
-│ • searchPairs │ │ • getPools    │ │ • check_      │
-│ • getTrending │ │ • getDetails  │ │   honeypot    │
-│ • getTokenInfo│ │ • getNetworks │ │               │
-└───────────────┘ └───────────────┘ └───────────────┘
+        ┌─────────────────┼─────────────────┬─────────────────┐
+        ▼                 ▼                 ▼                 ▼
+┌───────────────┐ ┌───────────────┐ ┌───────────────┐ ┌───────────────┐
+│  DexScreener  │ │  DexPaprika   │ │   Honeypot    │ │   Rugcheck    │
+│    (MCP)      │ │    (MCP)      │ │    (MCP)      │ │    (MCP)      │
+├───────────────┤ ├───────────────┤ ├───────────────┤ ├───────────────┤
+│ • searchPairs │ │ • getPools    │ │ • check_      │ │ • token       │
+│ • getTrending │ │ • getDetails  │ │   honeypot    │ │   safety      │
+│ • getTokenInfo│ │ • getNetworks │ │ (ETH/BSC/Base)│ │   (Solana)    │
+└───────────────┘ └───────────────┘ └───────────────┘ └───────────────┘
 ```
 
 ## Development
@@ -330,7 +331,7 @@ This project uses a honeypot detection MCP server to check token safety using th
 | Ethereum | ✅ Supported |
 | BSC | ✅ Supported |
 | Base | ✅ Supported |
-| Solana | ❌ Not supported (marked as Unverified) |
+| Solana | ❌ Not supported (use Rugcheck instead) |
 | Other chains | ❌ Not supported (marked as Unverified) |
 
 ### Safety Status Meanings
@@ -371,6 +372,52 @@ Optional: Set `HONEYPOT_API_KEY` environment variable for higher rate limits (se
 | Tool | Description | Parameters |
 |------|-------------|------------|
 | `check_honeypot` | Check if a token is a honeypot | `address` (required), `chain` (optional: ethereum/bsc/base) |
+
+## MCP Server: Rugcheck (Solana)
+
+This project uses the Rugcheck MCP server to check Solana token safety using the [rugcheck.xyz](https://rugcheck.xyz) API.
+
+### Supported Chains
+
+| Chain | Status |
+|-------|--------|
+| Solana | ✅ Supported |
+| Other chains | ❌ Not supported (use Honeypot for EVM chains) |
+
+### Safety Status Meanings
+
+| Status | Meaning |
+|--------|---------|
+| ✅ Safe | Rugcheck passed - low risk indicators |
+| ⚠️ Risky | Rugcheck shows concerns - potential risks detected |
+| ❌ Rug | Confirmed rug pull risk - avoid trading |
+| Unverified | Check failed or token not found |
+
+### Installing Rugcheck MCP
+
+```bash
+# Clone the repository
+git clone https://github.com/dchu3/dex-rugcheck-mcp.git
+cd dex-rugcheck-mcp
+
+# Install dependencies
+npm install
+
+# Build
+npm run build
+```
+
+### Configuration
+
+Add to your `.env`:
+
+```env
+MCP_RUGCHECK_CMD=node /path/to/dex-rugcheck-mcp/dist/index.js
+```
+
+### Available Tools
+
+The Rugcheck MCP server provides tools to get token safety summaries for Solana tokens. Refer to the server documentation for specific tool details.
 
 ## License
 
