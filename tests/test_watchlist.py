@@ -143,6 +143,50 @@ async def test_remove_entry_by_symbol(db):
 
 
 @pytest.mark.asyncio
+async def test_add_entry_with_emoji_prefix(db):
+    """Test that emoji prefixes are stripped from symbols."""
+    entry = await db.add_entry(
+        token_address="0x1234567890abcdef1234567890abcdef12345678",
+        symbol="🔥PRIME",
+        chain="solana",
+    )
+
+    assert entry.symbol == "PRIME"
+
+
+@pytest.mark.asyncio
+async def test_remove_entry_by_symbol_with_emoji(db):
+    """Test removing a token that was added with emoji prefix."""
+    await db.add_entry(
+        token_address="0x1234567890abcdef1234567890abcdef12345678",
+        symbol="🚀ROCKET",
+        chain="ethereum",
+    )
+
+    # Should find it without the emoji
+    result = await db.remove_entry_by_symbol("ROCKET")
+    assert result is True
+
+    entries = await db.list_entries()
+    assert len(entries) == 0
+
+
+@pytest.mark.asyncio
+async def test_get_entry_by_symbol_with_emoji(db):
+    """Test getting a token by symbol when stored with emoji prefix."""
+    await db.add_entry(
+        token_address="0xabcdef1234567890abcdef1234567890abcdef12",
+        symbol="✨STAR",
+        chain="base",
+    )
+
+    # Should find it without the emoji
+    entry = await db.get_entry(symbol="STAR")
+    assert entry is not None
+    assert entry.symbol == "STAR"
+
+
+@pytest.mark.asyncio
 async def test_remove_nonexistent_entry(db):
     """Test removing a token that doesn't exist."""
     result = await db.remove_entry("0xnonexistent")

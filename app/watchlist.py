@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Optional
 
 import aiosqlite
+
+
+def _normalize_symbol(symbol: str) -> str:
+    """Strip emoji/special character prefixes from symbols."""
+    return re.sub(r'^[^\w]+', '', symbol).upper()
 
 DEFAULT_DB_PATH = Path.home() / ".dex-bot" / "watchlist.db"
 
@@ -128,7 +134,7 @@ class WatchlistDB:
                     alert_below = COALESCE(excluded.alert_below, watchlist.alert_below)
                 RETURNING *
                 """,
-                (token_address.lower(), symbol.upper(), chain.lower(), alert_above, alert_below),
+                (token_address.lower(), _normalize_symbol(symbol), chain.lower(), alert_above, alert_below),
             )
             row = await cursor.fetchone()
             await conn.commit()
@@ -154,16 +160,17 @@ class WatchlistDB:
     async def remove_entry_by_symbol(self, symbol: str, chain: Optional[str] = None) -> bool:
         """Remove a token from the watchlist by symbol."""
         conn = await self._ensure_connected()
+        normalized = _normalize_symbol(symbol)
         async with self._lock:
             if chain:
                 cursor = await conn.execute(
                     "DELETE FROM watchlist WHERE symbol = ? AND chain = ?",
-                    (symbol.upper(), chain.lower()),
+                    (normalized, chain.lower()),
                 )
             else:
                 cursor = await conn.execute(
                     "DELETE FROM watchlist WHERE symbol = ?",
-                    (symbol.upper(),),
+                    (normalized,),
                 )
             await conn.commit()
             return cursor.rowcount > 0
@@ -186,15 +193,16 @@ class WatchlistDB:
                     (token_address.lower(),),
                 )
         elif symbol:
+            normalized = _normalize_symbol(symbol)
             if chain:
                 cursor = await conn.execute(
                     "SELECT * FROM watchlist WHERE symbol = ? AND chain = ?",
-                    (symbol.upper(), chain.lower()),
+                    (normalized, chain.lower()),
                 )
             else:
                 cursor = await conn.execute(
                     "SELECT * FROM watchlist WHERE symbol = ?",
-                    (symbol.upper(),),
+                    (normalized,),
                 )
         else:
             return None
