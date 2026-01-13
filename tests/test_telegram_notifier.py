@@ -182,6 +182,8 @@ def test_format_alert_above(notifier, sample_alert):
     assert "ethereum" in message
     assert "🔺" in message
     assert "Crossed above" in message
+    assert "0x6982508145454ce325ddbe47a25d4ec3d2311933" in message
+    assert "<code>" in message  # Copyable format
 
 
 def test_format_alert_below(notifier):
@@ -200,6 +202,7 @@ def test_format_alert_below(notifier):
     assert "solana" in message
     assert "🔻" in message
     assert "Dropped below" in message
+    assert "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm" in message
 
 
 def test_format_price():
