@@ -242,7 +242,8 @@ class TelegramNotifier:
             f"<b>Token:</b> {alert.symbol}\n"
             f"<b>Chain:</b> {alert.chain}\n"
             f"<b>Type:</b> {emoji} {direction} {threshold}\n"
-            f"<b>Current Price:</b> {current}\n\n"
+            f"<b>Current Price:</b> {current}\n"
+            f"<b>Contract:</b> <code>{alert.token_address}</code>\n\n"
             f"⏰ {timestamp}"
         )
 
