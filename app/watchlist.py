@@ -158,38 +158,61 @@ class WatchlistDB:
         alert_above: Optional[float] = None,
         alert_below: Optional[float] = None,
     ) -> WatchlistEntry:
-        """Add a token to the watchlist."""
+        """Add a token to the watchlist.
+        
+        Token addresses are stored with original case (important for Solana base58 addresses).
+        Lookups use case-insensitive comparison.
+        """
         conn = await self._ensure_connected()
+        chain_lower = chain.lower()
         async with self._lock:
+            # Check if entry exists (case-insensitive)
             cursor = await conn.execute(
-                """
-                INSERT INTO watchlist (token_address, symbol, chain, alert_above, alert_below)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(token_address, chain) DO UPDATE SET
-                    symbol = excluded.symbol,
-                    alert_above = COALESCE(excluded.alert_above, watchlist.alert_above),
-                    alert_below = COALESCE(excluded.alert_below, watchlist.alert_below)
-                RETURNING *
-                """,
-                (token_address.lower(), _normalize_symbol(symbol), chain.lower(), alert_above, alert_below),
+                "SELECT id FROM watchlist WHERE LOWER(token_address) = LOWER(?) AND chain = ?",
+                (token_address, chain_lower),
             )
+            existing = await cursor.fetchone()
+            
+            if existing:
+                # Update existing entry
+                cursor = await conn.execute(
+                    """
+                    UPDATE watchlist SET
+                        symbol = ?,
+                        alert_above = COALESCE(?, alert_above),
+                        alert_below = COALESCE(?, alert_below)
+                    WHERE id = ?
+                    RETURNING *
+                    """,
+                    (_normalize_symbol(symbol), alert_above, alert_below, existing[0]),
+                )
+            else:
+                # Insert new entry with original case
+                cursor = await conn.execute(
+                    """
+                    INSERT INTO watchlist (token_address, symbol, chain, alert_above, alert_below)
+                    VALUES (?, ?, ?, ?, ?)
+                    RETURNING *
+                    """,
+                    (token_address, _normalize_symbol(symbol), chain_lower, alert_above, alert_below),
+                )
             row = await cursor.fetchone()
             await conn.commit()
             return self._row_to_entry(row)
 
     async def remove_entry(self, token_address: str, chain: Optional[str] = None) -> bool:
-        """Remove a token from the watchlist."""
+        """Remove a token from the watchlist (case-insensitive lookup)."""
         conn = await self._ensure_connected()
         async with self._lock:
             if chain:
                 cursor = await conn.execute(
-                    "DELETE FROM watchlist WHERE token_address = ? AND chain = ?",
-                    (token_address.lower(), chain.lower()),
+                    "DELETE FROM watchlist WHERE LOWER(token_address) = LOWER(?) AND chain = ?",
+                    (token_address, chain.lower()),
                 )
             else:
                 cursor = await conn.execute(
-                    "DELETE FROM watchlist WHERE token_address = ?",
-                    (token_address.lower(),),
+                    "DELETE FROM watchlist WHERE LOWER(token_address) = LOWER(?)",
+                    (token_address,),
                 )
             await conn.commit()
             return cursor.rowcount > 0
@@ -215,19 +238,19 @@ class WatchlistDB:
     async def get_entry(
         self, token_address: Optional[str] = None, symbol: Optional[str] = None, chain: Optional[str] = None
     ) -> Optional[WatchlistEntry]:
-        """Get a single watchlist entry by address or symbol."""
+        """Get a single watchlist entry by address or symbol (case-insensitive lookup)."""
         conn = await self._ensure_connected()
 
         if token_address:
             if chain:
                 cursor = await conn.execute(
-                    "SELECT * FROM watchlist WHERE token_address = ? AND chain = ?",
-                    (token_address.lower(), chain.lower()),
+                    "SELECT * FROM watchlist WHERE LOWER(token_address) = LOWER(?) AND chain = ?",
+                    (token_address, chain.lower()),
                 )
             else:
                 cursor = await conn.execute(
-                    "SELECT * FROM watchlist WHERE token_address = ?",
-                    (token_address.lower(),),
+                    "SELECT * FROM watchlist WHERE LOWER(token_address) = LOWER(?)",
+                    (token_address,),
                 )
         elif symbol:
             normalized = _normalize_symbol(symbol)
@@ -324,38 +347,69 @@ class WatchlistDB:
         momentum_score: Optional[float] = None,
         review_notes: Optional[str] = None,
     ) -> WatchlistEntry:
-        """Add a token to the watchlist as autonomously managed."""
+        """Add a token to the watchlist as autonomously managed.
+        
+        Token addresses are stored with original case (important for Solana base58 addresses).
+        Lookups use case-insensitive comparison.
+        """
         conn = await self._ensure_connected()
         now = datetime.utcnow()
+        chain_lower = chain.lower()
         async with self._lock:
+            # Check if entry exists (case-insensitive)
             cursor = await conn.execute(
-                """
-                INSERT INTO watchlist (
-                    token_address, symbol, chain, alert_above, alert_below,
-                    autonomous_managed, momentum_score, last_reviewed, review_notes
-                )
-                VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
-                ON CONFLICT(token_address, chain) DO UPDATE SET
-                    symbol = excluded.symbol,
-                    alert_above = COALESCE(excluded.alert_above, watchlist.alert_above),
-                    alert_below = COALESCE(excluded.alert_below, watchlist.alert_below),
-                    autonomous_managed = 1,
-                    momentum_score = excluded.momentum_score,
-                    last_reviewed = excluded.last_reviewed,
-                    review_notes = excluded.review_notes
-                RETURNING *
-                """,
-                (
-                    token_address.lower(),
-                    _normalize_symbol(symbol),
-                    chain.lower(),
-                    alert_above,
-                    alert_below,
-                    momentum_score,
-                    now,
-                    review_notes,
-                ),
+                "SELECT id FROM watchlist WHERE LOWER(token_address) = LOWER(?) AND chain = ?",
+                (token_address, chain_lower),
             )
+            existing = await cursor.fetchone()
+            
+            if existing:
+                # Update existing entry
+                cursor = await conn.execute(
+                    """
+                    UPDATE watchlist SET
+                        symbol = ?,
+                        alert_above = COALESCE(?, alert_above),
+                        alert_below = COALESCE(?, alert_below),
+                        autonomous_managed = 1,
+                        momentum_score = ?,
+                        last_reviewed = ?,
+                        review_notes = ?
+                    WHERE id = ?
+                    RETURNING *
+                    """,
+                    (
+                        _normalize_symbol(symbol),
+                        alert_above,
+                        alert_below,
+                        momentum_score,
+                        now,
+                        review_notes,
+                        existing[0],
+                    ),
+                )
+            else:
+                # Insert new entry with original case
+                cursor = await conn.execute(
+                    """
+                    INSERT INTO watchlist (
+                        token_address, symbol, chain, alert_above, alert_below,
+                        autonomous_managed, momentum_score, last_reviewed, review_notes
+                    )
+                    VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+                    RETURNING *
+                    """,
+                    (
+                        token_address,
+                        _normalize_symbol(symbol),
+                        chain_lower,
+                        alert_above,
+                        alert_below,
+                        momentum_score,
+                        now,
+                        review_notes,
+                    ),
+                )
             row = await cursor.fetchone()
             await conn.commit()
             return self._row_to_entry(row)
@@ -379,12 +433,12 @@ class WatchlistDB:
         return row[0] if row else 0
 
     async def remove_autonomous_entry(self, token_address: str, chain: str) -> bool:
-        """Remove an autonomously managed token from the watchlist."""
+        """Remove an autonomously managed token from the watchlist (case-insensitive lookup)."""
         conn = await self._ensure_connected()
         async with self._lock:
             cursor = await conn.execute(
-                "DELETE FROM watchlist WHERE token_address = ? AND chain = ? AND autonomous_managed = 1",
-                (token_address.lower(), chain.lower()),
+                "DELETE FROM watchlist WHERE LOWER(token_address) = LOWER(?) AND chain = ? AND autonomous_managed = 1",
+                (token_address, chain.lower()),
             )
             await conn.commit()
             return cursor.rowcount > 0

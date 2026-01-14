@@ -37,7 +37,8 @@ async def test_add_entry(db):
     )
 
     assert entry.id is not None
-    assert entry.token_address == "0x6982508145454ce325ddbe47a25d4ec3d2311933"
+    # Address should preserve original case
+    assert entry.token_address == "0x6982508145454Ce325dDbE47a25d4ec3d2311933"
     assert entry.symbol == "PEPE"
     assert entry.chain == "ethereum"
     assert entry.alert_above is None
@@ -220,7 +221,8 @@ async def test_get_entry_by_symbol(db):
 
     entry = await db.get_entry(symbol="PEPE")
     assert entry is not None
-    assert entry.token_address == "0x6982508145454ce325ddbe47a25d4ec3d2311933"
+    # Address should preserve original case
+    assert entry.token_address == "0x6982508145454Ce325dDbE47a25d4ec3d2311933"
 
 
 @pytest.mark.asyncio
@@ -247,6 +249,32 @@ async def test_get_nonexistent_entry(db):
     """Test getting a token that doesn't exist."""
     entry = await db.get_entry(token_address="0xnonexistent")
     assert entry is None
+
+
+@pytest.mark.asyncio
+async def test_case_insensitive_lookup(db):
+    """Test that lookups are case-insensitive but storage preserves case."""
+    # Add with mixed case (like Solana addresses)
+    original_address = "3QrGcwFSKXiKetD5ixzZa7H4zHPuTg8grrH7s5Mzpump"
+    await db.add_entry(
+        token_address=original_address,
+        symbol="TEST",
+        chain="solana",
+    )
+
+    # Should find with lowercase lookup
+    entry = await db.get_entry(token_address=original_address.lower())
+    assert entry is not None
+    assert entry.token_address == original_address  # Preserved original case
+
+    # Should find with uppercase lookup
+    entry = await db.get_entry(token_address=original_address.upper())
+    assert entry is not None
+    assert entry.token_address == original_address  # Preserved original case
+
+    # Remove should work with different case
+    removed = await db.remove_entry(token_address=original_address.lower())
+    assert removed
 
 
 @pytest.mark.asyncio
