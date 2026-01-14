@@ -242,6 +242,10 @@ async def _handle_command(
         await _cmd_alerts(parts[1:], output, db)
         return True
 
+    if cmd == "/fix-addresses":
+        await _cmd_fix_addresses(output, db, mcp_manager)
+        return True
+
     # Autonomous agent commands
     if cmd == "/autonomous":
         await _cmd_autonomous(parts[1:], output, db, autonomous_scheduler)
@@ -481,6 +485,82 @@ async def _cmd_alerts(args: List[str], output: CLIOutput, db: WatchlistDB) -> No
         return
 
     output.alerts_table(alerts)
+
+
+async def _cmd_fix_addresses(
+    output: CLIOutput,
+    db: WatchlistDB,
+    mcp_manager: "MCPManager",
+) -> None:
+    """Handle /fix-addresses command - fix lowercase Solana addresses."""
+    entries = await db.list_entries()
+    
+    if not entries:
+        output.info("No watchlist entries to fix")
+        return
+    
+    # Find entries that need fixing (lowercase Solana addresses)
+    to_fix = []
+    for entry in entries:
+        if entry.chain == "solana" and entry.token_address != entry.token_address.lower():
+            continue  # Already has mixed case, probably fine
+        if entry.chain == "solana" and entry.token_address == entry.token_address.lower():
+            to_fix.append(entry)
+    
+    if not to_fix:
+        output.info("✅ All addresses look correct (no lowercase Solana addresses found)")
+        return
+    
+    output.info(f"Found {len(to_fix)} address(es) that may need fixing...")
+    
+    dexscreener = mcp_manager.get_client("dexscreener")
+    if not dexscreener:
+        output.error("DexScreener MCP not available - cannot look up correct addresses")
+        return
+    
+    fixed = 0
+    for entry in to_fix:
+        try:
+            # Search by symbol to find correct address
+            output.status(f"Looking up {entry.symbol}...")
+            result = await dexscreener.call_tool(
+                "searchPairs",
+                {"query": entry.symbol},
+            )
+            
+            # Find matching pair on solana
+            pairs = result if isinstance(result, list) else result.get("pairs", [])
+            correct_address = None
+            
+            for pair in pairs:
+                if pair.get("chainId") == "solana":
+                    # Check base token
+                    base = pair.get("baseToken", {})
+                    if base.get("symbol", "").upper() == entry.symbol.upper():
+                        correct_address = base.get("address")
+                        break
+                    # Check quote token
+                    quote = pair.get("quoteToken", {})
+                    if quote.get("symbol", "").upper() == entry.symbol.upper():
+                        correct_address = quote.get("address")
+                        break
+            
+            if correct_address and correct_address.lower() == entry.token_address.lower():
+                # Found correct case
+                await db.update_token_address(entry.id, correct_address)
+                output.info(f"✅ Fixed {entry.symbol}: {correct_address[:15]}...")
+                fixed += 1
+            elif correct_address:
+                output.warning(f"⚠️  {entry.symbol}: Found different address, skipping")
+            else:
+                output.warning(f"⚠️  {entry.symbol}: Could not find on DexScreener")
+                
+        except Exception as e:
+            output.warning(f"⚠️  {entry.symbol}: Error - {str(e)}")
+    
+    output.info(f"\n✅ Fixed {fixed}/{len(to_fix)} address(es)")
+    if fixed > 0:
+        output.info("Run /watchlist to see updated addresses")
 
 
 async def _cmd_autonomous(

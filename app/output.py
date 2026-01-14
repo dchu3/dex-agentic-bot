@@ -443,6 +443,7 @@ class CLIOutput:
                     "/alerts": "Show triggered alerts",
                     "/alerts clear": "Acknowledge all alerts",
                     "/alerts history": "Show alert history",
+                    "/fix-addresses": "Fix lowercase Solana addresses",
                     "/help": "Show this help",
                 },
             }
@@ -465,6 +466,7 @@ class CLIOutput:
             print("  /alerts                      Show triggered alerts")
             print("  /alerts clear                Acknowledge alerts")
             print("  /alerts history              Show alert history")
+            print("  /fix-addresses               Fix lowercase Solana addresses")
             print("\n  /help             Show this help")
             print("\nExamples:")
             print("  > search for PEPE on ethereum")
@@ -501,6 +503,7 @@ class CLIOutput:
         cmd_table.add_row("  /alerts", "Show triggered alerts")
         cmd_table.add_row("  /alerts clear", "Acknowledge all alerts")
         cmd_table.add_row("  /alerts history", "Show alert history")
+        cmd_table.add_row("  /fix-addresses", "Fix lowercase Solana addresses")
         cmd_table.add_row("", "")
         cmd_table.add_row("  /help", "Show this help")
 
