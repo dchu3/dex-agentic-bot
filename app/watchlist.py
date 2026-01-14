@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS watchlist (
     alert_below REAL,
     last_price REAL,
     last_checked TIMESTAMP,
+    autonomous_managed INTEGER DEFAULT 0,
+    momentum_score REAL,
+    last_reviewed TIMESTAMP,
+    review_notes TEXT,
     UNIQUE(token_address, chain)
 );
 
@@ -42,6 +46,13 @@ CREATE TABLE IF NOT EXISTS alert_history (
     acknowledged INTEGER DEFAULT 0,
     FOREIGN KEY (entry_id) REFERENCES watchlist(id) ON DELETE CASCADE
 );
+"""
+
+MIGRATION_V2 = """
+ALTER TABLE watchlist ADD COLUMN autonomous_managed INTEGER DEFAULT 0;
+ALTER TABLE watchlist ADD COLUMN momentum_score REAL;
+ALTER TABLE watchlist ADD COLUMN last_reviewed TIMESTAMP;
+ALTER TABLE watchlist ADD COLUMN review_notes TEXT;
 """
 
 
@@ -58,6 +69,10 @@ class WatchlistEntry:
     alert_below: Optional[float] = None
     last_price: Optional[float] = None
     last_checked: Optional[datetime] = None
+    autonomous_managed: bool = False
+    momentum_score: Optional[float] = None
+    last_reviewed: Optional[datetime] = None
+    review_notes: Optional[str] = None
 
 
 @dataclass
@@ -98,12 +113,34 @@ class WatchlistDB:
         # Create tables
         await self._connection.executescript(SCHEMA)
         await self._connection.commit()
+        
+        # Run migrations for existing databases
+        await self._run_migrations()
 
     async def close(self) -> None:
         """Close database connection."""
         if self._connection:
             await self._connection.close()
             self._connection = None
+
+    async def _run_migrations(self) -> None:
+        """Run database migrations for schema updates."""
+        conn = await self._ensure_connected()
+        
+        # Check if autonomous_managed column exists
+        cursor = await conn.execute("PRAGMA table_info(watchlist)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        
+        if "autonomous_managed" not in columns:
+            # Run migration V2
+            for statement in MIGRATION_V2.strip().split(";"):
+                statement = statement.strip()
+                if statement:
+                    try:
+                        await conn.execute(statement)
+                    except Exception:
+                        pass  # Column may already exist
+            await conn.commit()
 
     async def _ensure_connected(self) -> aiosqlite.Connection:
         """Ensure database is connected."""
@@ -275,6 +312,129 @@ class WatchlistDB:
             await conn.commit()
             return cursor.rowcount
 
+    # --- Autonomous Management Operations ---
+
+    async def add_autonomous_entry(
+        self,
+        token_address: str,
+        symbol: str,
+        chain: str,
+        alert_above: Optional[float] = None,
+        alert_below: Optional[float] = None,
+        momentum_score: Optional[float] = None,
+        review_notes: Optional[str] = None,
+    ) -> WatchlistEntry:
+        """Add a token to the watchlist as autonomously managed."""
+        conn = await self._ensure_connected()
+        now = datetime.utcnow()
+        async with self._lock:
+            cursor = await conn.execute(
+                """
+                INSERT INTO watchlist (
+                    token_address, symbol, chain, alert_above, alert_below,
+                    autonomous_managed, momentum_score, last_reviewed, review_notes
+                )
+                VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+                ON CONFLICT(token_address, chain) DO UPDATE SET
+                    symbol = excluded.symbol,
+                    alert_above = COALESCE(excluded.alert_above, watchlist.alert_above),
+                    alert_below = COALESCE(excluded.alert_below, watchlist.alert_below),
+                    autonomous_managed = 1,
+                    momentum_score = excluded.momentum_score,
+                    last_reviewed = excluded.last_reviewed,
+                    review_notes = excluded.review_notes
+                RETURNING *
+                """,
+                (
+                    token_address.lower(),
+                    _normalize_symbol(symbol),
+                    chain.lower(),
+                    alert_above,
+                    alert_below,
+                    momentum_score,
+                    now,
+                    review_notes,
+                ),
+            )
+            row = await cursor.fetchone()
+            await conn.commit()
+            return self._row_to_entry(row)
+
+    async def list_autonomous_entries(self) -> List[WatchlistEntry]:
+        """Get all autonomously managed watchlist entries."""
+        conn = await self._ensure_connected()
+        cursor = await conn.execute(
+            "SELECT * FROM watchlist WHERE autonomous_managed = 1 ORDER BY momentum_score DESC"
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_entry(row) for row in rows]
+
+    async def count_autonomous_entries(self) -> int:
+        """Count autonomously managed entries."""
+        conn = await self._ensure_connected()
+        cursor = await conn.execute(
+            "SELECT COUNT(*) FROM watchlist WHERE autonomous_managed = 1"
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    async def remove_autonomous_entry(self, token_address: str, chain: str) -> bool:
+        """Remove an autonomously managed token from the watchlist."""
+        conn = await self._ensure_connected()
+        async with self._lock:
+            cursor = await conn.execute(
+                "DELETE FROM watchlist WHERE token_address = ? AND chain = ? AND autonomous_managed = 1",
+                (token_address.lower(), chain.lower()),
+            )
+            await conn.commit()
+            return cursor.rowcount > 0
+
+    async def update_autonomous_entry(
+        self,
+        entry_id: int,
+        alert_above: Optional[float] = None,
+        alert_below: Optional[float] = None,
+        momentum_score: Optional[float] = None,
+        review_notes: Optional[str] = None,
+    ) -> bool:
+        """Update an autonomously managed entry with new data."""
+        conn = await self._ensure_connected()
+        now = datetime.utcnow()
+        async with self._lock:
+            updates = ["last_reviewed = ?"]
+            params: List[Any] = [now]
+
+            if alert_above is not None:
+                updates.append("alert_above = ?")
+                params.append(alert_above)
+            if alert_below is not None:
+                updates.append("alert_below = ?")
+                params.append(alert_below)
+            if momentum_score is not None:
+                updates.append("momentum_score = ?")
+                params.append(momentum_score)
+            if review_notes is not None:
+                updates.append("review_notes = ?")
+                params.append(review_notes)
+
+            params.append(entry_id)
+            cursor = await conn.execute(
+                f"UPDATE watchlist SET {', '.join(updates)} WHERE id = ? AND autonomous_managed = 1",
+                params,
+            )
+            await conn.commit()
+            return cursor.rowcount > 0
+
+    async def clear_autonomous_watchlist(self) -> int:
+        """Remove all autonomously managed entries from the watchlist."""
+        conn = await self._ensure_connected()
+        async with self._lock:
+            cursor = await conn.execute(
+                "DELETE FROM watchlist WHERE autonomous_managed = 1"
+            )
+            await conn.commit()
+            return cursor.rowcount
+
     # --- Alert History Operations ---
 
     async def record_alert(
@@ -360,6 +520,7 @@ class WatchlistDB:
     @staticmethod
     def _row_to_entry(row: aiosqlite.Row) -> WatchlistEntry:
         """Convert a database row to WatchlistEntry."""
+        row_keys = row.keys()
         return WatchlistEntry(
             id=row["id"],
             token_address=row["token_address"],
@@ -370,6 +531,10 @@ class WatchlistDB:
             alert_below=row["alert_below"],
             last_price=row["last_price"],
             last_checked=datetime.fromisoformat(row["last_checked"]) if row["last_checked"] else None,
+            autonomous_managed=bool(row["autonomous_managed"]) if "autonomous_managed" in row_keys else False,
+            momentum_score=row["momentum_score"] if "momentum_score" in row_keys else None,
+            last_reviewed=datetime.fromisoformat(row["last_reviewed"]) if "last_reviewed" in row_keys and row["last_reviewed"] else None,
+            review_notes=row["review_notes"] if "review_notes" in row_keys else None,
         )
 
     @staticmethod

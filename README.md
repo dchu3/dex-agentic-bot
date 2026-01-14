@@ -79,6 +79,8 @@ MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 | `--no-rugcheck` | Disable rugcheck MCP server (faster startup) |
 | `--no-polling` | Disable background price polling for watchlist alerts |
 | `--no-telegram` | Disable Telegram notifications |
+| `--autonomous` | Enable autonomous watchlist management |
+| `--autonomous-interval` | Autonomous cycle interval in minutes (default: 60) |
 
 ## Interactive Commands
 
@@ -94,6 +96,13 @@ MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 | `/alerts` | Show triggered alerts |
 | `/alerts clear` | Acknowledge all alerts |
 | `/alerts history` | Show alert history |
+| `/autonomous` | Show autonomous management commands |
+| `/autonomous status` | Show autonomous scheduler status |
+| `/autonomous run` | Trigger immediate autonomous cycle |
+| `/autonomous start` | Start autonomous scheduler |
+| `/autonomous stop` | Stop autonomous scheduler |
+| `/autonomous list` | List autonomously managed tokens |
+| `/autonomous clear` | Remove all autonomous tokens |
 | `/help` | Show available commands |
 
 ## Watchlist & Alerts
@@ -177,6 +186,98 @@ Current Price: $0.000021
 # View and clear alerts
 > /alerts
 > /alerts clear
+```
+
+## Autonomous Watchlist Management
+
+The bot includes an **autonomous agent** that can automatically discover, manage, and monitor Solana tokens with upward momentum potential.
+
+### Features
+
+- **Automatic Discovery**: Finds trending Solana tokens with strong momentum indicators
+- **Smart Triggers**: Sets take-profit (10% above) and stop-loss (5% below) automatically
+- **Hourly Reviews**: Re-evaluates positions every 60 minutes (configurable)
+- **Position Management**: Maintains up to 5 tokens, replacing underperformers
+- **Trailing Stops**: Automatically raises stop-loss as price increases
+- **Telegram Alerts**: Sends notifications for adds, removes, and trigger updates
+
+### How It Works
+
+```
+Hour 0 (Discovery):
+  Agent searches trending Solana tokens
+  → Analyzes volume, price momentum, liquidity
+  → Runs rugcheck safety analysis
+  → Adds top 5 candidates with triggers:
+    BONK: price=$0.00002, ↑$0.000022, ↓$0.000019
+
+Hour 1 (Review):
+  Agent reviews current positions
+  → BONK: +15% ✅ KEEP, raise stop to $0.000021
+  → WIF: -8% ❌ REPLACE with ZEUS (better momentum)
+  → Updates triggers, sends Telegram notification
+```
+
+### Configuration
+
+Add to your `.env`:
+
+```env
+# Autonomous Agent settings
+AUTONOMOUS_ENABLED=true
+AUTONOMOUS_INTERVAL_MINS=60     # Cycle interval (5-1440 minutes)
+AUTONOMOUS_MAX_TOKENS=5         # Max tokens in watchlist (1-20)
+AUTONOMOUS_CHAIN=solana         # Target blockchain
+AUTONOMOUS_MIN_VOLUME_USD=10000 # Minimum 24h volume
+AUTONOMOUS_MIN_LIQUIDITY_USD=5000  # Minimum liquidity
+```
+
+### Usage
+
+```bash
+# Start with autonomous mode enabled
+./scripts/start.sh --interactive --autonomous
+
+# Or with custom interval (30 minutes)
+./scripts/start.sh --interactive --autonomous --autonomous-interval 30
+```
+
+### Commands
+
+```bash
+# Check autonomous scheduler status
+> /autonomous status
+
+# Manually trigger a cycle
+> /autonomous run
+
+# View autonomously managed tokens
+> /autonomous list
+
+# Start/stop the scheduler
+> /autonomous start
+> /autonomous stop
+
+# Clear all autonomous positions
+> /autonomous clear
+```
+
+### Telegram Notifications
+
+When enabled, you'll receive messages like:
+
+```
+🤖 Autonomous Watchlist Update
+⏰ 2026-01-14 12:00 UTC
+
+📈 New Positions:
+  • BONK @ $0.00002345 🟢 +15.2%
+    📊 Score: 78 | Vol: $1,234,567
+
+🔄 Updated Triggers:
+  • WIF: ↑$0.0012 ↓$0.00098
+
+📋 Added: BONK | Updated: WIF
 ```
 
 ## Architecture
