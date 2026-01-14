@@ -86,9 +86,9 @@ Score tokens from 0-100 based on:
 ## Response Format
 After gathering data, respond with a JSON object containing your findings:
 ```json
-{
+{{
   "candidates": [
-    {
+    {{
       "token_address": "address",
       "symbol": "SYMBOL",
       "chain": "solana",
@@ -100,10 +100,10 @@ After gathering data, respond with a JSON object containing your findings:
       "alert_above": 0.0011,
       "alert_below": 0.00095,
       "reasoning": "Strong volume surge, positive momentum across all timeframes"
-    }
+    }}
   ],
   "summary": "Found X tokens with strong momentum indicators"
-}
+}}
 ```
 
 ## Price Trigger Calculation
@@ -144,9 +144,9 @@ For each token, analyze:
 ## Response Format
 Respond with a JSON object:
 ```json
-{
+{{
   "reviews": [
-    {
+    {{
       "entry_id": 1,
       "token_address": "address",
       "symbol": "SYMBOL",
@@ -155,11 +155,11 @@ Respond with a JSON object:
       "new_alert_below": 0.00098,
       "new_momentum_score": 70,
       "reasoning": "Price up 8%, raising stop-loss to lock gains"
-    }
+    }}
   ],
   "replacements_needed": 2,
   "summary": "Reviewed 5 tokens: 3 keep, 1 update, 1 remove"
-}
+}}
 ```
 
 ## Important Rules
