@@ -18,6 +18,8 @@ from app.telegram_notifier import TelegramNotifier
 from app.types import PlannerResult
 from app.watchlist import WatchlistDB
 from app.watchlist_poller import WatchlistPoller, TriggeredAlert
+from app.autonomous_agent import AutonomousWatchlistAgent
+from app.autonomous_scheduler import AutonomousScheduler
 
 
 async def run_single_query(
@@ -44,6 +46,7 @@ async def run_interactive(
     mcp_manager: MCPManager,
     poller: Optional[WatchlistPoller] = None,
     telegram: Optional[TelegramNotifier] = None,
+    autonomous_scheduler: Optional[AutonomousScheduler] = None,
 ) -> None:
     """Run interactive REPL session."""
     output.info("DEX Agentic Bot - Interactive Mode")
@@ -89,6 +92,12 @@ async def run_interactive(
         await telegram.start_polling()
         output.info("📱 Telegram notifications enabled (send /help to bot)")
 
+    # Start autonomous scheduler if enabled
+    if autonomous_scheduler:
+        await autonomous_scheduler.start()
+        interval_mins = autonomous_scheduler.interval_seconds // 60
+        output.info(f"🤖 Autonomous watchlist manager started (every {interval_mins} mins)")
+
     try:
         while True:
             try:
@@ -105,7 +114,7 @@ async def run_interactive(
             if query.startswith("/"):
                 handled = await _handle_command(
                     query, output, watchlist_db, poller, mcp_manager,
-                    conversation_history, recent_tokens
+                    conversation_history, recent_tokens, autonomous_scheduler
                 )
                 if handled == "quit":
                     break
@@ -144,6 +153,8 @@ async def run_interactive(
                 await alert_display_task
             except asyncio.CancelledError:
                 pass
+        if autonomous_scheduler:
+            await autonomous_scheduler.stop()
         if poller:
             await poller.stop()
         if telegram:
@@ -172,6 +183,7 @@ async def _handle_command(
     mcp_manager: MCPManager,
     conversation_history: List[Dict[str, str]],
     recent_tokens: List[Dict[str, str]],
+    autonomous_scheduler: Optional[AutonomousScheduler] = None,
 ) -> Optional[str]:
     """Handle slash commands. Returns 'quit' to exit, True if handled, None otherwise."""
     parts = query.split()
@@ -228,6 +240,11 @@ async def _handle_command(
 
     if cmd == "/alerts":
         await _cmd_alerts(parts[1:], output, db)
+        return True
+
+    # Autonomous agent commands
+    if cmd == "/autonomous":
+        await _cmd_autonomous(parts[1:], output, db, autonomous_scheduler)
         return True
 
     output.warning(f"Unknown command: {query}. Use /help for available commands.")
@@ -466,6 +483,105 @@ async def _cmd_alerts(args: List[str], output: CLIOutput, db: WatchlistDB) -> No
     output.alerts_table(alerts)
 
 
+async def _cmd_autonomous(
+    args: List[str],
+    output: CLIOutput,
+    db: WatchlistDB,
+    scheduler: Optional[AutonomousScheduler],
+) -> None:
+    """Handle /autonomous command."""
+    if not args:
+        # Show help
+        output.info("Autonomous Watchlist Manager Commands:")
+        output.info("  /autonomous status  - Show current status")
+        output.info("  /autonomous run     - Trigger immediate cycle")
+        output.info("  /autonomous start   - Start the scheduler")
+        output.info("  /autonomous stop    - Stop the scheduler")
+        output.info("  /autonomous list    - List autonomous tokens")
+        output.info("  /autonomous clear   - Remove all autonomous tokens")
+        return
+
+    subcmd = args[0].lower()
+
+    if subcmd == "status":
+        if not scheduler:
+            output.warning("Autonomous mode is not enabled. Use --autonomous flag.")
+            return
+        status = scheduler.get_status()
+        output.info("🤖 Autonomous Watchlist Status:")
+        output.info(f"  Running: {'✅ Yes' if status['running'] else '❌ No'}")
+        output.info(f"  Interval: {status['interval_seconds'] // 60} minutes")
+        output.info(f"  Max tokens: {status['max_tokens']}")
+        output.info(f"  Cycles completed: {status['cycle_count']}")
+        if status['last_cycle']:
+            output.info(f"  Last cycle: {status['last_cycle']}")
+        if status['last_summary']:
+            output.info(f"  Last result: {status['last_summary']}")
+        return
+
+    if subcmd == "run":
+        if not scheduler:
+            output.warning("Autonomous mode is not enabled. Use --autonomous flag.")
+            return
+        output.status("Running autonomous cycle...")
+        try:
+            result = await scheduler.run_cycle_now()
+            output.info(f"✅ Cycle complete: {result.summary}")
+            if result.errors:
+                for err in result.errors:
+                    output.warning(f"  Error: {err}")
+        except Exception as e:
+            output.error(f"Cycle failed: {e}")
+        return
+
+    if subcmd == "start":
+        if not scheduler:
+            output.warning("Autonomous mode is not enabled. Use --autonomous flag.")
+            return
+        if scheduler.is_running:
+            output.info("Scheduler is already running.")
+            return
+        await scheduler.start()
+        output.info("✅ Autonomous scheduler started")
+        return
+
+    if subcmd == "stop":
+        if not scheduler:
+            output.warning("Autonomous mode is not enabled. Use --autonomous flag.")
+            return
+        if not scheduler.is_running:
+            output.info("Scheduler is not running.")
+            return
+        await scheduler.stop()
+        output.info("✅ Autonomous scheduler stopped")
+        return
+
+    if subcmd == "list":
+        entries = await db.list_autonomous_entries()
+        if not entries:
+            output.info("No tokens in autonomous watchlist.")
+            return
+        output.info(f"🤖 Autonomous Watchlist ({len(entries)} tokens):")
+        for entry in entries:
+            price_fmt = f"${entry.last_price:.8f}" if entry.last_price else "—"
+            score = entry.momentum_score or 0
+            output.info(
+                f"  • {entry.symbol} @ {price_fmt} (Score: {score:.0f})"
+            )
+            if entry.alert_above or entry.alert_below:
+                above = f"${entry.alert_above:.8f}" if entry.alert_above else "—"
+                below = f"${entry.alert_below:.8f}" if entry.alert_below else "—"
+                output.info(f"    Triggers: ↑{above} ↓{below}")
+        return
+
+    if subcmd == "clear":
+        count = await db.clear_autonomous_watchlist()
+        output.info(f"✅ Cleared {count} autonomous token(s)")
+        return
+
+    output.warning(f"Unknown subcommand: {subcmd}. Use /autonomous for help.")
+
+
 def _validate_command_exists(command: str, label: str, optional: bool = False) -> None:
     """Ensure the first token of a command is available on PATH or as a file."""
     if not command:
@@ -544,6 +660,17 @@ Examples:
         "--no-telegram",
         action="store_true",
         help="Disable Telegram notifications",
+    )
+    parser.add_argument(
+        "--autonomous",
+        action="store_true",
+        help="Enable autonomous watchlist management",
+    )
+    parser.add_argument(
+        "--autonomous-interval",
+        type=int,
+        default=None,
+        help="Autonomous cycle interval in minutes (default: 60)",
     )
 
     args = parser.parse_args()
@@ -652,6 +779,36 @@ Examples:
         else:
             output.debug(message, data)
 
+    # Initialize autonomous scheduler if enabled
+    autonomous_scheduler: Optional[AutonomousScheduler] = None
+    autonomous_enabled = args.autonomous or settings.autonomous_enabled
+    if args.interactive and autonomous_enabled:
+        # Create autonomous agent
+        autonomous_agent = AutonomousWatchlistAgent(
+            api_key=settings.gemini_api_key,
+            mcp_manager=mcp_manager,
+            model_name=settings.gemini_model,
+            max_tokens=settings.autonomous_max_tokens,
+            min_volume_usd=settings.autonomous_min_volume_usd,
+            min_liquidity_usd=settings.autonomous_min_liquidity_usd,
+            verbose=args.verbose,
+            log_callback=log_callback if args.verbose else None,
+        )
+
+        # Calculate interval in seconds
+        interval_mins = args.autonomous_interval or settings.autonomous_interval_mins
+        interval_seconds = interval_mins * 60
+
+        autonomous_scheduler = AutonomousScheduler(
+            agent=autonomous_agent,
+            db=watchlist_db,
+            telegram=telegram,
+            interval_seconds=interval_seconds,
+            max_tokens=settings.autonomous_max_tokens,
+            verbose=args.verbose,
+            log_callback=log_callback if args.verbose else None,
+        )
+
     # Initialize planner
     from app.agent import AgenticPlanner
 
@@ -668,7 +825,10 @@ Examples:
 
     try:
         if args.interactive:
-            await run_interactive(planner, output, watchlist_db, mcp_manager, poller, telegram)
+            await run_interactive(
+                planner, output, watchlist_db, mcp_manager,
+                poller, telegram, autonomous_scheduler
+            )
         elif query:
             await run_single_query(planner, query, output, context={})
     except KeyboardInterrupt:

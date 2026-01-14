@@ -256,3 +256,115 @@ class TelegramNotifier:
             return f"${price:.6f}"
         else:
             return f"${price:.10f}"
+
+    # --- Autonomous Watchlist Notifications ---
+
+    async def send_token_added(
+        self,
+        symbol: str,
+        chain: str,
+        price: float,
+        momentum_score: float,
+        alert_above: float,
+        alert_below: float,
+        reasoning: str,
+    ) -> bool:
+        """Send notification when a token is added to autonomous watchlist."""
+        price_fmt = self._format_price(price)
+        above_fmt = self._format_price(alert_above)
+        below_fmt = self._format_price(alert_below)
+        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+        message = (
+            f"📈 <b>New Position Added</b>\n\n"
+            f"<b>Token:</b> {symbol}\n"
+            f"<b>Chain:</b> {chain}\n"
+            f"<b>Entry Price:</b> {price_fmt}\n"
+            f"<b>Momentum Score:</b> {momentum_score:.0f}/100\n\n"
+            f"<b>Triggers:</b>\n"
+            f"  🎯 Take Profit: {above_fmt}\n"
+            f"  🛑 Stop Loss: {below_fmt}\n\n"
+            f"<b>Reasoning:</b>\n{reasoning}\n\n"
+            f"⏰ {timestamp}"
+        )
+        return await self.send_message(message)
+
+    async def send_token_removed(
+        self,
+        symbol: str,
+        chain: str,
+        reasoning: str,
+    ) -> bool:
+        """Send notification when a token is removed from autonomous watchlist."""
+        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+        message = (
+            f"📉 <b>Position Closed</b>\n\n"
+            f"<b>Token:</b> {symbol}\n"
+            f"<b>Chain:</b> {chain}\n\n"
+            f"<b>Reason:</b>\n{reasoning}\n\n"
+            f"⏰ {timestamp}"
+        )
+        return await self.send_message(message)
+
+    async def send_trigger_updated(
+        self,
+        symbol: str,
+        chain: str,
+        old_above: Optional[float],
+        new_above: Optional[float],
+        old_below: Optional[float],
+        new_below: Optional[float],
+        reasoning: str,
+    ) -> bool:
+        """Send notification when price triggers are updated."""
+        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+        lines = [
+            f"🔄 <b>Triggers Updated</b>\n",
+            f"<b>Token:</b> {symbol}",
+            f"<b>Chain:</b> {chain}\n",
+        ]
+
+        if new_above is not None:
+            old_fmt = self._format_price(old_above) if old_above else "—"
+            new_fmt = self._format_price(new_above)
+            lines.append(f"<b>Take Profit:</b> {old_fmt} → {new_fmt}")
+
+        if new_below is not None:
+            old_fmt = self._format_price(old_below) if old_below else "—"
+            new_fmt = self._format_price(new_below)
+            lines.append(f"<b>Stop Loss:</b> {old_fmt} → {new_fmt}")
+
+        lines.extend([
+            f"\n<b>Reason:</b>\n{reasoning}",
+            f"\n⏰ {timestamp}",
+        ])
+
+        return await self.send_message("\n".join(lines))
+
+    async def send_watchlist_summary(
+        self,
+        entries: list,
+        cycle_number: int,
+    ) -> bool:
+        """Send periodic watchlist summary."""
+        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+        lines = [
+            f"📊 <b>Watchlist Summary</b> (Cycle #{cycle_number})\n",
+            f"⏰ {timestamp}\n",
+        ]
+
+        if not entries:
+            lines.append("No tokens in autonomous watchlist.")
+        else:
+            lines.append(f"<b>{len(entries)} Active Positions:</b>\n")
+            for entry in entries:
+                price_fmt = self._format_price(entry.last_price) if entry.last_price else "—"
+                score = entry.momentum_score or 0
+                lines.append(
+                    f"• <b>{entry.symbol}</b> @ {price_fmt} (Score: {score:.0f})"
+                )
+
+        return await self.send_message("\n".join(lines))

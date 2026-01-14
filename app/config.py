@@ -77,6 +77,26 @@ class Settings(BaseSettings):
         default=False, alias="TELEGRAM_ALERTS_ENABLED"
     )
 
+    # Autonomous agent settings
+    autonomous_enabled: bool = Field(
+        default=False, alias="AUTONOMOUS_ENABLED"
+    )
+    autonomous_interval_mins: int = Field(
+        default=60, alias="AUTONOMOUS_INTERVAL_MINS", ge=5, le=1440
+    )
+    autonomous_max_tokens: int = Field(
+        default=5, alias="AUTONOMOUS_MAX_TOKENS", ge=1, le=20
+    )
+    autonomous_chain: str = Field(
+        default="solana", alias="AUTONOMOUS_CHAIN"
+    )
+    autonomous_min_volume_usd: float = Field(
+        default=10000.0, alias="AUTONOMOUS_MIN_VOLUME_USD", ge=0
+    )
+    autonomous_min_liquidity_usd: float = Field(
+        default=5000.0, alias="AUTONOMOUS_MIN_LIQUIDITY_USD", ge=0
+    )
+
 
 @lru_cache(maxsize=1)
 def load_settings() -> Settings:
