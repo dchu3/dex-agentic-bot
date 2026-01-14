@@ -216,6 +216,102 @@ class TestAutonomousWatchlistAgent:
             assert reviews[0].action == "update"
             assert reviews[0].entry_id == 1
 
+    def test_extract_json_object_simple(self, mock_mcp_manager):
+        """Test extracting JSON from simple response."""
+        with patch("app.autonomous_agent.genai"):
+            agent = AutonomousWatchlistAgent(
+                api_key="test-key",
+                mcp_manager=mock_mcp_manager,
+            )
+
+            text = '{"reviews": [{"id": 1}]}'
+            result = agent._extract_json_object(text, "reviews")
+            assert result == '{"reviews": [{"id": 1}]}'
+
+    def test_extract_json_object_with_surrounding_text(self, mock_mcp_manager):
+        """Test extracting JSON when surrounded by text."""
+        with patch("app.autonomous_agent.genai"):
+            agent = AutonomousWatchlistAgent(
+                api_key="test-key",
+                mcp_manager=mock_mcp_manager,
+            )
+
+            text = '''
+            Here is my analysis:
+            {"reviews": [{"id": 1}]}
+            That concludes the review.
+            '''
+            result = agent._extract_json_object(text, "reviews")
+            assert result is not None
+            assert '"reviews"' in result
+
+    def test_extract_json_object_with_trailing_braces(self, mock_mcp_manager):
+        """Test extracting JSON when there are braces after the JSON."""
+        with patch("app.autonomous_agent.genai"):
+            agent = AutonomousWatchlistAgent(
+                api_key="test-key",
+                mcp_manager=mock_mcp_manager,
+            )
+
+            text = '''
+            {"reviews": [{"id": 1}], "summary": "done"}
+            
+            The token at {address} looks good.
+            '''
+            result = agent._extract_json_object(text, "reviews")
+            assert result is not None
+            import json
+            data = json.loads(result)
+            assert "reviews" in data
+            assert data["summary"] == "done"
+
+    def test_extract_json_object_code_block(self, mock_mcp_manager):
+        """Test extracting JSON from code block."""
+        with patch("app.autonomous_agent.genai"):
+            agent = AutonomousWatchlistAgent(
+                api_key="test-key",
+                mcp_manager=mock_mcp_manager,
+            )
+
+            text = '''
+            Here is the result:
+            ```json
+            {"reviews": [{"id": 1}]}
+            ```
+            '''
+            result = agent._extract_json_object(text, "reviews")
+            assert result is not None
+            assert '"reviews"' in result
+
+    def test_extract_json_object_nested_braces_in_string(self, mock_mcp_manager):
+        """Test extracting JSON with braces inside string values."""
+        with patch("app.autonomous_agent.genai"):
+            agent = AutonomousWatchlistAgent(
+                api_key="test-key",
+                mcp_manager=mock_mcp_manager,
+            )
+
+            text = '''
+            {"reviews": [{"id": 1, "note": "Token {ABC} looks good"}]}
+            '''
+            result = agent._extract_json_object(text, "reviews")
+            assert result is not None
+            import json
+            data = json.loads(result)
+            assert data["reviews"][0]["note"] == "Token {ABC} looks good"
+
+    def test_extract_json_object_not_found(self, mock_mcp_manager):
+        """Test when required key is not found."""
+        with patch("app.autonomous_agent.genai"):
+            agent = AutonomousWatchlistAgent(
+                api_key="test-key",
+                mcp_manager=mock_mcp_manager,
+            )
+
+            text = '{"candidates": [{"id": 1}]}'
+            result = agent._extract_json_object(text, "reviews")
+            assert result is None
+
 
 class TestAutonomousScheduler:
     """Tests for AutonomousScheduler."""
