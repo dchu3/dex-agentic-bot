@@ -399,18 +399,93 @@ Return your analysis as JSON with the reviews array.
             )
         return "\n".join(lines)
 
+    def _extract_json_object(self, text: str, required_key: str) -> Optional[str]:
+        """Extract a JSON object containing a required key from text.
+        
+        Handles:
+        - Code blocks (```json ... ```)
+        - Raw JSON in text
+        - Nested braces
+        
+        Args:
+            text: The text to search for JSON
+            required_key: A key that must be present in the JSON object
+            
+        Returns:
+            The extracted JSON string, or None if not found
+        """
+        # Try code block first (```json ... ``` or ``` ... ```)
+        code_block = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', text)
+        if code_block:
+            candidate = code_block.group(1)
+            if required_key in candidate:
+                try:
+                    json.loads(candidate)
+                    return candidate
+                except json.JSONDecodeError:
+                    pass
+        
+        # Find the required key in the text
+        key_pattern = f'"{required_key}"'
+        key_pos = text.find(key_pattern)
+        if key_pos == -1:
+            return None
+        
+        # Find opening brace before the key
+        start = text.rfind('{', 0, key_pos)
+        if start == -1:
+            return None
+        
+        # Count braces to find matching close
+        depth = 0
+        in_string = False
+        escape_next = False
+        
+        for i, char in enumerate(text[start:], start):
+            if escape_next:
+                escape_next = False
+                continue
+            
+            if char == '\\' and in_string:
+                escape_next = True
+                continue
+            
+            if char == '"' and not escape_next:
+                in_string = not in_string
+                continue
+            
+            if in_string:
+                continue
+            
+            if char == '{':
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start:i+1]
+                    try:
+                        json.loads(candidate)
+                        return candidate
+                    except json.JSONDecodeError:
+                        # Try to continue looking
+                        pass
+                    break
+        
+        return None
+
     def _parse_discovery_response(self, response: str) -> List[TokenCandidate]:
         """Parse the agent's discovery response into TokenCandidate objects."""
         candidates = []
 
-        # Try to extract JSON from response
-        json_match = re.search(r'\{[\s\S]*"candidates"[\s\S]*\}', response)
-        if not json_match:
-            self._log("warning", "No JSON found in discovery response")
+        # Extract JSON object containing "candidates"
+        json_str = self._extract_json_object(response, "candidates")
+        if not json_str:
+            self._log("warning", "No valid JSON with 'candidates' found in discovery response")
+            self._log("debug", f"Raw response: {response[:500]}...")
             return candidates
 
         try:
-            data = json.loads(json_match.group())
+            data = json.loads(json_str)
             for item in data.get("candidates", []):
                 try:
                     candidate = TokenCandidate(
@@ -442,14 +517,15 @@ Return your analysis as JSON with the reviews array.
         reviews = []
         entry_map = {e.id: e for e in entries}
 
-        # Try to extract JSON from response
-        json_match = re.search(r'\{[\s\S]*"reviews"[\s\S]*\}', response)
-        if not json_match:
-            self._log("warning", "No JSON found in review response")
+        # Extract JSON object containing "reviews"
+        json_str = self._extract_json_object(response, "reviews")
+        if not json_str:
+            self._log("warning", "No valid JSON with 'reviews' found in review response")
+            self._log("debug", f"Raw response: {response[:500]}...")
             return reviews
 
         try:
-            data = json.loads(json_match.group())
+            data = json.loads(json_str)
             for item in data.get("reviews", []):
                 try:
                     entry_id = int(item.get("entry_id", 0))
