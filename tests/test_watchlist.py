@@ -291,6 +291,26 @@ async def test_list_entries(db):
 
 
 @pytest.mark.asyncio
+async def test_update_token_address(db):
+    """Test updating a token address (e.g., to fix case)."""
+    # Add with lowercase
+    entry = await db.add_entry(
+        token_address="3qrgcwfskxiketd5ixzza7h4zhputg8grrh7s5mzpump",
+        symbol="TEST",
+        chain="solana",
+    )
+    
+    # Update to correct case
+    correct_address = "3QrGcwFSKXiKetD5ixzZa7H4zHPuTg8grrH7s5Mzpump"
+    result = await db.update_token_address(entry.id, correct_address)
+    assert result is True
+    
+    # Verify the address was updated
+    updated = await db.get_entry(symbol="TEST")
+    assert updated.token_address == correct_address
+
+
+@pytest.mark.asyncio
 async def test_update_alert(db):
     """Test updating alert thresholds."""
     entry = await db.add_entry(

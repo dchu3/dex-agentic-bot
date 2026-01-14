@@ -327,6 +327,25 @@ class WatchlistDB:
             )
             await conn.commit()
 
+    async def update_token_address(self, entry_id: int, new_address: str) -> bool:
+        """Update the token address for an entry (e.g., to fix case).
+        
+        Args:
+            entry_id: The ID of the entry to update
+            new_address: The new address with correct case
+            
+        Returns:
+            True if the update was successful
+        """
+        conn = await self._ensure_connected()
+        async with self._lock:
+            cursor = await conn.execute(
+                "UPDATE watchlist SET token_address = ? WHERE id = ?",
+                (new_address, entry_id),
+            )
+            await conn.commit()
+            return cursor.rowcount > 0
+
     async def clear_watchlist(self) -> int:
         """Remove all entries from the watchlist."""
         conn = await self._ensure_connected()
