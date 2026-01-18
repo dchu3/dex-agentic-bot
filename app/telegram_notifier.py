@@ -237,12 +237,18 @@ class TelegramNotifier:
         current = self._format_price(alert.current_price)
         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
+        # Build market cap line if available
+        market_cap_line = ""
+        if alert.market_cap is not None:
+            market_cap_line = f"<b>Market Cap:</b> {self._format_market_cap(alert.market_cap)}\n"
+
         return (
             f"🔔 <b>Price Alert</b>\n\n"
             f"<b>Token:</b> {alert.symbol}\n"
             f"<b>Chain:</b> {alert.chain}\n"
             f"<b>Type:</b> {emoji} {direction} {threshold}\n"
             f"<b>Current Price:</b> {current}\n"
+            f"{market_cap_line}"
             f"<b>Contract:</b> <code>{alert.token_address}</code>\n\n"
             f"⏰ {timestamp}"
         )
@@ -256,6 +262,20 @@ class TelegramNotifier:
             return f"${price:.6f}"
         else:
             return f"${price:.10f}"
+
+    @staticmethod
+    def _format_market_cap(market_cap: float) -> str:
+        """Format market cap with appropriate suffix (K, M, B, T)."""
+        if market_cap >= 1_000_000_000_000:
+            return f"${market_cap / 1_000_000_000_000:.2f}T"
+        elif market_cap >= 1_000_000_000:
+            return f"${market_cap / 1_000_000_000:.2f}B"
+        elif market_cap >= 1_000_000:
+            return f"${market_cap / 1_000_000:.2f}M"
+        elif market_cap >= 1_000:
+            return f"${market_cap / 1_000:.2f}K"
+        else:
+            return f"${market_cap:,.0f}"
 
     # --- Autonomous Watchlist Notifications ---
 

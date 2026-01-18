@@ -23,6 +23,15 @@ class TriggeredAlert:
     threshold: float
     current_price: float
     token_address: str
+    market_cap: Optional[float] = None
+
+
+@dataclass
+class TokenPriceData:
+    """Price and market cap data for a token."""
+
+    price: float
+    market_cap: Optional[float] = None
 
 
 # Type alias for alert callback
@@ -108,18 +117,20 @@ class WatchlistPoller:
         # Fetch prices for each chain
         for chain, chain_entries in by_chain.items():
             try:
-                prices = await self._fetch_prices(chain, chain_entries)
+                price_data_map = await self._fetch_prices(chain, chain_entries)
                 
                 for entry in chain_entries:
-                    price = prices.get(entry.token_address)
-                    if price is None:
+                    price_data = price_data_map.get(entry.token_address)
+                    if price_data is None:
                         continue
 
                     # Update last price
-                    await self.db.update_price(entry.id, price)
+                    await self.db.update_price(entry.id, price_data.price)
 
                     # Check thresholds
-                    alerts = await self._check_thresholds(entry, price)
+                    alerts = await self._check_thresholds(
+                        entry, price_data.price, price_data.market_cap
+                    )
                     triggered_alerts.extend(alerts)
 
             except Exception:
@@ -130,9 +141,9 @@ class WatchlistPoller:
 
     async def _fetch_prices(
         self, chain: str, entries: List[WatchlistEntry]
-    ) -> Dict[str, float]:
-        """Fetch current prices for a list of tokens on a chain."""
-        prices: Dict[str, float] = {}
+    ) -> Dict[str, TokenPriceData]:
+        """Fetch current prices and market caps for a list of tokens on a chain."""
+        prices: Dict[str, TokenPriceData] = {}
 
         # Try DexScreener first for price data
         dexscreener = self.mcp_manager.get_client("dexscreener")
@@ -143,9 +154,9 @@ class WatchlistPoller:
                         "getTokenPools",
                         {"chainId": chain, "tokenAddress": entry.token_address},
                     )
-                    price = self._extract_price_from_dexscreener(result)
-                    if price is not None:
-                        prices[entry.token_address] = price
+                    price_data = self._extract_price_from_dexscreener(result)
+                    if price_data is not None:
+                        prices[entry.token_address] = price_data
                 except Exception:
                     continue
 
@@ -162,14 +173,14 @@ class WatchlistPoller:
                     )
                     price = self._extract_price_from_dexpaprika(result)
                     if price is not None:
-                        prices[entry.token_address] = price
+                        prices[entry.token_address] = TokenPriceData(price=price)
                 except Exception:
                     continue
 
         return prices
 
-    def _extract_price_from_dexscreener(self, result: Any) -> Optional[float]:
-        """Extract price from DexScreener response."""
+    def _extract_price_from_dexscreener(self, result: Any) -> Optional[TokenPriceData]:
+        """Extract price and market cap from DexScreener response."""
         # Handle list response (direct array of pairs)
         if isinstance(result, list):
             pairs = result
@@ -184,13 +195,24 @@ class WatchlistPoller:
         # Get price from first pair (highest liquidity usually first)
         first_pair = pairs[0]
         price_usd = first_pair.get("priceUsd")
-        if price_usd:
+        if not price_usd:
+            return None
+
+        try:
+            price = float(price_usd)
+        except (ValueError, TypeError):
+            return None
+
+        # Extract market cap (prefer marketCap, fallback to fdv)
+        market_cap: Optional[float] = None
+        mcap_value = first_pair.get("marketCap") or first_pair.get("fdv")
+        if mcap_value:
             try:
-                return float(price_usd)
+                market_cap = float(mcap_value)
             except (ValueError, TypeError):
                 pass
 
-        return None
+        return TokenPriceData(price=price, market_cap=market_cap)
 
     def _extract_price_from_dexpaprika(self, result: Any) -> Optional[float]:
         """Extract price from DexPaprika response."""
@@ -207,7 +229,10 @@ class WatchlistPoller:
         return None
 
     async def _check_thresholds(
-        self, entry: WatchlistEntry, current_price: float
+        self,
+        entry: WatchlistEntry,
+        current_price: float,
+        market_cap: Optional[float] = None,
     ) -> List[TriggeredAlert]:
         """Check if price crossed any alert thresholds."""
         alerts: List[TriggeredAlert] = []
@@ -223,6 +248,7 @@ class WatchlistPoller:
                     threshold=entry.alert_above,
                     current_price=current_price,
                     token_address=entry.token_address,
+                    market_cap=market_cap,
                 )
                 alerts.append(alert)
 
@@ -249,6 +275,7 @@ class WatchlistPoller:
                     threshold=entry.alert_below,
                     current_price=current_price,
                     token_address=entry.token_address,
+                    market_cap=market_cap,
                 )
                 alerts.append(alert)
 
