@@ -737,6 +737,12 @@ Examples:
         help="Disable background price polling for watchlist alerts",
     )
     parser.add_argument(
+        "--poll-interval",
+        type=int,
+        default=None,
+        help="Watchlist polling interval in seconds (default: 60, min: 10, max: 3600)",
+    )
+    parser.add_argument(
         "--no-telegram",
         action="store_true",
         help="Disable Telegram notifications",
@@ -830,10 +836,16 @@ Examples:
     # Initialize poller if enabled
     poller: Optional[WatchlistPoller] = None
     if args.interactive and settings.watchlist_poll_enabled and not args.no_polling:
+        # Use CLI arg if provided, otherwise use settings
+        poll_interval = args.poll_interval if args.poll_interval is not None else settings.watchlist_poll_interval
+        # Validate range
+        if not (10 <= poll_interval <= 3600):
+            output.error("Poll interval must be between 10 and 3600 seconds")
+            sys.exit(1)
         poller = WatchlistPoller(
             db=watchlist_db,
             mcp_manager=mcp_manager,
-            poll_interval=settings.watchlist_poll_interval,
+            poll_interval=poll_interval,
         )
 
     # Initialize Telegram notifier if enabled
