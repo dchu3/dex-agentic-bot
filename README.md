@@ -78,6 +78,7 @@ MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 | `--no-honeypot` | Disable honeypot MCP server (faster startup) |
 | `--no-rugcheck` | Disable rugcheck MCP server (faster startup) |
 | `--no-polling` | Disable background price polling for watchlist alerts |
+| `--poll-interval` | Watchlist polling interval in seconds (default: 60, min: 10, max: 3600) |
 | `--no-telegram` | Disable Telegram notifications |
 | `--autonomous` | Enable autonomous watchlist management |
 | `--autonomous-interval` | Autonomous cycle interval in minutes (default: 60) |
@@ -170,6 +171,9 @@ Current Price: $0.000021
 ```bash
 # Start interactive mode
 ./scripts/start.sh --interactive
+
+# With custom polling interval (5 minutes)
+./scripts/start.sh --interactive --poll-interval 300
 
 # Add a token to watchlist (from recent search results)
 > /watch PEPE ethereum
