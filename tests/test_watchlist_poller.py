@@ -265,9 +265,17 @@ async def test_extract_price_from_dexscreener():
     """Test price extraction from DexScreener response."""
     poller = WatchlistPoller(MagicMock(), MagicMock())
     
-    # Valid response
+    # Valid response with price only
     result = {"pairs": [{"priceUsd": "0.0000185"}]}
-    assert poller._extract_price_from_dexscreener(result) == 0.0000185
+    data = poller._extract_price_from_dexscreener(result)
+    assert data.price == 0.0000185
+    assert data.liquidity is None
+    
+    # Valid response with liquidity
+    result = {"pairs": [{"priceUsd": "0.0000185", "liquidity": {"usd": 500000}}]}
+    data = poller._extract_price_from_dexscreener(result)
+    assert data.price == 0.0000185
+    assert data.liquidity == 500000
     
     # Empty pairs
     result = {"pairs": []}
