@@ -24,6 +24,7 @@ class TriggeredAlert:
     current_price: float
     token_address: str
     market_cap: Optional[float] = None
+    liquidity: Optional[float] = None
 
 
 @dataclass
@@ -32,6 +33,7 @@ class TokenPriceData:
 
     price: float
     market_cap: Optional[float] = None
+    liquidity: Optional[float] = None
 
 
 # Type alias for alert callback
@@ -129,7 +131,7 @@ class WatchlistPoller:
 
                     # Check thresholds
                     alerts = await self._check_thresholds(
-                        entry, price_data.price, price_data.market_cap
+                        entry, price_data.price, price_data.market_cap, price_data.liquidity
                     )
                     triggered_alerts.extend(alerts)
 
@@ -212,7 +214,18 @@ class WatchlistPoller:
             except (ValueError, TypeError):
                 pass
 
-        return TokenPriceData(price=price, market_cap=market_cap)
+        # Extract liquidity
+        liquidity: Optional[float] = None
+        liq_data = first_pair.get("liquidity")
+        if isinstance(liq_data, dict):
+            liq_usd = liq_data.get("usd")
+            if liq_usd:
+                try:
+                    liquidity = float(liq_usd)
+                except (ValueError, TypeError):
+                    pass
+
+        return TokenPriceData(price=price, market_cap=market_cap, liquidity=liquidity)
 
     def _extract_price_from_dexpaprika(self, result: Any) -> Optional[float]:
         """Extract price from DexPaprika response."""
@@ -233,6 +246,7 @@ class WatchlistPoller:
         entry: WatchlistEntry,
         current_price: float,
         market_cap: Optional[float] = None,
+        liquidity: Optional[float] = None,
     ) -> List[TriggeredAlert]:
         """Check if price crossed any alert thresholds."""
         alerts: List[TriggeredAlert] = []
@@ -249,6 +263,7 @@ class WatchlistPoller:
                     current_price=current_price,
                     token_address=entry.token_address,
                     market_cap=market_cap,
+                    liquidity=liquidity,
                 )
                 alerts.append(alert)
 
@@ -276,6 +291,7 @@ class WatchlistPoller:
                     current_price=current_price,
                     token_address=entry.token_address,
                     market_cap=market_cap,
+                    liquidity=liquidity,
                 )
                 alerts.append(alert)
 

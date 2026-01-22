@@ -242,6 +242,11 @@ class TelegramNotifier:
         if alert.market_cap is not None:
             market_cap_line = f"<b>Market Cap:</b> {self._format_market_cap(alert.market_cap)}\n"
 
+        # Build liquidity line if available
+        liquidity_line = ""
+        if alert.liquidity is not None:
+            liquidity_line = f"<b>Liquidity:</b> {self._format_liquidity(alert.liquidity)}\n"
+
         return (
             f"🔔 <b>Price Alert</b>\n\n"
             f"<b>Token:</b> {alert.symbol}\n"
@@ -249,6 +254,7 @@ class TelegramNotifier:
             f"<b>Type:</b> {emoji} {direction} {threshold}\n"
             f"<b>Current Price:</b> {current}\n"
             f"{market_cap_line}"
+            f"{liquidity_line}"
             f"<b>Contract:</b> <code>{alert.token_address}</code>\n\n"
             f"⏰ {timestamp}"
         )
@@ -276,6 +282,18 @@ class TelegramNotifier:
             return f"${market_cap / 1_000:.2f}K"
         else:
             return f"${market_cap:,.0f}"
+
+    @staticmethod
+    def _format_liquidity(liquidity: float) -> str:
+        """Format liquidity with appropriate suffix (K, M, B)."""
+        if liquidity >= 1_000_000_000:
+            return f"${liquidity / 1_000_000_000:.2f}B"
+        elif liquidity >= 1_000_000:
+            return f"${liquidity / 1_000_000:.2f}M"
+        elif liquidity >= 1_000:
+            return f"${liquidity / 1_000:.2f}K"
+        else:
+            return f"${liquidity:,.0f}"
 
     # --- Autonomous Watchlist Notifications ---
 

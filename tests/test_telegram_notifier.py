@@ -32,6 +32,7 @@ def sample_alert():
         threshold=0.00002,
         current_price=0.000021,
         token_address="0x6982508145454ce325ddbe47a25d4ec3d2311933",
+        liquidity=500000.0,
     )
 
 
@@ -184,6 +185,8 @@ def test_format_alert_above(notifier, sample_alert):
     assert "Crossed above" in message
     assert "0x6982508145454ce325ddbe47a25d4ec3d2311933" in message
     assert "<code>" in message  # Copyable format
+    assert "Liquidity" in message
+    assert "$500.00K" in message
 
 
 def test_format_alert_below(notifier):
@@ -211,6 +214,14 @@ def test_format_price():
     assert TelegramNotifier._format_price(1.5) == "$1.5000"
     assert TelegramNotifier._format_price(0.001234) == "$0.001234"
     assert TelegramNotifier._format_price(0.00001234) == "$0.0000123400"
+
+
+def test_format_liquidity():
+    """Test liquidity formatting with different magnitudes."""
+    assert TelegramNotifier._format_liquidity(1500000000) == "$1.50B"
+    assert TelegramNotifier._format_liquidity(2500000) == "$2.50M"
+    assert TelegramNotifier._format_liquidity(500000) == "$500.00K"
+    assert TelegramNotifier._format_liquidity(750) == "$750"
 
 
 @pytest.mark.asyncio
