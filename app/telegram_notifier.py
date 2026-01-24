@@ -81,10 +81,39 @@ class TelegramNotifier:
         """Check if the bot is currently polling for messages."""
         return self._running and self._polling_task is not None
 
+    async def set_commands(self) -> bool:
+        """Register bot commands with Telegram for the command menu.
+        
+        Returns:
+            True if commands were registered successfully
+        """
+        if not self.is_configured:
+            return False
+
+        commands = [
+            {"command": "start", "description": "Show welcome message"},
+            {"command": "help", "description": "Show available commands"},
+            {"command": "subscribe", "description": "Subscribe to price alerts"},
+            {"command": "unsubscribe", "description": "Unsubscribe from alerts"},
+            {"command": "status", "description": "Check bot and subscription status"},
+        ]
+
+        try:
+            client = await self._get_client()
+            url = f"{TELEGRAM_API_BASE}{self.bot_token}/setMyCommands"
+            response = await client.post(url, json={"commands": commands})
+            data = response.json()
+            return data.get("ok", False)
+        except Exception:
+            return False
+
     async def start_polling(self) -> None:
         """Start polling for incoming messages."""
         if self._running or not self.is_configured:
             return
+        
+        # Register bot commands with Telegram
+        await self.set_commands()
         
         # Auto-subscribe legacy chat_id if configured (backwards compatibility)
         if self.chat_id:

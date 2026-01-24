@@ -257,12 +257,40 @@ async def test_close(notifier):
 
 
 @pytest.mark.asyncio
+async def test_set_commands(notifier):
+    """Test set_commands registers commands with Telegram."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"ok": True}
+
+    with patch.object(notifier, "_get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        result = await notifier.set_commands()
+
+        assert result is True
+        mock_client.post.assert_called_once()
+        call_args = mock_client.post.call_args
+        assert "setMyCommands" in call_args[0][0]
+        commands = call_args[1]["json"]["commands"]
+        command_names = [c["command"] for c in commands]
+        assert "start" in command_names
+        assert "help" in command_names
+        assert "subscribe" in command_names
+        assert "unsubscribe" in command_names
+        assert "status" in command_names
+
+
+@pytest.mark.asyncio
 async def test_start_stop_polling(notifier):
     """Test starting and stopping polling."""
     assert notifier.is_polling is False
 
-    await notifier.start_polling()
-    assert notifier.is_polling is True
+    # Mock set_commands to avoid actual API call
+    with patch.object(notifier, "set_commands", new_callable=AsyncMock):
+        await notifier.start_polling()
+        assert notifier.is_polling is True
 
     await notifier.stop_polling()
     assert notifier.is_polling is False
