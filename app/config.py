@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     telegram_alerts_enabled: bool = Field(
         default=False, alias="TELEGRAM_ALERTS_ENABLED"
     )
+    telegram_subscribers_db_path: Path = Field(
+        default=Path.home() / ".dex-bot" / "telegram_subscribers.db",
+        alias="TELEGRAM_SUBSCRIBERS_DB_PATH",
+    )
 
     # Autonomous agent settings
     autonomous_enabled: bool = Field(

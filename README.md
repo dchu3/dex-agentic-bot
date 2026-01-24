@@ -130,7 +130,6 @@ WATCHLIST_POLL_ENABLED=true         # Enable/disable background polling
 
 # Telegram notifications (optional)
 TELEGRAM_BOT_TOKEN=your-bot-token   # From @BotFather
-TELEGRAM_CHAT_ID=your-chat-id       # Your Telegram user/chat ID
 TELEGRAM_ALERTS_ENABLED=true        # Enable Telegram notifications
 ```
 
@@ -142,17 +141,25 @@ To receive alerts via Telegram:
    - Send `/newbot` and follow the prompts
    - Copy the bot token (e.g., `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
 
-2. **Get your chat ID**: Message [@userinfobot](https://t.me/userinfobot)
-   - It will reply with your user ID (e.g., `987654321`)
-
-3. **Start your bot**: Open your bot in Telegram and click "Start"
-
-4. **Configure**: Add to your `.env`:
+2. **Configure**: Add to your `.env`:
    ```env
    TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
-   TELEGRAM_CHAT_ID=987654321
    TELEGRAM_ALERTS_ENABLED=true
    ```
+
+3. **Subscribe to alerts**: Open your bot in Telegram and send `/subscribe`
+
+### Telegram Commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Show help message |
+| `/help` | Show help message |
+| `/subscribe` | Subscribe to price alerts |
+| `/unsubscribe` | Unsubscribe from alerts |
+| `/status` | Check bot status and subscription |
+
+Anyone can interact with the bot, but only subscribed users receive price alerts. This allows multiple users to subscribe to the same bot instance.
 
 When alerts trigger, you'll receive messages like:
 ```

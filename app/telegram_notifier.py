@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Optional, TYPE_CHECKING
+from pathlib import Path
+from typing import List, Optional, TYPE_CHECKING
 
 import httpx
+
+from app.telegram_subscribers import SubscriberDB
 
 if TYPE_CHECKING:
     from app.watchlist_poller import TriggeredAlert
@@ -24,6 +27,8 @@ I send you price alerts when your watched tokens cross thresholds.
 • <code>/alerts</code> - View triggered alerts
 
 <b>Telegram Commands:</b>
+• /subscribe - Subscribe to price alerts
+• /unsubscribe - Unsubscribe from alerts
 • /help - Show this help
 • /status - Check bot status
 
@@ -37,18 +42,20 @@ class TelegramNotifier:
     def __init__(
         self,
         bot_token: str,
-        chat_id: str,
+        chat_id: str = "",
         timeout: float = 10.0,
         poll_interval: float = 2.0,
+        subscribers_db_path: Optional[Path] = None,
     ) -> None:
         self.bot_token = bot_token
-        self.chat_id = chat_id
+        self.chat_id = chat_id  # Legacy: used for backwards compatibility
         self.timeout = timeout
         self.poll_interval = poll_interval
         self._client: Optional[httpx.AsyncClient] = None
         self._polling_task: Optional[asyncio.Task] = None
         self._last_update_id: int = 0
         self._running: bool = False
+        self._subscribers_db = SubscriberDB(subscribers_db_path)
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client."""
@@ -59,6 +66,7 @@ class TelegramNotifier:
     async def close(self) -> None:
         """Close the HTTP client and stop polling."""
         await self.stop_polling()
+        await self._subscribers_db.close()
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
@@ -66,7 +74,7 @@ class TelegramNotifier:
     @property
     def is_configured(self) -> bool:
         """Check if Telegram credentials are configured."""
-        return bool(self.bot_token and self.chat_id)
+        return bool(self.bot_token)
 
     @property
     def is_polling(self) -> bool:
@@ -77,6 +85,10 @@ class TelegramNotifier:
         """Start polling for incoming messages."""
         if self._running or not self.is_configured:
             return
+        
+        # Auto-subscribe legacy chat_id if configured (backwards compatibility)
+        if self.chat_id:
+            await self._subscribers_db.add_subscriber(self.chat_id)
         
         self._running = True
         self._polling_task = asyncio.create_task(self._poll_loop())
@@ -135,34 +147,76 @@ class TelegramNotifier:
         message = update.get("message", {})
         chat_id = str(message.get("chat", {}).get("id", ""))
         text = message.get("text", "").strip()
+        username = message.get("from", {}).get("username")
         
-        # Only respond to messages from the configured chat
-        if chat_id != self.chat_id:
+        if not chat_id or not text:
             return
         
-        # Handle commands
+        # Handle commands from any user
         if text.startswith("/"):
-            await self._handle_command(text.lower())
+            await self._handle_command(text.lower(), chat_id, username)
 
-    async def _handle_command(self, command: str) -> None:
+    async def _handle_command(
+        self, command: str, chat_id: str, username: Optional[str] = None
+    ) -> None:
         """Handle a bot command."""
         cmd = command.split()[0].split("@")[0]
         
         if cmd in ("/help", "/start"):
-            await self.send_message(HELP_MESSAGE)
+            await self.send_message_to(chat_id, HELP_MESSAGE)
         elif cmd == "/status":
-            await self._send_status()
+            await self._send_status(chat_id)
+        elif cmd == "/subscribe":
+            await self._handle_subscribe(chat_id, username)
+        elif cmd == "/unsubscribe":
+            await self._handle_unsubscribe(chat_id)
 
-    async def _send_status(self) -> None:
+    async def _handle_subscribe(
+        self, chat_id: str, username: Optional[str] = None
+    ) -> None:
+        """Handle /subscribe command."""
+        was_subscribed = await self._subscribers_db.is_subscribed(chat_id)
+        await self._subscribers_db.add_subscriber(chat_id, username)
+        
+        if was_subscribed:
+            message = "✅ You're already subscribed to price alerts."
+        else:
+            message = (
+                "✅ <b>Subscribed!</b>\n\n"
+                "You will now receive price alerts when watched tokens cross thresholds.\n\n"
+                "Use /unsubscribe to stop receiving alerts."
+            )
+        await self.send_message_to(chat_id, message)
+
+    async def _handle_unsubscribe(self, chat_id: str) -> None:
+        """Handle /unsubscribe command."""
+        removed = await self._subscribers_db.remove_subscriber(chat_id)
+        
+        if removed:
+            message = (
+                "🔕 <b>Unsubscribed</b>\n\n"
+                "You will no longer receive price alerts.\n\n"
+                "Use /subscribe to re-enable alerts."
+            )
+        else:
+            message = "ℹ️ You weren't subscribed to alerts."
+        await self.send_message_to(chat_id, message)
+
+    async def _send_status(self, chat_id: str) -> None:
         """Send bot status message."""
         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        is_subscribed = await self._subscribers_db.is_subscribed(chat_id)
+        subscriber_count = await self._subscribers_db.get_subscriber_count()
+        sub_status = "✅ Subscribed" if is_subscribed else "❌ Not subscribed"
         message = (
             "✅ <b>Bot Status</b>\n\n"
             f"<b>Status:</b> Online\n"
-            f"<b>Time:</b> {timestamp}\n\n"
+            f"<b>Time:</b> {timestamp}\n"
+            f"<b>Your alerts:</b> {sub_status}\n"
+            f"<b>Total subscribers:</b> {subscriber_count}\n\n"
             "Monitoring your watchlist for price alerts."
         )
-        await self.send_message(message)
+        await self.send_message_to(chat_id, message)
 
     async def test_connection(self) -> bool:
         """Test if the bot token is valid by calling getMe."""
@@ -184,9 +238,33 @@ class TelegramNotifier:
         parse_mode: str = "HTML",
         disable_notification: bool = False,
     ) -> bool:
-        """Send a message to the configured chat.
+        """Send a message to the legacy configured chat (backwards compatibility).
         
         Args:
+            text: Message text (supports HTML formatting)
+            parse_mode: Message parse mode (HTML or Markdown)
+            disable_notification: Send silently
+            
+        Returns:
+            True if message was sent successfully
+        """
+        if not self.is_configured or not self.chat_id:
+            return False
+        return await self.send_message_to(
+            self.chat_id, text, parse_mode, disable_notification
+        )
+
+    async def send_message_to(
+        self,
+        chat_id: str,
+        text: str,
+        parse_mode: str = "HTML",
+        disable_notification: bool = False,
+    ) -> bool:
+        """Send a message to a specific chat.
+        
+        Args:
+            chat_id: Target chat ID
             text: Message text (supports HTML formatting)
             parse_mode: Message parse mode (HTML or Markdown)
             disable_notification: Send silently
@@ -201,7 +279,7 @@ class TelegramNotifier:
             client = await self._get_client()
             url = f"{TELEGRAM_API_BASE}{self.bot_token}/sendMessage"
             payload = {
-                "chat_id": self.chat_id,
+                "chat_id": chat_id,
                 "text": text,
                 "parse_mode": parse_mode,
                 "disable_notification": disable_notification,
@@ -212,17 +290,43 @@ class TelegramNotifier:
         except Exception:
             return False
 
+    async def broadcast_message(
+        self,
+        text: str,
+        parse_mode: str = "HTML",
+        disable_notification: bool = False,
+    ) -> int:
+        """Send a message to all subscribers.
+        
+        Args:
+            text: Message text (supports HTML formatting)
+            parse_mode: Message parse mode (HTML or Markdown)
+            disable_notification: Send silently
+            
+        Returns:
+            Number of successfully sent messages
+        """
+        subscribers = await self._subscribers_db.get_all_subscribers()
+        success_count = 0
+        for sub in subscribers:
+            if await self.send_message_to(
+                sub.chat_id, text, parse_mode, disable_notification
+            ):
+                success_count += 1
+        return success_count
+
     async def send_alert(self, alert: "TriggeredAlert") -> bool:
-        """Send a formatted price alert to Telegram.
+        """Send a formatted price alert to all subscribers.
         
         Args:
             alert: The triggered alert to send
             
         Returns:
-            True if alert was sent successfully
+            True if alert was sent to at least one subscriber
         """
         message = self._format_alert(alert)
-        return await self.send_message(message)
+        sent_count = await self.broadcast_message(message)
+        return sent_count > 0
 
     def _format_alert(self, alert: "TriggeredAlert") -> str:
         """Format a TriggeredAlert as a Telegram message."""
@@ -325,7 +429,7 @@ class TelegramNotifier:
             f"<b>Reasoning:</b>\n{reasoning}\n\n"
             f"⏰ {timestamp}"
         )
-        return await self.send_message(message)
+        return await self.broadcast_message(message) > 0
 
     async def send_token_removed(
         self,
@@ -343,7 +447,7 @@ class TelegramNotifier:
             f"<b>Reason:</b>\n{reasoning}\n\n"
             f"⏰ {timestamp}"
         )
-        return await self.send_message(message)
+        return await self.broadcast_message(message) > 0
 
     async def send_trigger_updated(
         self,
@@ -379,7 +483,7 @@ class TelegramNotifier:
             f"\n⏰ {timestamp}",
         ])
 
-        return await self.send_message("\n".join(lines))
+        return await self.broadcast_message("\n".join(lines)) > 0
 
     async def send_watchlist_summary(
         self,
@@ -405,4 +509,4 @@ class TelegramNotifier:
                     f"• <b>{entry.symbol}</b> @ {price_fmt} (Score: {score:.0f})"
                 )
 
-        return await self.send_message("\n".join(lines))
+        return await self.broadcast_message("\n".join(lines)) > 0
