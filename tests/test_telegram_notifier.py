@@ -1,6 +1,8 @@
 """Tests for Telegram notifier."""
 
 import pytest
+import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from app.telegram_notifier import TelegramNotifier
@@ -8,18 +10,30 @@ from app.watchlist_poller import TriggeredAlert
 
 
 @pytest.fixture
-def notifier():
+def temp_db_path():
+    """Create a temporary database path for testing."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield Path(tmpdir) / "test_subscribers.db"
+
+
+@pytest.fixture
+def notifier(temp_db_path):
     """Create a test notifier with mock credentials."""
     return TelegramNotifier(
         bot_token="123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
         chat_id="987654321",
+        subscribers_db_path=temp_db_path,
     )
 
 
 @pytest.fixture
-def unconfigured_notifier():
+def unconfigured_notifier(temp_db_path):
     """Create a notifier without credentials."""
-    return TelegramNotifier(bot_token="", chat_id="")
+    return TelegramNotifier(
+        bot_token="",
+        chat_id="",
+        subscribers_db_path=temp_db_path,
+    )
 
 
 @pytest.fixture
@@ -37,22 +51,23 @@ def sample_alert():
 
 
 def test_is_configured_true(notifier):
-    """Test is_configured returns True when credentials are set."""
+    """Test is_configured returns True when bot token is set."""
     assert notifier.is_configured is True
 
 
 def test_is_configured_false(unconfigured_notifier):
-    """Test is_configured returns False when credentials are empty."""
+    """Test is_configured returns False when bot token is empty."""
     assert unconfigured_notifier.is_configured is False
 
 
-def test_is_configured_partial():
-    """Test is_configured returns False when only one credential is set."""
-    notifier = TelegramNotifier(bot_token="token", chat_id="")
-    assert notifier.is_configured is False
-
-    notifier = TelegramNotifier(bot_token="", chat_id="123")
-    assert notifier.is_configured is False
+def test_is_configured_token_only(temp_db_path):
+    """Test is_configured returns True when only bot token is set (no chat_id needed)."""
+    notifier = TelegramNotifier(
+        bot_token="token",
+        chat_id="",
+        subscribers_db_path=temp_db_path,
+    )
+    assert notifier.is_configured is True
 
 
 @pytest.mark.asyncio
@@ -152,9 +167,12 @@ async def test_test_connection_unconfigured(unconfigured_notifier):
 
 @pytest.mark.asyncio
 async def test_send_alert(notifier, sample_alert):
-    """Test send_alert formats and sends the alert."""
+    """Test send_alert formats and sends the alert to all subscribers."""
     mock_response = MagicMock()
     mock_response.json.return_value = {"ok": True}
+
+    # Add a subscriber first
+    await notifier._subscribers_db.add_subscriber("111", "testuser")
 
     with patch.object(notifier, "_get_client") as mock_get_client:
         mock_client = AsyncMock()
@@ -239,12 +257,40 @@ async def test_close(notifier):
 
 
 @pytest.mark.asyncio
+async def test_set_commands(notifier):
+    """Test set_commands registers commands with Telegram."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"ok": True}
+
+    with patch.object(notifier, "_get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        result = await notifier.set_commands()
+
+        assert result is True
+        mock_client.post.assert_called_once()
+        call_args = mock_client.post.call_args
+        assert "setMyCommands" in call_args[0][0]
+        commands = call_args[1]["json"]["commands"]
+        command_names = [c["command"] for c in commands]
+        assert "start" in command_names
+        assert "help" in command_names
+        assert "subscribe" in command_names
+        assert "unsubscribe" in command_names
+        assert "status" in command_names
+
+
+@pytest.mark.asyncio
 async def test_start_stop_polling(notifier):
     """Test starting and stopping polling."""
     assert notifier.is_polling is False
 
-    await notifier.start_polling()
-    assert notifier.is_polling is True
+    # Mock set_commands to avoid actual API call
+    with patch.object(notifier, "set_commands", new_callable=AsyncMock):
+        await notifier.start_polling()
+        assert notifier.is_polling is True
 
     await notifier.stop_polling()
     assert notifier.is_polling is False
@@ -268,7 +314,7 @@ async def test_handle_help_command(notifier):
         mock_client.post.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        await notifier._handle_command("/help")
+        await notifier._handle_command("/help", "123456")
 
         mock_client.post.assert_called_once()
         call_args = mock_client.post.call_args
@@ -277,6 +323,7 @@ async def test_handle_help_command(notifier):
         assert "DEX Agentic Bot" in message_text
         assert "/watch" in message_text
         assert "/alert" in message_text
+        assert "/subscribe" in message_text
 
 
 @pytest.mark.asyncio
@@ -290,7 +337,7 @@ async def test_handle_start_command(notifier):
         mock_client.post.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        await notifier._handle_command("/start")
+        await notifier._handle_command("/start", "123456")
 
         mock_client.post.assert_called_once()
 
@@ -306,7 +353,7 @@ async def test_handle_status_command(notifier):
         mock_client.post.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        await notifier._handle_command("/status")
+        await notifier._handle_command("/status", "123456")
 
         mock_client.post.assert_called_once()
         call_args = mock_client.post.call_args
@@ -317,32 +364,88 @@ async def test_handle_status_command(notifier):
 
 
 @pytest.mark.asyncio
-async def test_handle_update_from_correct_chat(notifier):
-    """Test that updates from the configured chat are processed."""
+async def test_handle_update_from_any_chat(notifier):
+    """Test that updates from any chat are processed (no restriction)."""
     update = {
         "update_id": 12345,
         "message": {
-            "chat": {"id": 987654321},
+            "chat": {"id": 111111111},  # Any chat ID
+            "from": {"username": "testuser"},
             "text": "/help",
         }
     }
 
     with patch.object(notifier, "_handle_command", new_callable=AsyncMock) as mock_handle:
         await notifier._handle_update(update)
-        mock_handle.assert_called_once_with("/help")
+        mock_handle.assert_called_once_with("/help", "111111111", "testuser")
 
 
 @pytest.mark.asyncio
-async def test_handle_update_from_wrong_chat(notifier):
-    """Test that updates from other chats are ignored."""
-    update = {
-        "update_id": 12345,
-        "message": {
-            "chat": {"id": 111111111},  # Wrong chat ID
-            "text": "/help",
-        }
-    }
+async def test_subscribe_command(notifier):
+    """Test /subscribe command adds user to subscribers."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"ok": True}
 
-    with patch.object(notifier, "_handle_command", new_callable=AsyncMock) as mock_handle:
-        await notifier._handle_update(update)
-        mock_handle.assert_not_called()
+    with patch.object(notifier, "_get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        await notifier._handle_command("/subscribe", "123456", "testuser")
+
+        # Verify subscription was added
+        is_subscribed = await notifier._subscribers_db.is_subscribed("123456")
+        assert is_subscribed is True
+
+        # Verify confirmation message was sent
+        call_args = mock_client.post.call_args
+        message_text = call_args[1]["json"]["text"]
+        assert "Subscribed" in message_text
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_command(notifier):
+    """Test /unsubscribe command removes user from subscribers."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"ok": True}
+
+    # First subscribe
+    await notifier._subscribers_db.add_subscriber("123456", "testuser")
+
+    with patch.object(notifier, "_get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        await notifier._handle_command("/unsubscribe", "123456")
+
+        # Verify subscription was removed
+        is_subscribed = await notifier._subscribers_db.is_subscribed("123456")
+        assert is_subscribed is False
+
+        # Verify confirmation message was sent
+        call_args = mock_client.post.call_args
+        message_text = call_args[1]["json"]["text"]
+        assert "Unsubscribed" in message_text
+
+
+@pytest.mark.asyncio
+async def test_broadcast_message(notifier):
+    """Test broadcast_message sends to all subscribers."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"ok": True}
+
+    # Add multiple subscribers
+    await notifier._subscribers_db.add_subscriber("111", "user1")
+    await notifier._subscribers_db.add_subscriber("222", "user2")
+    await notifier._subscribers_db.add_subscriber("333", "user3")
+
+    with patch.object(notifier, "_get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        count = await notifier.broadcast_message("Test message")
+
+        assert count == 3
+        assert mock_client.post.call_count == 3

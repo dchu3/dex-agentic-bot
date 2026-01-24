@@ -855,11 +855,11 @@ Examples:
         and settings.telegram_alerts_enabled
         and not args.no_telegram
         and settings.telegram_bot_token
-        and settings.telegram_chat_id
     ):
         telegram = TelegramNotifier(
             bot_token=settings.telegram_bot_token,
             chat_id=settings.telegram_chat_id,
+            subscribers_db_path=settings.telegram_subscribers_db_path,
         )
 
     # Create log callback for verbose mode
