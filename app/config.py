@@ -66,6 +66,11 @@ class Settings(BaseSettings):
         default=True, alias="WATCHLIST_POLL_ENABLED"
     )
 
+    # Price cache settings
+    price_cache_ttl_seconds: int = Field(
+        default=30, alias="PRICE_CACHE_TTL_SECONDS", ge=5, le=300
+    )
+
     # Telegram settings
     telegram_bot_token: str = Field(
         default="", alias="TELEGRAM_BOT_TOKEN"

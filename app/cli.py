@@ -14,10 +14,12 @@ from typing import Any, Dict, List, Optional
 from app.config import load_settings
 from app.mcp_client import MCPManager
 from app.output import CLIOutput, OutputFormat
+from app.price_cache import PriceCache
 from app.telegram_notifier import TelegramNotifier
 from app.types import PlannerResult
 from app.watchlist import WatchlistDB
 from app.watchlist_poller import WatchlistPoller, TriggeredAlert
+from app.watchlist_tools import WatchlistToolProvider
 from app.autonomous_agent import AutonomousWatchlistAgent
 from app.autonomous_scheduler import AutonomousScheduler
 
@@ -851,6 +853,13 @@ Examples:
         await mcp_manager.shutdown()
         sys.exit(1)
 
+    # Create watchlist tool provider and attach to MCP manager
+    watchlist_provider = WatchlistToolProvider(watchlist_db)
+    mcp_manager.watchlist_provider = watchlist_provider
+
+    # Initialize price cache for reducing API calls
+    price_cache = PriceCache(ttl_seconds=settings.price_cache_ttl_seconds)
+
     # Initialize poller if enabled
     poller: Optional[WatchlistPoller] = None
     if args.interactive and settings.watchlist_poll_enabled and not args.no_polling:
@@ -864,6 +873,7 @@ Examples:
             db=watchlist_db,
             mcp_manager=mcp_manager,
             poll_interval=poll_interval,
+            price_cache=price_cache,
         )
 
     # Initialize Telegram notifier if enabled

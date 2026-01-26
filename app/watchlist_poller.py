@@ -11,6 +11,7 @@ from app.watchlist import WatchlistDB, WatchlistEntry, AlertRecord
 
 if TYPE_CHECKING:
     from app.mcp_client import MCPManager
+    from app.price_cache import PriceCache
 
 
 @dataclass
@@ -49,11 +50,13 @@ class WatchlistPoller:
         mcp_manager: "MCPManager",
         poll_interval: int = 60,
         alert_callback: Optional[AlertCallback] = None,
+        price_cache: Optional["PriceCache"] = None,
     ) -> None:
         self.db = db
         self.mcp_manager = mcp_manager
         self.poll_interval = poll_interval
         self.alert_callback = alert_callback
+        self.price_cache = price_cache
 
         self._task: Optional[asyncio.Task[None]] = None
         self._running = False
@@ -144,18 +147,34 @@ class WatchlistPoller:
     async def _fetch_prices(
         self, chain: str, entries: List[WatchlistEntry]
     ) -> Dict[str, TokenPriceData]:
-        """Fetch current prices and market caps for a list of tokens on a chain."""
+        """Fetch current prices and market caps for a list of tokens on a chain.
+        
+        Uses price cache to avoid redundant API calls when data is still fresh.
+        """
         prices: Dict[str, TokenPriceData] = {}
 
         # Try DexScreener first for price data
         dexscreener = self.mcp_manager.get_client("dexscreener")
         if dexscreener:
             for entry in entries:
+                # Check cache first
+                if self.price_cache:
+                    cached = await self.price_cache.get(chain, entry.token_address)
+                    if cached is not None:
+                        price_data = self._extract_price_from_dexscreener(cached)
+                        if price_data is not None:
+                            prices[entry.token_address] = price_data
+                            continue
+
                 try:
                     result = await dexscreener.call_tool(
                         "getTokenPools",
                         {"chainId": chain, "tokenAddress": entry.token_address},
                     )
+                    # Cache the result
+                    if self.price_cache and result:
+                        await self.price_cache.set(chain, entry.token_address, result)
+                    
                     price_data = self._extract_price_from_dexscreener(result)
                     if price_data is not None:
                         prices[entry.token_address] = price_data
