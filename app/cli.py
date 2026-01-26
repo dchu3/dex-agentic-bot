@@ -234,6 +234,10 @@ async def _handle_command(
         await _cmd_watchlist(output, db, poller)
         return True
 
+    if cmd == "/clearwatchlist":
+        await _cmd_clearwatchlist(parts[1:], output, db)
+        return True
+
     if cmd == "/alert":
         await _cmd_alert(parts[1:], output, db)
         return True
@@ -423,6 +427,20 @@ async def _cmd_watchlist(
         entries = await db.list_entries()  # Reload with updated prices
 
     output.watchlist_table(entries)
+
+
+async def _cmd_clearwatchlist(args: List[str], output: CLIOutput, db: WatchlistDB) -> None:
+    """Handle /clearwatchlist command."""
+    # Require confirmation
+    if not args or args[0].lower() not in ("--confirm", "yes"):
+        entries = await db.list_entries()
+        count = len(entries)
+        output.warning(f"⚠️  This will remove ALL {count} entries from the watchlist.")
+        output.info("To confirm, run: /clearwatchlist --confirm")
+        return
+
+    removed = await db.clear_watchlist()
+    output.info(f"✅ Cleared watchlist ({removed} entries removed)")
 
 
 async def _cmd_alert(args: List[str], output: CLIOutput, db: WatchlistDB) -> None:

@@ -439,6 +439,7 @@ class CLIOutput:
                     "/watch <token> [chain]": "Add token to watchlist",
                     "/unwatch <token>": "Remove token from watchlist",
                     "/watchlist": "Show watched tokens with prices",
+                    "/clearwatchlist": "Remove all tokens from watchlist",
                     "/alert <token> above|below <price>": "Set price alert",
                     "/alerts": "Show triggered alerts",
                     "/alerts clear": "Acknowledge all alerts",
@@ -462,6 +463,7 @@ class CLIOutput:
             print("  /watch <token> [chain]       Add token to watchlist")
             print("  /unwatch <token>             Remove from watchlist")
             print("  /watchlist                   Show watched tokens")
+            print("  /clearwatchlist              Clear entire watchlist")
             print("  /alert <token> above|below <price>  Set price alert")
             print("  /alerts                      Show triggered alerts")
             print("  /alerts clear                Acknowledge alerts")
@@ -499,6 +501,7 @@ class CLIOutput:
         cmd_table.add_row("  /watch <token> [chain]", "Add token to watchlist")
         cmd_table.add_row("  /unwatch <token>", "Remove from watchlist")
         cmd_table.add_row("  /watchlist", "Show watched tokens with prices")
+        cmd_table.add_row("  /clearwatchlist", "Clear entire watchlist")
         cmd_table.add_row("  /alert <token> above|below <price>", "Set price alert")
         cmd_table.add_row("  /alerts", "Show triggered alerts")
         cmd_table.add_row("  /alerts clear", "Acknowledge all alerts")
