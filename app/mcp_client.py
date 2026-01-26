@@ -298,11 +298,13 @@ class MCPManager:
         dexpaprika_cmd: str,
         honeypot_cmd: str = "",
         rugcheck_cmd: str = "",
+        watchlist_provider: Optional[Any] = None,
     ) -> None:
         self.dexscreener = MCPClient("dexscreener", dexscreener_cmd)
         self.dexpaprika = MCPClient("dexpaprika", dexpaprika_cmd)
         self.honeypot = MCPClient("honeypot", honeypot_cmd) if honeypot_cmd else None
         self.rugcheck = MCPClient("rugcheck", rugcheck_cmd) if rugcheck_cmd else None
+        self.watchlist_provider = watchlist_provider
 
     async def start(self) -> None:
         tasks = [
@@ -336,6 +338,9 @@ class MCPManager:
             clients.append(self.rugcheck)
         for client in clients:
             all_functions.extend(client.to_gemini_functions())
+        # Add watchlist tools if provider is configured
+        if self.watchlist_provider:
+            all_functions.extend(self.watchlist_provider.to_gemini_functions())
         return all_functions
 
     def format_tools_for_system_prompt(self) -> str:
@@ -369,6 +374,29 @@ class MCPManager:
                         param_info = f" [REQUIRED: {', '.join(param_details)}]"
                     
                     lines.append(f"- {client.name}_{name}: {desc}{param_info}")
+        
+        # Add watchlist tools if provider is configured
+        if self.watchlist_provider and self.watchlist_provider.tools:
+            lines.append(f"\n### {self.watchlist_provider.name} tools:")
+            for tool in self.watchlist_provider.tools:
+                name = tool.get("name", "unknown")
+                desc = tool.get("description", "No description")
+                desc = self._truncate_description(desc, max_length=100)
+                
+                input_schema = tool.get("inputSchema", {})
+                required_params = input_schema.get("required", [])
+                properties = input_schema.get("properties", {})
+                
+                param_info = ""
+                if required_params:
+                    param_details = []
+                    for param in required_params:
+                        param_type = properties.get(param, {}).get("type", "string")
+                        param_details.append(f"{param}:{param_type}")
+                    param_info = f" [REQUIRED: {', '.join(param_details)}]"
+                
+                lines.append(f"- {self.watchlist_provider.name}_{name}: {desc}{param_info}")
+        
         return "\n".join(lines)
 
     @staticmethod
@@ -383,12 +411,13 @@ class MCPManager:
             return truncated[:last_space] + "..."
         return truncated + "..."
 
-    def get_client(self, name: str) -> Optional[MCPClient]:
-        """Get an MCP client by name."""
-        clients: Dict[str, Optional[MCPClient]] = {
+    def get_client(self, name: str) -> Optional[Any]:
+        """Get an MCP client or tool provider by name."""
+        clients: Dict[str, Optional[Any]] = {
             "dexscreener": self.dexscreener,
             "dexpaprika": self.dexpaprika,
             "honeypot": self.honeypot,
             "rugcheck": self.rugcheck,
+            "watchlist": self.watchlist_provider,
         }
         return clients.get(name)

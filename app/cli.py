@@ -18,6 +18,7 @@ from app.telegram_notifier import TelegramNotifier
 from app.types import PlannerResult
 from app.watchlist import WatchlistDB
 from app.watchlist_poller import WatchlistPoller, TriggeredAlert
+from app.watchlist_tools import WatchlistToolProvider
 from app.autonomous_agent import AutonomousWatchlistAgent
 from app.autonomous_scheduler import AutonomousScheduler
 
@@ -850,6 +851,10 @@ Examples:
         output.error(f"Failed to initialize watchlist database: {exc}")
         await mcp_manager.shutdown()
         sys.exit(1)
+
+    # Create watchlist tool provider and attach to MCP manager
+    watchlist_provider = WatchlistToolProvider(watchlist_db)
+    mcp_manager.watchlist_provider = watchlist_provider
 
     # Initialize poller if enabled
     poller: Optional[WatchlistPoller] = None
