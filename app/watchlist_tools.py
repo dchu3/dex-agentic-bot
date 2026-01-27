@@ -13,7 +13,7 @@ from app.watchlist import WatchlistDB, WatchlistEntry
 WATCHLIST_TOOLS: List[Dict[str, Any]] = [
     {
         "name": "add",
-        "description": "Add a token to the user's watchlist for tracking. Requires token_address, symbol, and chain.",
+        "description": "Add a token to the user's watchlist for tracking. Requires token_address, symbol, and chain. Optionally set price alerts.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -28,6 +28,14 @@ WATCHLIST_TOOLS: List[Dict[str, Any]] = [
                 "chain": {
                     "type": "string",
                     "description": "The blockchain network (e.g., ethereum, solana, base)",
+                },
+                "alert_above": {
+                    "type": "number",
+                    "description": "Optional price threshold to alert when price goes above this value",
+                },
+                "alert_below": {
+                    "type": "number",
+                    "description": "Optional price threshold to alert when price goes below this value",
                 },
             },
             "required": ["token_address", "symbol", "chain"],
@@ -75,6 +83,39 @@ WATCHLIST_TOOLS: List[Dict[str, Any]] = [
                 "symbol": {
                     "type": "string",
                     "description": "The token symbol (optional if token_address provided)",
+                },
+            },
+        },
+    },
+    {
+        "name": "set_alert",
+        "description": "Set or update price alert thresholds for a token in the watchlist. Use to add alerts to existing entries or modify alert prices.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "token_address": {
+                    "type": "string",
+                    "description": "The token's contract address (optional if symbol provided)",
+                },
+                "symbol": {
+                    "type": "string",
+                    "description": "The token symbol (optional if token_address provided)",
+                },
+                "alert_above": {
+                    "type": "number",
+                    "description": "Price threshold to alert when price goes above this value",
+                },
+                "alert_below": {
+                    "type": "number",
+                    "description": "Price threshold to alert when price goes below this value",
+                },
+                "clear_above": {
+                    "type": "boolean",
+                    "description": "Set to true to remove the alert_above threshold",
+                },
+                "clear_below": {
+                    "type": "boolean",
+                    "description": "Set to true to remove the alert_below threshold",
                 },
             },
         },
@@ -131,6 +172,8 @@ class WatchlistToolProvider:
             return await self._tool_list(arguments)
         elif method == "get":
             return await self._tool_get(arguments)
+        elif method == "set_alert":
+            return await self._tool_set_alert(arguments)
         else:
             raise ValueError(f"Unknown watchlist tool method: {method}")
 
@@ -139,6 +182,8 @@ class WatchlistToolProvider:
         token_address = args.get("token_address")
         symbol = args.get("symbol")
         chain = args.get("chain")
+        alert_above = args.get("alert_above")
+        alert_below = args.get("alert_below")
 
         if not token_address or not symbol or not chain:
             return {
@@ -151,6 +196,8 @@ class WatchlistToolProvider:
                 token_address=token_address,
                 symbol=symbol.upper(),
                 chain=chain.lower(),
+                alert_above=alert_above,
+                alert_below=alert_below,
             )
             return {
                 "success": True,
@@ -232,6 +279,64 @@ class WatchlistToolProvider:
                 return {
                     "success": False,
                     "error": f"Token {identifier} not found in watchlist",
+                }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def _tool_set_alert(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Set or update price alert thresholds for a watchlist entry."""
+        token_address = args.get("token_address")
+        symbol = args.get("symbol")
+        alert_above = args.get("alert_above")
+        alert_below = args.get("alert_below")
+        clear_above = args.get("clear_above", False)
+        clear_below = args.get("clear_below", False)
+
+        if not token_address and not symbol:
+            return {
+                "success": False,
+                "error": "Either token_address or symbol must be provided",
+            }
+
+        if alert_above is None and alert_below is None and not clear_above and not clear_below:
+            return {
+                "success": False,
+                "error": "At least one of alert_above, alert_below, clear_above, or clear_below must be provided",
+            }
+
+        try:
+            entry = await self.db.get_entry(
+                token_address=token_address,
+                symbol=symbol.upper() if symbol else None,
+            )
+
+            if not entry:
+                identifier = token_address or symbol
+                return {
+                    "success": False,
+                    "error": f"Token {identifier} not found in watchlist",
+                }
+
+            result = await self.db.update_alert(
+                entry_id=entry.id,
+                alert_above=alert_above,
+                alert_below=alert_below,
+                clear_above=clear_above,
+                clear_below=clear_below,
+            )
+
+            if result:
+                # Fetch updated entry to return current state
+                updated_entry = await self.db.get_entry(token_address=entry.token_address)
+                return {
+                    "success": True,
+                    "message": f"Updated alerts for {entry.symbol}",
+                    "entry": _entry_to_dict(updated_entry) if updated_entry else None,
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "No changes were made",
                 }
         except Exception as e:
             return {"success": False, "error": str(e)}
