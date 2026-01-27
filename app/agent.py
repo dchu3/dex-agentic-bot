@@ -34,6 +34,8 @@ class AgenticContext:
     total_tool_calls: int = 0
     tool_calls: List[ToolCall] = field(default_factory=list)
     tokens_found: List[Dict[str, str]] = field(default_factory=list)
+    malformed_retries: int = 0  # Track recovery attempts for malformed function calls
+    original_query: str = ""  # Store original query for recovery context
 
 
 AGENTIC_SYSTEM_PROMPT_BASE = """You are a crypto/DeFi assistant that helps users find token and pool information across multiple blockchains.
@@ -121,6 +123,13 @@ Safety column values:
 3. Include relevant links when available
 4. If a tool fails, explain what happened and suggest alternatives
 5. Be concise but informative
+
+## Handling Complex Queries
+For multi-step queries (e.g., "find tokens AND add to watchlist AND set alerts"):
+1. Break down into sequential steps - complete ONE step before moving to the next
+2. Start with data retrieval (search, get prices) before actions (add to watchlist)
+3. Use ONE tool call at a time if you're having issues with multiple calls
+4. Ensure all required parameters are filled before calling a tool
 """
 
 # Type alias for log callback
@@ -176,12 +185,43 @@ class AgenticPlanner:
         if self.verbose and self.log_callback:
             self.log_callback(level, message, data)
 
+    def _is_malformed_response(self, response: Any) -> bool:
+        """Check if response indicates a malformed function call."""
+        if not response.candidates:
+            return False
+        for candidate in response.candidates:
+            if hasattr(candidate, 'finish_reason'):
+                finish_reason = str(candidate.finish_reason)
+                if 'MALFORMED' in finish_reason:
+                    return True
+        return False
+
+    def _build_recovery_message(self, original_query: str, attempt: int) -> str:
+        """Build guidance message for malformed function call recovery."""
+        if attempt == 1:
+            return (
+                "Your function call was malformed. Let's break this down step by step.\n"
+                f"Original query: {original_query}\n\n"
+                "Please:\n"
+                "1. Start with ONE tool call at a time\n"
+                "2. Ensure all required parameters are provided\n"
+                "3. Use proper data types (strings for addresses, numbers for prices)\n\n"
+                "Try calling the first relevant tool now to get the data you need."
+            )
+        else:
+            return (
+                "Still having issues with function calls. Please respond with TEXT only explaining:\n"
+                "1. What data you need to answer the query\n"
+                "2. Which tools you would use and with what parameters\n\n"
+                "I'll help reformulate the request."
+            )
+
     async def run(
         self, message: str, context: Optional[Dict[str, Any]] = None
     ) -> PlannerResult:
         """Execute a query using the agentic loop."""
         context = context or {}
-        agentic_ctx = AgenticContext()
+        agentic_ctx = AgenticContext(original_query=message)
 
         self._log("info", f"Starting query: {message}")
         self._log("debug", f"Model: {self.model_name}, Tools: {len(self.gemini_tools)}")
@@ -225,21 +265,49 @@ class AgenticPlanner:
         ctx: AgenticContext,
     ) -> PlannerResult:
         """Main agentic reasoning loop."""
+        max_malformed_retries = 2
+        
         try:
             response = chat.send_message(message)
         except Exception as e:
             if "MALFORMED_FUNCTION_CALL" in str(e):
                 self._log("error", f"Malformed function call: {str(e)}")
-                response = chat.send_message(
-                    "Your function call was malformed. Please respond with text explaining "
-                    "what you were trying to do, and I'll help you reformulate the request."
-                )
+                ctx.malformed_retries += 1
+                recovery_msg = self._build_recovery_message(ctx.original_query, ctx.malformed_retries)
+                response = chat.send_message(recovery_msg)
             else:
                 raise
 
         while ctx.iteration < self.max_iterations:
             ctx.iteration += 1
             self._log("info", f"Iteration {ctx.iteration}/{self.max_iterations}")
+
+            # Check for malformed response via finish_reason (not exception)
+            if self._is_malformed_response(response):
+                self._log("warning", "Detected malformed function call via finish_reason")
+                ctx.malformed_retries += 1
+                
+                if ctx.malformed_retries <= max_malformed_retries:
+                    self._log("info", f"Recovery attempt {ctx.malformed_retries}/{max_malformed_retries}")
+                    recovery_msg = self._build_recovery_message(ctx.original_query, ctx.malformed_retries)
+                    try:
+                        response = chat.send_message(recovery_msg)
+                        continue  # Re-enter loop with new response
+                    except Exception as e:
+                        self._log("error", f"Recovery failed: {str(e)}")
+                else:
+                    # Max retries exceeded - return helpful message
+                    self._log("error", "Max malformed retries exceeded")
+                    return PlannerResult(
+                        message=(
+                            "I'm having trouble processing this complex query. "
+                            "Please try breaking it into smaller requests:\n"
+                            "1. First, search for tokens (e.g., 'find solana tokens above 900k market cap')\n"
+                            "2. Then, add specific ones to watchlist (e.g., 'add TOKEN_SYMBOL to watchlist')\n"
+                            "3. Finally, set alerts (e.g., 'set alert for TOKEN_SYMBOL at $X')"
+                        ),
+                        tokens=ctx.tokens_found,
+                    )
 
             # Check if model wants to call tools
             function_calls = self._extract_function_calls(response)
@@ -279,11 +347,18 @@ class AgenticPlanner:
             except Exception as e:
                 if "MALFORMED_FUNCTION_CALL" in str(e):
                     self._log("error", f"Malformed function call on retry: {str(e)}")
-                    response = chat.send_message(
-                        "Your function call was malformed. Please check the required parameters: "
-                        "For getPoolOHLCV, you need network, poolAddress, and start (yyyy-mm-dd format). "
-                        "Try again with correct parameters or explain what you need."
-                    )
+                    ctx.malformed_retries += 1
+                    if ctx.malformed_retries <= max_malformed_retries:
+                        recovery_msg = self._build_recovery_message(ctx.original_query, ctx.malformed_retries)
+                        response = chat.send_message(recovery_msg)
+                    else:
+                        return PlannerResult(
+                            message=(
+                                "I'm having trouble with tool calls for this query. "
+                                "Please try a simpler request or break it into steps."
+                            ),
+                            tokens=ctx.tokens_found,
+                        )
                 else:
                     raise
 
