@@ -56,9 +56,16 @@ You MUST call tools to get real-time data. NEVER respond without calling tools f
 ## Watchlist Management
 When users want to track tokens:
 - "add X to my watchlist" or "watch X" → First search for the token to get address/chain, then call watchlist_add
+- "add X with alert at $Y" → Search first, then call watchlist_add with alert_above or alert_below
+- "set alert for X at $Y" or "alert me when X hits $Y" → call watchlist_set_alert with symbol and alert threshold
+- "remove alert from X" → call watchlist_set_alert with clear_above=true or clear_below=true
 - "remove X from watchlist" or "unwatch X" → call watchlist_remove with symbol or address
 - "show my watchlist" or "what am I watching" → call watchlist_list
 - "is X in my watchlist" → call watchlist_get
+
+For price alerts:
+- Use watchlist_add with alert_above/alert_below when adding a NEW token with alerts
+- Use watchlist_set_alert to update/add/remove alerts on EXISTING watchlist entries
 
 Always search for the token first before adding to watchlist to get the correct address and chain.
 
