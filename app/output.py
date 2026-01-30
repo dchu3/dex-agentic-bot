@@ -436,8 +436,8 @@ class CLIOutput:
                     "/quit, /q": "Exit the CLI",
                     "/clear": "Clear conversation context",
                     "/context": "Show recent tokens in context",
-                    "/watch <token> [chain]": "Add token to watchlist",
-                    "/unwatch <token>": "Remove token from watchlist",
+                    "/watch <token> [chain]": "Add token to watchlist (quote multi-word: \"TOKEN NAME\")",
+                    "/unwatch <token>": "Remove token from watchlist (quote multi-word: \"TOKEN NAME\")",
                     "/watchlist": "Show watched tokens with prices",
                     "/clearwatchlist": "Remove all tokens from watchlist",
                     "/alert <token> above|below <price>": "Set price alert",
@@ -462,6 +462,7 @@ class CLIOutput:
             print("\nWatchlist:")
             print("  /watch <token> [chain]       Add token to watchlist")
             print("  /unwatch <token>             Remove from watchlist")
+            print("  (Use quotes for multi-word tokens: \"SHIBA INU\")")
             print("  /watchlist                   Show watched tokens")
             print("  /clearwatchlist              Clear entire watchlist")
             print("  /alert <token> above|below <price>  Set price alert")
@@ -500,6 +501,7 @@ class CLIOutput:
         cmd_table.add_row("[bold]Watchlist[/bold]", "")
         cmd_table.add_row("  /watch <token> [chain]", "Add token to watchlist")
         cmd_table.add_row("  /unwatch <token>", "Remove from watchlist")
+        cmd_table.add_row("  [dim](quote multi-word tokens: \"SHIBA INU\")[/dim]", "")
         cmd_table.add_row("  /watchlist", "Show watched tokens with prices")
         cmd_table.add_row("  /clearwatchlist", "Clear entire watchlist")
         cmd_table.add_row("  /alert <token> above|below <price>", "Set price alert")
@@ -515,6 +517,7 @@ class CLIOutput:
         examples.append("\n📝 Examples:\n", style="bold")
         examples.append("  > search for PEPE on ethereum\n", style="dim italic")
         examples.append("  > /watch PEPE ethereum\n", style="dim italic")
+        examples.append("  > /unwatch \"SHIBA INU\"\n", style="dim italic")
         examples.append("  > /alert PEPE above 0.00002", style="dim italic")
 
         # Combine into panel

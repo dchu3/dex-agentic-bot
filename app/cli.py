@@ -188,7 +188,11 @@ async def _handle_command(
     autonomous_scheduler: Optional[AutonomousScheduler] = None,
 ) -> Optional[str]:
     """Handle slash commands. Returns 'quit' to exit, True if handled, None otherwise."""
-    parts = query.split()
+    try:
+        parts = shlex.split(query)
+    except ValueError as e:
+        output.error(f"Invalid command syntax (check quotes): {e}")
+        return True
     cmd = parts[0].lower()
 
     # Exit commands
