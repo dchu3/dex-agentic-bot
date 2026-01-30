@@ -9,7 +9,7 @@ import shlex
 import shutil
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.config import load_settings
 from app.mcp_client import MCPManager
@@ -22,6 +22,43 @@ from app.watchlist_poller import WatchlistPoller, TriggeredAlert
 from app.watchlist_tools import WatchlistToolProvider
 from app.autonomous_agent import AutonomousWatchlistAgent
 from app.autonomous_scheduler import AutonomousScheduler
+
+# Known blockchain chain identifiers for parsing multi-word token names
+KNOWN_CHAINS = frozenset({
+    "ethereum", "eth", "solana", "sol", "base", "arbitrum", "arb",
+    "polygon", "matic", "bsc", "bnb", "avalanche", "avax", "optimism",
+    "op", "fantom", "ftm", "cronos", "cro", "gnosis", "celo", "moonbeam",
+    "moonriver", "harmony", "aurora", "metis", "boba", "kava", "linea",
+    "zksync", "scroll", "mantle", "blast", "mode", "sei", "sui", "aptos",
+    "near", "ton", "tron", "pulsechain", "pulse",
+})
+
+
+def _parse_token_and_chain(args: List[str]) -> Tuple[str, Optional[str]]:
+    """Parse args into token name and optional chain.
+    
+    If the last arg is a known chain, treat it as the chain and join
+    the rest as the token name. Otherwise, join all args as the token.
+    
+    Examples:
+        ["OLIVE", "OIL"] -> ("OLIVE OIL", None)
+        ["OLIVE", "OIL", "solana"] -> ("OLIVE OIL", "solana")
+        ["PEPE", "ethereum"] -> ("PEPE", "ethereum")
+        ["PEPE"] -> ("PEPE", None)
+    """
+    if not args:
+        return ("", None)
+    
+    if len(args) == 1:
+        return (args[0], None)
+    
+    last_arg = args[-1].lower()
+    if last_arg in KNOWN_CHAINS:
+        token = " ".join(args[:-1])
+        return (token, last_arg)
+    else:
+        token = " ".join(args)
+        return (token, None)
 
 
 async def run_single_query(
@@ -341,8 +378,7 @@ async def _cmd_watch(
         output.error("Usage: /watch <token_address_or_symbol> [chain]")
         return
 
-    token_input = args[0]
-    chain = args[1].lower() if len(args) > 1 else None
+    token_input, chain = _parse_token_and_chain(args)
 
     # Check if it's an address (starts with 0x or is long alphanumeric)
     is_address = token_input.startswith("0x") or len(token_input) > 20
@@ -402,8 +438,7 @@ async def _cmd_unwatch(args: List[str], output: CLIOutput, db: WatchlistDB) -> N
         output.error("Usage: /unwatch <token_address_or_symbol> [chain]")
         return
 
-    token_input = args[0]
-    chain = args[1].lower() if len(args) > 1 else None
+    token_input, chain = _parse_token_and_chain(args)
 
     is_address = token_input.startswith("0x") or len(token_input) > 20
 
@@ -452,17 +487,29 @@ async def _cmd_clearwatchlist(args: List[str], output: CLIOutput, db: WatchlistD
 async def _cmd_alert(args: List[str], output: CLIOutput, db: WatchlistDB) -> None:
     """Handle /alert command."""
     # Parse: /alert <token> above|below <price>
+    # Token can be multi-word, so find where above/below appears
     if len(args) < 3:
         output.error("Usage: /alert <token> above|below <price>")
         return
 
-    token_input = args[0]
-    direction = args[1].lower()
-    price_str = args[2]
+    # Find the direction keyword to split token from rest
+    direction_idx = None
+    for i, arg in enumerate(args):
+        if arg.lower() in ("above", "below"):
+            direction_idx = i
+            break
 
-    if direction not in ("above", "below"):
-        output.error("Direction must be 'above' or 'below'")
+    if direction_idx is None or direction_idx == 0:
+        output.error("Usage: /alert <token> above|below <price>")
         return
+
+    if direction_idx + 1 >= len(args):
+        output.error("Usage: /alert <token> above|below <price>")
+        return
+
+    token_input = " ".join(args[:direction_idx])
+    direction = args[direction_idx].lower()
+    price_str = args[direction_idx + 1]
 
     try:
         price = float(price_str.replace("$", "").replace(",", ""))
