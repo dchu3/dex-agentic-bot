@@ -305,7 +305,7 @@ class MCPManager:
         self.dexpaprika = MCPClient("dexpaprika", dexpaprika_cmd)
         self.honeypot = MCPClient("honeypot", honeypot_cmd) if honeypot_cmd else None
         self.rugcheck = MCPClient("rugcheck", rugcheck_cmd) if rugcheck_cmd else None
-        self.solana_rpc = MCPClient("solana_rpc", solana_rpc_cmd) if solana_rpc_cmd else None
+        self.solana = MCPClient("solana", solana_rpc_cmd) if solana_rpc_cmd else None
         self.watchlist_provider = watchlist_provider
 
     async def start(self) -> None:
@@ -317,8 +317,8 @@ class MCPManager:
             tasks.append(self.honeypot.start())
         if self.rugcheck:
             tasks.append(self.rugcheck.start())
-        if self.solana_rpc:
-            tasks.append(self.solana_rpc.start())
+        if self.solana:
+            tasks.append(self.solana.start())
         await asyncio.gather(*tasks)
 
     async def shutdown(self) -> None:
@@ -330,8 +330,8 @@ class MCPManager:
             tasks.append(self.honeypot.stop())
         if self.rugcheck:
             tasks.append(self.rugcheck.stop())
-        if self.solana_rpc:
-            tasks.append(self.solana_rpc.stop())
+        if self.solana:
+            tasks.append(self.solana.stop())
         await asyncio.gather(*tasks)
 
     def get_gemini_functions(self) -> List["types.FunctionDeclaration"]:
@@ -342,8 +342,8 @@ class MCPManager:
             clients.append(self.honeypot)
         if self.rugcheck:
             clients.append(self.rugcheck)
-        if self.solana_rpc:
-            clients.append(self.solana_rpc)
+        if self.solana:
+            clients.append(self.solana)
         for client in clients:
             all_functions.extend(client.to_gemini_functions())
         # Add watchlist tools if provider is configured
@@ -359,8 +359,8 @@ class MCPManager:
             clients.append(self.honeypot)
         if self.rugcheck:
             clients.append(self.rugcheck)
-        if self.solana_rpc:
-            clients.append(self.solana_rpc)
+        if self.solana:
+            clients.append(self.solana)
         for client in clients:
             if client.tools:
                 lines.append(f"\n### {client.name} tools:")
@@ -428,7 +428,7 @@ class MCPManager:
             "dexpaprika": self.dexpaprika,
             "honeypot": self.honeypot,
             "rugcheck": self.rugcheck,
-            "solana_rpc": self.solana_rpc,
+            "solana": self.solana,
             "watchlist": self.watchlist_provider,
         }
         return clients.get(name)
