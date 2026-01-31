@@ -200,7 +200,7 @@ class WatchlistPoller:
 
                 try:
                     result = await dexscreener.call_tool(
-                        "getTokenPools",
+                        "get_token_pools",
                         {"chainId": chain, "tokenAddress": entry.token_address},
                     )
                     # Cache the result
