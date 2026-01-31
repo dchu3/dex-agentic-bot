@@ -289,6 +289,10 @@ async def _handle_command(
         await _cmd_alerts(parts[1:], output, db)
         return True
 
+    if cmd == "/poller":
+        await _cmd_poller_status(output, poller)
+        return True
+
     if cmd == "/fix-addresses":
         await _cmd_fix_addresses(output, db, mcp_manager)
         return True
@@ -468,6 +472,35 @@ async def _cmd_watchlist(
         entries = await db.list_entries()  # Reload with updated prices
 
     output.watchlist_table(entries)
+
+
+async def _cmd_poller_status(
+    output: CLIOutput,
+    poller: Optional[WatchlistPoller],
+) -> None:
+    """Handle /poller command to show poller status."""
+    if not poller:
+        output.warning("Poller is not configured")
+        return
+
+    status = poller.get_status()
+    
+    output.info("📡 Poller Status")
+    output.info(f"  Running: {'✅ Yes' if status['running'] else '❌ No'}")
+    output.info(f"  Poll interval: {status['poll_interval']}s")
+    
+    if status['last_successful_check']:
+        output.info(f"  Last successful check: {status['last_successful_check']}")
+    else:
+        output.warning("  Last successful check: Never")
+    
+    if status['consecutive_failures'] > 0:
+        output.warning(f"  Consecutive failures: {status['consecutive_failures']}")
+    else:
+        output.info("  Consecutive failures: 0")
+    
+    if status['last_error']:
+        output.error(f"  Last error: {status['last_error']}")
 
 
 async def _cmd_clearwatchlist(args: List[str], output: CLIOutput, db: WatchlistDB) -> None:

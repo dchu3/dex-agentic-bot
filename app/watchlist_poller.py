@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
@@ -12,6 +13,8 @@ from app.watchlist import WatchlistDB, WatchlistEntry, AlertRecord
 if TYPE_CHECKING:
     from app.mcp_client import MCPManager
     from app.price_cache import PriceCache
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -61,11 +64,27 @@ class WatchlistPoller:
         self._task: Optional[asyncio.Task[None]] = None
         self._running = False
         self._last_error: Optional[str] = None
+        self._consecutive_failures = 0
+        self._last_successful_check: Optional[datetime] = None
 
     @property
     def is_running(self) -> bool:
         """Check if the poller is running."""
         return self._running and self._task is not None and not self._task.done()
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get poller status for diagnostics."""
+        return {
+            "running": self.is_running,
+            "consecutive_failures": self._consecutive_failures,
+            "last_error": self._last_error,
+            "last_successful_check": (
+                self._last_successful_check.isoformat()
+                if self._last_successful_check
+                else None
+            ),
+            "poll_interval": self.poll_interval,
+        }
 
     async def start(self) -> None:
         """Start the background polling task."""
@@ -95,10 +114,22 @@ class WatchlistPoller:
         while self._running:
             try:
                 await self._check_prices()
+                self._consecutive_failures = 0
+                self._last_successful_check = datetime.now()
             except asyncio.CancelledError:
                 break
             except Exception as e:
+                self._consecutive_failures += 1
                 self._last_error = str(e)
+                logger.warning(
+                    f"Poller check failed (attempt {self._consecutive_failures}): {e}"
+                )
+                # Log more details on repeated failures
+                if self._consecutive_failures >= 3:
+                    logger.error(
+                        f"Poller has failed {self._consecutive_failures} consecutive times. "
+                        f"Last error: {e}"
+                    )
 
             # Wait for next poll interval
             try:
@@ -127,6 +158,7 @@ class WatchlistPoller:
                 for entry in chain_entries:
                     price_data = price_data_map.get(entry.token_address)
                     if price_data is None:
+                        logger.debug(f"No price data for {entry.symbol} on {chain}")
                         continue
 
                     # Update last price
@@ -138,8 +170,8 @@ class WatchlistPoller:
                     )
                     triggered_alerts.extend(alerts)
 
-            except Exception:
-                # Skip this chain on error, continue with others
+            except Exception as e:
+                logger.warning(f"Failed to fetch prices for chain {chain}: {e}")
                 continue
 
         return triggered_alerts
@@ -178,7 +210,8 @@ class WatchlistPoller:
                     price_data = self._extract_price_from_dexscreener(result)
                     if price_data is not None:
                         prices[entry.token_address] = price_data
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"DexScreener fetch failed for {entry.symbol}: {e}")
                     continue
 
         # Fallback to DexPaprika for any missing prices
@@ -195,7 +228,8 @@ class WatchlistPoller:
                     price = self._extract_price_from_dexpaprika(result)
                     if price is not None:
                         prices[entry.token_address] = TokenPriceData(price=price)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"DexPaprika fetch failed for {entry.symbol}: {e}")
                     continue
 
         return prices
