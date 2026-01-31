@@ -41,6 +41,10 @@ class Settings(BaseSettings):
         default="",
         alias="MCP_RUGCHECK_CMD",
     )
+    mcp_solana_rpc_cmd: str = Field(
+        default="",
+        alias="MCP_SOLANA_RPC_CMD",
+    )
 
     agentic_max_iterations: int = Field(
         default=8, alias="AGENTIC_MAX_ITERATIONS", ge=1, le=15

@@ -886,6 +886,7 @@ Examples:
         dexpaprika_cmd=settings.mcp_dexpaprika_cmd,
         honeypot_cmd="" if args.no_honeypot else settings.mcp_honeypot_cmd,
         rugcheck_cmd="" if args.no_rugcheck else settings.mcp_rugcheck_cmd,
+        solana_rpc_cmd=settings.mcp_solana_rpc_cmd,
     )
 
     try:
