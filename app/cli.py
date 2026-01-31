@@ -68,10 +68,9 @@ async def run_single_query(
     context: Dict[str, Any],
 ) -> None:
     """Execute a single query and display the result."""
-    output.status(f"Processing: {query}")
-
     try:
-        result = await planner.run(query, context)
+        with output.processing("Processing query..."):
+            result = await planner.run(query, context)
         output.result(result)
     except Exception as exc:
         output.error(f"Query failed: {exc}")
@@ -167,7 +166,8 @@ async def run_interactive(
             }
 
             try:
-                result = await planner.run(query, context)
+                with output.processing("Thinking..."):
+                    result = await planner.run(query, context)
                 output.result(result)
 
                 # Update conversation history

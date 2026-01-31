@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import re
 import sys
+from contextlib import contextmanager
 from enum import Enum
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Generator, List, Optional, TYPE_CHECKING
 
 from app.types import PlannerResult
 
@@ -178,6 +179,19 @@ class CLIOutput:
             )
 
         self._console.print(table)
+
+    @contextmanager
+    def processing(self, message: str = "Thinking...") -> Generator[None, None, None]:
+        """Show animated spinner while processing."""
+        if self.format == OutputFormat.JSON or not self._console:
+            # Fallback: just print message for non-rich output
+            if self.format != OutputFormat.JSON:
+                print(f"⏳ {message}", file=self.stream, flush=True)
+            yield
+            return
+
+        with self._console.status(f"[bold cyan]{message}[/bold cyan]", spinner="dots"):
+            yield
 
     def status(self, message: str) -> None:
         """Output a status message."""
