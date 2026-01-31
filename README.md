@@ -531,6 +531,51 @@ MCP_RUGCHECK_CMD=node /path/to/dex-rugcheck-mcp/dist/index.js
 
 The Rugcheck MCP server provides tools to get token safety summaries for Solana tokens. Refer to the server documentation for specific tool details.
 
+## MCP Server: Solana RPC
+
+This project uses the Solana RPC MCP server to query on-chain Solana data directly.
+
+### Supported Features
+
+| Category | Tools |
+|----------|-------|
+| Account | getBalance, getAccountInfo, getMultipleAccounts, getProgramAccounts |
+| Transaction | getTransaction, getSignaturesForAddress, getSignatureStatuses |
+| Block | getBlock, getBlockHeight, getLatestBlockhash, getBlockTime |
+| Token (SPL) | getTokenAccountBalance, getTokenAccountsByOwner, getTokenSupply, getTokenLargestAccounts |
+| Cluster | getClusterNodes, getEpochInfo, getVersion, getHealth |
+
+### Installing Solana RPC MCP
+
+```bash
+# Clone the repository
+git clone https://github.com/dchu3/solana-rpc-mcp.git
+cd solana-rpc-mcp
+
+# Install dependencies
+npm install
+
+# Build
+npm run build
+```
+
+### Configuration
+
+Add to your `.env`:
+
+```env
+MCP_SOLANA_RPC_CMD=node /path/to/solana-rpc-mcp/dist/index.js
+```
+
+### Example Queries
+
+| Query | Description |
+|-------|-------------|
+| `what is the SOL balance of <address>` | Check wallet balance |
+| `what tokens does <address> hold` | List SPL token holdings |
+| `show me the last 10 transactions for <address>` | Transaction history |
+| `who are the top holders of <mint>` | Largest token accounts |
+
 ## License
 
 MIT
