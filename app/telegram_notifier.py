@@ -380,6 +380,17 @@ class TelegramNotifier:
         if alert.liquidity is not None:
             liquidity_line = f"<b>Liquidity:</b> {self._format_liquidity(alert.liquidity)}\n"
 
+        # Build auto-adjusted thresholds line if applicable
+        new_thresholds_line = ""
+        if alert.new_alert_above is not None and alert.new_alert_below is not None:
+            new_above_fmt = self._format_price(alert.new_alert_above)
+            new_below_fmt = self._format_price(alert.new_alert_below)
+            new_thresholds_line = (
+                f"\n🔄 <b>New Triggers Set:</b>\n"
+                f"  🎯 Take Profit: {new_above_fmt}\n"
+                f"  🛑 Stop Loss: {new_below_fmt}\n"
+            )
+
         return (
             f"🔔 <b>Price Alert</b>\n\n"
             f"<b>Token:</b> {alert.symbol}\n"
@@ -388,7 +399,8 @@ class TelegramNotifier:
             f"<b>Current Price:</b> {current}\n"
             f"{market_cap_line}"
             f"{liquidity_line}"
-            f"<b>Contract:</b> <code>{alert.token_address}</code>\n\n"
+            f"<b>Contract:</b> <code>{alert.token_address}</code>\n"
+            f"{new_thresholds_line}\n"
             f"⏰ {timestamp}"
         )
 

@@ -959,6 +959,9 @@ Examples:
             mcp_manager=mcp_manager,
             poll_interval=poll_interval,
             price_cache=price_cache,
+            auto_adjust_enabled=settings.alert_auto_adjust_enabled,
+            take_profit_percent=settings.alert_take_profit_percent,
+            stop_loss_percent=settings.alert_stop_loss_percent,
         )
 
     # Initialize Telegram notifier if enabled
