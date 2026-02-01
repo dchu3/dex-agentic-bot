@@ -317,7 +317,9 @@ class WatchlistPoller:
             # Only trigger if this is a new crossing (last_price was below)
             if entry.last_price is None or entry.last_price < entry.alert_above:
                 # Calculate new thresholds if auto-adjust is enabled
-                new_above, new_below = await self._auto_adjust_alerts(entry.id, current_price)
+                new_above, new_below = await self._auto_adjust_alerts(
+                    entry.id, current_price, "above", entry.alert_below
+                )
                 
                 alert = TriggeredAlert(
                     symbol=entry.symbol,
@@ -350,7 +352,9 @@ class WatchlistPoller:
             # Only trigger if this is a new crossing (last_price was above)
             if entry.last_price is None or entry.last_price > entry.alert_below:
                 # Calculate new thresholds if auto-adjust is enabled
-                new_above, new_below = await self._auto_adjust_alerts(entry.id, current_price)
+                new_above, new_below = await self._auto_adjust_alerts(
+                    entry.id, current_price, "below", entry.alert_below
+                )
                 
                 alert = TriggeredAlert(
                     symbol=entry.symbol,
@@ -381,9 +385,19 @@ class WatchlistPoller:
         return alerts
 
     async def _auto_adjust_alerts(
-        self, entry_id: int, current_price: float
+        self,
+        entry_id: int,
+        current_price: float,
+        alert_type: str,
+        current_alert_below: Optional[float] = None,
     ) -> tuple[Optional[float], Optional[float]]:
         """Auto-adjust alert thresholds based on current price after a trigger.
+        
+        Args:
+            entry_id: Watchlist entry ID
+            current_price: Current token price
+            alert_type: "above" or "below" indicating which threshold triggered
+            current_alert_below: Current stop-loss threshold (for trailing logic)
         
         Returns:
             Tuple of (new_alert_above, new_alert_below) or (None, None) if disabled.
@@ -392,7 +406,14 @@ class WatchlistPoller:
             return None, None
 
         new_alert_above = current_price * (1 + self.take_profit_percent / 100)
-        new_alert_below = current_price * (1 - self.stop_loss_percent / 100)
+        candidate_below = current_price * (1 - self.stop_loss_percent / 100)
+
+        if alert_type == "above" and current_alert_below is not None:
+            # Trailing stop: only raise stop-loss, never lower it
+            new_alert_below = max(current_alert_below, candidate_below)
+        else:
+            # Downward trigger or no existing stop: recalculate normally
+            new_alert_below = candidate_below
 
         await self.db.update_alert(
             entry_id=entry_id,
