@@ -115,6 +115,7 @@ The bot includes a persistent watchlist with background price monitoring and ale
 - **Persistent Storage**: Watchlist stored in SQLite at `~/.dex-bot/watchlist.db`
 - **Background Polling**: Automatic price checks every 60 seconds (configurable)
 - **Price Alerts**: Set thresholds to be notified when prices cross above or below targets
+- **Auto-Adjust Alerts**: When an alert triggers, thresholds automatically reset based on current price (take-profit +10%, stop-loss -5%)
 - **Alert History**: All triggered alerts are logged and can be reviewed
 - **Telegram Notifications**: Receive alerts via Telegram bot (optional)
 
@@ -127,6 +128,11 @@ Add these optional settings to your `.env`:
 WATCHLIST_DB_PATH=~/.dex-bot/watchlist.db
 WATCHLIST_POLL_INTERVAL=60          # Seconds between price checks
 WATCHLIST_POLL_ENABLED=true         # Enable/disable background polling
+
+# Alert auto-adjustment (enabled by default)
+ALERT_AUTO_ADJUST_ENABLED=true      # Auto-reset thresholds after trigger
+ALERT_TAKE_PROFIT_PERCENT=10.0      # New alert_above = current_price * 1.10
+ALERT_STOP_LOSS_PERCENT=5.0         # New alert_below = current_price * 0.95
 
 # Telegram notifications (optional)
 TELEGRAM_BOT_TOKEN=your-bot-token   # From @BotFather

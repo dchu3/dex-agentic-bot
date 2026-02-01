@@ -29,6 +29,8 @@ class TriggeredAlert:
     token_address: str
     market_cap: Optional[float] = None
     liquidity: Optional[float] = None
+    new_alert_above: Optional[float] = None
+    new_alert_below: Optional[float] = None
 
 
 @dataclass
@@ -54,12 +56,18 @@ class WatchlistPoller:
         poll_interval: int = 60,
         alert_callback: Optional[AlertCallback] = None,
         price_cache: Optional["PriceCache"] = None,
+        auto_adjust_enabled: bool = True,
+        take_profit_percent: float = 10.0,
+        stop_loss_percent: float = 5.0,
     ) -> None:
         self.db = db
         self.mcp_manager = mcp_manager
         self.poll_interval = poll_interval
         self.alert_callback = alert_callback
         self.price_cache = price_cache
+        self.auto_adjust_enabled = auto_adjust_enabled
+        self.take_profit_percent = take_profit_percent
+        self.stop_loss_percent = stop_loss_percent
 
         self._task: Optional[asyncio.Task[None]] = None
         self._running = False
@@ -308,6 +316,9 @@ class WatchlistPoller:
         if entry.alert_above is not None and current_price >= entry.alert_above:
             # Only trigger if this is a new crossing (last_price was below)
             if entry.last_price is None or entry.last_price < entry.alert_above:
+                # Calculate new thresholds if auto-adjust is enabled
+                new_above, new_below = await self._auto_adjust_alerts(entry.id, current_price)
+                
                 alert = TriggeredAlert(
                     symbol=entry.symbol,
                     chain=entry.chain,
@@ -317,6 +328,8 @@ class WatchlistPoller:
                     token_address=entry.token_address,
                     market_cap=market_cap,
                     liquidity=liquidity,
+                    new_alert_above=new_above,
+                    new_alert_below=new_below,
                 )
                 alerts.append(alert)
 
@@ -336,6 +349,9 @@ class WatchlistPoller:
         if entry.alert_below is not None and current_price <= entry.alert_below:
             # Only trigger if this is a new crossing (last_price was above)
             if entry.last_price is None or entry.last_price > entry.alert_below:
+                # Calculate new thresholds if auto-adjust is enabled
+                new_above, new_below = await self._auto_adjust_alerts(entry.id, current_price)
+                
                 alert = TriggeredAlert(
                     symbol=entry.symbol,
                     chain=entry.chain,
@@ -345,6 +361,8 @@ class WatchlistPoller:
                     token_address=entry.token_address,
                     market_cap=market_cap,
                     liquidity=liquidity,
+                    new_alert_above=new_above,
+                    new_alert_below=new_below,
                 )
                 alerts.append(alert)
 
@@ -361,3 +379,30 @@ class WatchlistPoller:
                     self.alert_callback(alert)
 
         return alerts
+
+    async def _auto_adjust_alerts(
+        self, entry_id: int, current_price: float
+    ) -> tuple[Optional[float], Optional[float]]:
+        """Auto-adjust alert thresholds based on current price after a trigger.
+        
+        Returns:
+            Tuple of (new_alert_above, new_alert_below) or (None, None) if disabled.
+        """
+        if not self.auto_adjust_enabled:
+            return None, None
+
+        new_alert_above = current_price * (1 + self.take_profit_percent / 100)
+        new_alert_below = current_price * (1 - self.stop_loss_percent / 100)
+
+        await self.db.update_alert(
+            entry_id=entry_id,
+            alert_above=new_alert_above,
+            alert_below=new_alert_below,
+        )
+
+        logger.info(
+            f"Auto-adjusted alerts for entry {entry_id}: "
+            f"above=${new_alert_above:.8g}, below=${new_alert_below:.8g}"
+        )
+
+        return new_alert_above, new_alert_below

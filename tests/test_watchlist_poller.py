@@ -304,3 +304,201 @@ async def test_extract_price_from_dexpaprika():
     
     # Not a dict
     assert poller._extract_price_from_dexpaprika("invalid") is None
+
+
+class TestAutoAdjustAlerts:
+    """Tests for auto-adjust alerts feature."""
+
+    @pytest.mark.asyncio
+    async def test_auto_adjust_after_above_trigger(self, db, mock_mcp_manager):
+        """Test that alerts are auto-adjusted after above threshold trigger."""
+        # Add entry with both alert thresholds
+        await db.add_entry(
+            token_address="0x6982508145454ce325ddbe47a25d4ec3d2311933",
+            symbol="PEPE",
+            chain="ethereum",
+            alert_above=0.00002,
+            alert_below=0.00001,
+        )
+        
+        # Mock price above threshold
+        mock_mcp_manager._mock_dexscreener.call_tool = AsyncMock(return_value={
+            "pairs": [{"priceUsd": "0.000021"}]
+        })
+        
+        poller = WatchlistPoller(
+            db, mock_mcp_manager,
+            auto_adjust_enabled=True,
+            take_profit_percent=10.0,
+            stop_loss_percent=5.0,
+        )
+        alerts = await poller.check_now()
+        
+        assert len(alerts) == 1
+        assert alerts[0].alert_type == "above"
+        
+        # Check new thresholds are set in alert
+        assert alerts[0].new_alert_above == pytest.approx(0.000021 * 1.10, rel=1e-6)
+        assert alerts[0].new_alert_below == pytest.approx(0.000021 * 0.95, rel=1e-6)
+        
+        # Verify database was updated
+        entry = await db.get_entry(symbol="PEPE")
+        assert entry.alert_above == pytest.approx(0.000021 * 1.10, rel=1e-6)
+        assert entry.alert_below == pytest.approx(0.000021 * 0.95, rel=1e-6)
+
+    @pytest.mark.asyncio
+    async def test_auto_adjust_after_below_trigger(self, db, mock_mcp_manager):
+        """Test that alerts are auto-adjusted after below threshold trigger."""
+        # Add entry with both alert thresholds and set initial price
+        entry = await db.add_entry(
+            token_address="0x6982508145454ce325ddbe47a25d4ec3d2311933",
+            symbol="PEPE",
+            chain="ethereum",
+            alert_above=0.00002,
+            alert_below=0.00001,
+        )
+        await db.update_price(entry.id, 0.000015)
+        
+        # Mock price below threshold
+        mock_mcp_manager._mock_dexscreener.call_tool = AsyncMock(return_value={
+            "pairs": [{"priceUsd": "0.000009"}]
+        })
+        
+        poller = WatchlistPoller(
+            db, mock_mcp_manager,
+            auto_adjust_enabled=True,
+            take_profit_percent=10.0,
+            stop_loss_percent=5.0,
+        )
+        alerts = await poller.check_now()
+        
+        assert len(alerts) == 1
+        assert alerts[0].alert_type == "below"
+        
+        # Check new thresholds are set
+        assert alerts[0].new_alert_above == pytest.approx(0.000009 * 1.10, rel=1e-6)
+        assert alerts[0].new_alert_below == pytest.approx(0.000009 * 0.95, rel=1e-6)
+        
+        # Verify database was updated
+        entry = await db.get_entry(symbol="PEPE")
+        assert entry.alert_above == pytest.approx(0.000009 * 1.10, rel=1e-6)
+        assert entry.alert_below == pytest.approx(0.000009 * 0.95, rel=1e-6)
+
+    @pytest.mark.asyncio
+    async def test_auto_adjust_disabled(self, db, mock_mcp_manager):
+        """Test that alerts are NOT adjusted when feature is disabled."""
+        original_above = 0.00002
+        original_below = 0.00001
+        
+        await db.add_entry(
+            token_address="0x6982508145454ce325ddbe47a25d4ec3d2311933",
+            symbol="PEPE",
+            chain="ethereum",
+            alert_above=original_above,
+            alert_below=original_below,
+        )
+        
+        # Mock price above threshold
+        mock_mcp_manager._mock_dexscreener.call_tool = AsyncMock(return_value={
+            "pairs": [{"priceUsd": "0.000021"}]
+        })
+        
+        poller = WatchlistPoller(
+            db, mock_mcp_manager,
+            auto_adjust_enabled=False,  # Disabled
+        )
+        alerts = await poller.check_now()
+        
+        assert len(alerts) == 1
+        
+        # New thresholds should be None
+        assert alerts[0].new_alert_above is None
+        assert alerts[0].new_alert_below is None
+        
+        # Database should NOT be updated
+        entry = await db.get_entry(symbol="PEPE")
+        assert entry.alert_above == original_above
+        assert entry.alert_below == original_below
+
+    @pytest.mark.asyncio
+    async def test_auto_adjust_custom_percentages(self, db, mock_mcp_manager):
+        """Test auto-adjust with custom take-profit and stop-loss percentages."""
+        await db.add_entry(
+            token_address="0x6982508145454ce325ddbe47a25d4ec3d2311933",
+            symbol="PEPE",
+            chain="ethereum",
+            alert_above=0.00002,
+            alert_below=0.00001,
+        )
+        
+        triggered_price = 0.000025
+        mock_mcp_manager._mock_dexscreener.call_tool = AsyncMock(return_value={
+            "pairs": [{"priceUsd": str(triggered_price)}]
+        })
+        
+        # Custom percentages: 20% take profit, 10% stop loss
+        poller = WatchlistPoller(
+            db, mock_mcp_manager,
+            auto_adjust_enabled=True,
+            take_profit_percent=20.0,
+            stop_loss_percent=10.0,
+        )
+        alerts = await poller.check_now()
+        
+        assert len(alerts) == 1
+        
+        # Verify custom percentages were used
+        expected_above = triggered_price * 1.20
+        expected_below = triggered_price * 0.90
+        assert alerts[0].new_alert_above == pytest.approx(expected_above, rel=1e-6)
+        assert alerts[0].new_alert_below == pytest.approx(expected_below, rel=1e-6)
+
+    @pytest.mark.asyncio
+    async def test_auto_adjust_method_directly(self, db, mock_mcp_manager):
+        """Test the _auto_adjust_alerts method directly."""
+        entry = await db.add_entry(
+            token_address="0x1234",
+            symbol="TEST",
+            chain="ethereum",
+            alert_above=100.0,
+            alert_below=80.0,
+        )
+        
+        poller = WatchlistPoller(
+            db, mock_mcp_manager,
+            auto_adjust_enabled=True,
+            take_profit_percent=10.0,
+            stop_loss_percent=5.0,
+        )
+        
+        current_price = 95.0
+        new_above, new_below = await poller._auto_adjust_alerts(entry.id, current_price)
+        
+        assert new_above == pytest.approx(95.0 * 1.10, rel=1e-6)  # 104.5
+        assert new_below == pytest.approx(95.0 * 0.95, rel=1e-6)  # 90.25
+        
+        # Verify database was updated
+        updated = await db.get_entry(symbol="TEST")
+        assert updated.alert_above == pytest.approx(104.5, rel=1e-6)
+        assert updated.alert_below == pytest.approx(90.25, rel=1e-6)
+
+    @pytest.mark.asyncio
+    async def test_auto_adjust_returns_none_when_disabled(self, db, mock_mcp_manager):
+        """Test that _auto_adjust_alerts returns None when disabled."""
+        entry = await db.add_entry(
+            token_address="0x1234",
+            symbol="TEST",
+            chain="ethereum",
+            alert_above=100.0,
+            alert_below=80.0,
+        )
+        
+        poller = WatchlistPoller(
+            db, mock_mcp_manager,
+            auto_adjust_enabled=False,
+        )
+        
+        new_above, new_below = await poller._auto_adjust_alerts(entry.id, 95.0)
+        
+        assert new_above is None
+        assert new_below is None

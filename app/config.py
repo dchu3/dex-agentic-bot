@@ -110,6 +110,17 @@ class Settings(BaseSettings):
         default=5000.0, alias="AUTONOMOUS_MIN_LIQUIDITY_USD", ge=0
     )
 
+    # Alert auto-adjustment settings
+    alert_auto_adjust_enabled: bool = Field(
+        default=True, alias="ALERT_AUTO_ADJUST_ENABLED"
+    )
+    alert_take_profit_percent: float = Field(
+        default=10.0, alias="ALERT_TAKE_PROFIT_PERCENT", ge=0.1, le=100.0
+    )
+    alert_stop_loss_percent: float = Field(
+        default=5.0, alias="ALERT_STOP_LOSS_PERCENT", ge=0.1, le=100.0
+    )
+
 
 @lru_cache(maxsize=1)
 def load_settings() -> Settings:
