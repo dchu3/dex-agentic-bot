@@ -472,7 +472,9 @@ class TestAutoAdjustAlerts:
         )
         
         current_price = 95.0
-        new_above, new_below = await poller._auto_adjust_alerts(entry.id, current_price)
+        new_above, new_below = await poller._auto_adjust_alerts(
+            entry.id, current_price, "below", entry.alert_below
+        )
         
         assert new_above == pytest.approx(95.0 * 1.10, rel=1e-6)  # 104.5
         assert new_below == pytest.approx(95.0 * 0.95, rel=1e-6)  # 90.25
@@ -498,7 +500,99 @@ class TestAutoAdjustAlerts:
             auto_adjust_enabled=False,
         )
         
-        new_above, new_below = await poller._auto_adjust_alerts(entry.id, 95.0)
+        new_above, new_below = await poller._auto_adjust_alerts(
+            entry.id, 95.0, "above", entry.alert_below
+        )
         
         assert new_above is None
         assert new_below is None
+
+    @pytest.mark.asyncio
+    async def test_trailing_stop_does_not_lower_on_upward_trigger(self, db, mock_mcp_manager):
+        """Test that stop-loss is NOT lowered when price moves up (trailing stop)."""
+        # Entry with high stop-loss already set
+        entry = await db.add_entry(
+            token_address="0x1234",
+            symbol="TEST",
+            chain="ethereum",
+            alert_above=100.0,
+            alert_below=90.0,  # High stop-loss
+        )
+        
+        poller = WatchlistPoller(
+            db, mock_mcp_manager,
+            auto_adjust_enabled=True,
+            take_profit_percent=10.0,
+            stop_loss_percent=5.0,
+        )
+        
+        # Price triggers above threshold at 105
+        # Candidate new_below = 105 * 0.95 = 99.75, but current is 90
+        # Trailing stop should keep 90 since 99.75 > 90
+        current_price = 105.0
+        new_above, new_below = await poller._auto_adjust_alerts(
+            entry.id, current_price, "above", entry.alert_below
+        )
+        
+        # New above should be recalculated
+        assert new_above == pytest.approx(105.0 * 1.10, rel=1e-6)  # 115.5
+        # New below should be the higher of current (90) vs candidate (99.75)
+        assert new_below == pytest.approx(99.75, rel=1e-6)
+        
+    @pytest.mark.asyncio
+    async def test_trailing_stop_raises_on_upward_trigger(self, db, mock_mcp_manager):
+        """Test that stop-loss is raised when new candidate is higher (trailing stop)."""
+        # Entry with low stop-loss
+        entry = await db.add_entry(
+            token_address="0x1234",
+            symbol="TEST",
+            chain="ethereum",
+            alert_above=100.0,
+            alert_below=50.0,  # Low stop-loss
+        )
+        
+        poller = WatchlistPoller(
+            db, mock_mcp_manager,
+            auto_adjust_enabled=True,
+            take_profit_percent=10.0,
+            stop_loss_percent=5.0,
+        )
+        
+        # Price triggers above at 105
+        # Candidate new_below = 105 * 0.95 = 99.75
+        # Since 99.75 > 50, trailing stop should raise to 99.75
+        current_price = 105.0
+        new_above, new_below = await poller._auto_adjust_alerts(
+            entry.id, current_price, "above", entry.alert_below
+        )
+        
+        assert new_above == pytest.approx(115.5, rel=1e-6)
+        assert new_below == pytest.approx(99.75, rel=1e-6)  # Raised from 50 to 99.75
+
+    @pytest.mark.asyncio
+    async def test_downward_trigger_recalculates_both(self, db, mock_mcp_manager):
+        """Test that downward trigger recalculates both thresholds normally."""
+        entry = await db.add_entry(
+            token_address="0x1234",
+            symbol="TEST",
+            chain="ethereum",
+            alert_above=100.0,
+            alert_below=80.0,
+        )
+        
+        poller = WatchlistPoller(
+            db, mock_mcp_manager,
+            auto_adjust_enabled=True,
+            take_profit_percent=10.0,
+            stop_loss_percent=5.0,
+        )
+        
+        # Price drops and triggers below threshold at 75
+        current_price = 75.0
+        new_above, new_below = await poller._auto_adjust_alerts(
+            entry.id, current_price, "below", entry.alert_below
+        )
+        
+        # Both should be recalculated from new lower price
+        assert new_above == pytest.approx(75.0 * 1.10, rel=1e-6)  # 82.5
+        assert new_below == pytest.approx(75.0 * 0.95, rel=1e-6)  # 71.25
