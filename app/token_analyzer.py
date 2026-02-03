@@ -400,11 +400,11 @@ class TokenAnalyzer:
             f"Address: {token_data.address}",
             "",
             "=== Market Data ===",
-            f"Price: ${token_data.price_usd or 0:.10f}",
-            f"24h Change: {token_data.price_change_24h or 0:.2f}%",
-            f"24h Volume: ${token_data.volume_24h or 0:,.0f}",
-            f"Liquidity: ${token_data.liquidity_usd or 0:,.0f}",
-            f"Market Cap: ${token_data.market_cap or 0:,.0f}",
+            f"Price: ${(token_data.price_usd or 0):.10f}",
+            f"24h Change: {(token_data.price_change_24h or 0):.2f}%",
+            f"24h Volume: ${(token_data.volume_24h or 0):,.0f}",
+            f"Liquidity: ${(token_data.liquidity_usd or 0):,.0f}",
+            f"Market Cap: ${(token_data.market_cap or 0):,.0f}",
             "",
             "=== Safety Data ===",
             f"Status: {token_data.safety_status}",
@@ -430,7 +430,7 @@ class TokenAnalyzer:
             lines.append("=== Top Pools ===")
             for pool in token_data.pools[:3]:
                 lines.append(
-                    f"- {pool['dex']}: ${pool.get('liquidity', 0):,.0f} liquidity"
+                    f"- {pool['dex']}: ${(pool.get('liquidity') or 0):,.0f} liquidity"
                 )
         
         # Add errors if any
