@@ -387,29 +387,25 @@ class TestAutonomousScheduler:
             summary = scheduler._generate_summary(result)
             assert summary == "No changes"
 
-            # Test with added tokens
-            result.tokens_added = [
-                TokenCandidate(
+            # Test with updated tokens
+            result.tokens_updated = [
+                WatchlistReview(
+                    entry_id=1,
                     token_address="abc",
                     symbol="TEST",
-                    chain="solana",
-                    current_price=0.001,
-                    price_change_24h=10,
-                    volume_24h=100000,
-                    liquidity=50000,
-                    momentum_score=75,
-                    alert_above=0.0011,
-                    alert_below=0.0009,
-                    reasoning="Test",
+                    action="update",
+                    new_alert_above=0.0012,
+                    new_alert_below=0.00095,
+                    reasoning="Price up, raising stop",
                 )
             ]
             summary = scheduler._generate_summary(result)
-            assert "Added: TEST" in summary
+            assert "Updated: TEST" in summary
 
-            # Test with removed tokens
-            result.tokens_removed = ["OLD"]
+            # Test with errors
+            result.errors = ["Some error"]
             summary = scheduler._generate_summary(result)
-            assert "Removed: OLD" in summary
+            assert "Errors: 1" in summary
 
 
 class TestAutonomousWatchlistDB:
