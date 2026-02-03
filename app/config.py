@@ -67,7 +67,7 @@ class Settings(BaseSettings):
         default=60, alias="WATCHLIST_POLL_INTERVAL", ge=10, le=3600
     )
     watchlist_poll_enabled: bool = Field(
-        default=True, alias="WATCHLIST_POLL_ENABLED"
+        default=False, alias="WATCHLIST_POLL_ENABLED"
     )
 
     # Price cache settings
