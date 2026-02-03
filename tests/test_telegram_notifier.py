@@ -277,8 +277,7 @@ async def test_set_commands(notifier):
         command_names = [c["command"] for c in commands]
         assert "start" in command_names
         assert "help" in command_names
-        assert "subscribe" in command_names
-        assert "unsubscribe" in command_names
+        assert "analyze" in command_names
         assert "status" in command_names
 
 
@@ -320,10 +319,9 @@ async def test_handle_help_command(notifier):
         call_args = mock_client.post.call_args
         message_text = call_args[1]["json"]["text"]
 
-        assert "DEX Agentic Bot" in message_text
-        assert "/watch" in message_text
-        assert "/alert" in message_text
-        assert "/subscribe" in message_text
+        assert "Token Safety" in message_text
+        assert "/analyze" in message_text
+        assert "/help" in message_text
 
 
 @pytest.mark.asyncio
@@ -449,3 +447,98 @@ async def test_broadcast_message(notifier):
 
         assert count == 3
         assert mock_client.post.call_count == 3
+
+
+class TestPrivateMode:
+    """Tests for private mode access control."""
+
+    @pytest.fixture
+    def private_notifier(self, temp_db_path):
+        """Create a notifier in private mode."""
+        return TelegramNotifier(
+            bot_token="123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
+            chat_id="allowed_chat_123",
+            subscribers_db_path=temp_db_path,
+            private_mode=True,
+        )
+
+    @pytest.fixture
+    def temp_db_path(self):
+        """Create a temporary database path for testing."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield Path(tmpdir) / "test_subscribers.db"
+
+    def test_is_allowed_public_mode(self, temp_db_path):
+        """Test that public mode allows all chats."""
+        notifier = TelegramNotifier(
+            bot_token="test",
+            chat_id="owner_chat",
+            subscribers_db_path=temp_db_path,
+            private_mode=False,
+        )
+        assert notifier._is_allowed("any_chat") is True
+        assert notifier._is_allowed("another_chat") is True
+
+    def test_is_allowed_private_mode_owner(self, private_notifier):
+        """Test that private mode allows the owner chat."""
+        assert private_notifier._is_allowed("allowed_chat_123") is True
+
+    def test_is_allowed_private_mode_stranger(self, private_notifier):
+        """Test that private mode blocks other chats."""
+        assert private_notifier._is_allowed("stranger_chat") is False
+        assert private_notifier._is_allowed("another_stranger") is False
+
+    @pytest.mark.asyncio
+    async def test_handle_update_private_mode_blocked(self, private_notifier):
+        """Test that private mode sends rejection message to blocked users."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"ok": True}
+
+        update = {
+            "message": {
+                "chat": {"id": "stranger_chat"},
+                "text": "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+                "from": {"username": "stranger"},
+            }
+        }
+
+        with patch.object(private_notifier, "_get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_response
+            mock_get_client.return_value = mock_client
+
+            await private_notifier._handle_update(update)
+
+            # Should send "private mode" message
+            mock_client.post.assert_called_once()
+            call_args = mock_client.post.call_args
+            message_text = call_args[1]["json"]["text"]
+            assert "private mode" in message_text.lower()
+
+    @pytest.mark.asyncio
+    async def test_handle_update_private_mode_allowed(self, private_notifier):
+        """Test that private mode allows the owner chat to use commands."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"ok": True}
+
+        update = {
+            "message": {
+                "chat": {"id": "allowed_chat_123"},
+                "text": "/help",
+                "from": {"username": "owner"},
+            }
+        }
+
+        with patch.object(private_notifier, "_get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_response
+            mock_get_client.return_value = mock_client
+
+            await private_notifier._handle_update(update)
+
+            # Should send help message, not rejection
+            mock_client.post.assert_called_once()
+            call_args = mock_client.post.call_args
+            message_text = call_args[1]["json"]["text"]
+            assert "Token Safety" in message_text  # Help message content

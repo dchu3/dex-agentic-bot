@@ -16,6 +16,7 @@ from app.mcp_client import MCPManager
 from app.output import CLIOutput, OutputFormat
 from app.price_cache import PriceCache
 from app.telegram_notifier import TelegramNotifier
+from app.token_analyzer import TokenAnalyzer
 from app.types import PlannerResult
 from app.watchlist import WatchlistDB
 from app.watchlist_poller import WatchlistPoller, TriggeredAlert
@@ -59,6 +60,29 @@ def _parse_token_and_chain(args: List[str]) -> Tuple[str, Optional[str]]:
     else:
         token = " ".join(args)
         return (token, None)
+
+
+async def run_telegram_only(
+    telegram: TelegramNotifier,
+    output: CLIOutput,
+) -> None:
+    """Run only the Telegram bot without CLI interaction."""
+    output.info("🤖 Starting Telegram bot in standalone mode...")
+    output.info("Send a token address to the bot to get an analysis report.")
+    output.info("Press Ctrl+C to stop.\n")
+    
+    # Start Telegram polling
+    await telegram.start_polling()
+    
+    try:
+        # Keep running until interrupted
+        while True:
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await telegram.stop_polling()
+        await telegram.close()
 
 
 async def run_single_query(
@@ -852,6 +876,11 @@ Examples:
         help="Disable Telegram notifications",
     )
     parser.add_argument(
+        "--telegram-only",
+        action="store_true",
+        help="Run only the Telegram bot (no CLI interaction)",
+    )
+    parser.add_argument(
         "--autonomous",
         action="store_true",
         help="Enable autonomous watchlist management",
@@ -874,7 +903,7 @@ Examples:
     output = CLIOutput(format=output_format, verbose=args.verbose)
 
     # Validate arguments
-    if not args.interactive and not args.query and not args.stdin:
+    if not args.interactive and not args.query and not args.stdin and not args.telegram_only:
         parser.print_help()
         sys.exit(1)
 
@@ -966,8 +995,10 @@ Examples:
 
     # Initialize Telegram notifier if enabled
     telegram: Optional[TelegramNotifier] = None
+    telegram_only_mode = args.telegram_only
+    
     if (
-        args.interactive
+        (args.interactive or telegram_only_mode)
         and settings.telegram_alerts_enabled
         and not args.no_telegram
         and settings.telegram_bot_token
@@ -976,7 +1007,22 @@ Examples:
             bot_token=settings.telegram_bot_token,
             chat_id=settings.telegram_chat_id,
             subscribers_db_path=settings.telegram_subscribers_db_path,
+            private_mode=settings.telegram_private_mode,
         )
+        
+        # Create token analyzer for Telegram bot
+        token_analyzer = TokenAnalyzer(
+            api_key=settings.gemini_api_key,
+            mcp_manager=mcp_manager,
+            model_name=settings.gemini_model,
+            verbose=args.verbose,
+        )
+        telegram.set_token_analyzer(token_analyzer)
+    
+    # Validate telegram-only mode has telegram configured
+    if telegram_only_mode and not telegram:
+        output.error("Telegram bot not configured. Set TELEGRAM_BOT_TOKEN in .env")
+        sys.exit(1)
 
     # Create log callback for verbose mode
     def log_callback(level: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
@@ -1032,7 +1078,9 @@ Examples:
     )
 
     try:
-        if args.interactive:
+        if telegram_only_mode:
+            await run_telegram_only(telegram, output)
+        elif args.interactive:
             await run_interactive(
                 planner, output, watchlist_db, mcp_manager,
                 poller, telegram, autonomous_scheduler

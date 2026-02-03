@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     telegram_alerts_enabled: bool = Field(
         default=False, alias="TELEGRAM_ALERTS_ENABLED"
     )
+    telegram_private_mode: bool = Field(
+        default=False, alias="TELEGRAM_PRIVATE_MODE"
+    )
     telegram_subscribers_db_path: Path = Field(
         default=Path.home() / ".dex-bot" / "telegram_subscribers.db",
         alias="TELEGRAM_SUBSCRIBERS_DB_PATH",
