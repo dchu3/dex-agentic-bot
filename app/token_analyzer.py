@@ -194,12 +194,18 @@ class TokenAnalyzer:
                 token_data.errors.append("DexScreener client not available")
                 return
             
-            self._log("tool", f"→ dexscreener_get_token_pools({chain}, {address})")
-            result = await client.call_tool("get_token_pools", {
-                "chainId": chain,
-                "tokenAddress": address,
-            })
-            self._log("tool", "✓ dexscreener_get_token_pools")
+            # For EVM addresses with default chain, use search_pairs to auto-detect actual chain
+            if chain in ("ethereum", "eth") and EVM_ADDRESS_PATTERN.match(address):
+                self._log("tool", f"→ dexscreener_search_pairs({address})")
+                result = await client.call_tool("search_pairs", {"query": address})
+                self._log("tool", "✓ dexscreener_search_pairs")
+            else:
+                self._log("tool", f"→ dexscreener_get_token_pools({chain}, {address})")
+                result = await client.call_tool("get_token_pools", {
+                    "chainId": chain,
+                    "tokenAddress": address,
+                })
+                self._log("tool", "✓ dexscreener_get_token_pools")
             
             if not result:
                 token_data.errors.append("No data from DexScreener")
@@ -233,6 +239,11 @@ class TokenAnalyzer:
             
             # Get data from first/best pair
             best_pair = pairs[0]
+            
+            # Update chain from actual result (important for EVM auto-detection)
+            actual_chain = best_pair.get("chainId")
+            if actual_chain:
+                token_data.chain = actual_chain
             
             # Extract base token info
             base_token = best_pair.get("baseToken", {})
