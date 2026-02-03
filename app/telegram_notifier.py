@@ -51,9 +51,10 @@ class TelegramNotifier:
         poll_interval: float = 2.0,
         subscribers_db_path: Optional[Path] = None,
         token_analyzer: Optional["TokenAnalyzer"] = None,
+        private_mode: bool = False,
     ) -> None:
         self.bot_token = bot_token
-        self.chat_id = chat_id  # Legacy: used for backwards compatibility
+        self.chat_id = chat_id  # Allowed chat in private mode
         self.timeout = timeout
         self.poll_interval = poll_interval
         self._client: Optional[httpx.AsyncClient] = None
@@ -63,6 +64,7 @@ class TelegramNotifier:
         self._subscribers_db = SubscriberDB(subscribers_db_path)
         self._token_analyzer = token_analyzer
         self._analyzing: set[str] = set()  # Track chats currently being analyzed
+        self._private_mode = private_mode
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client."""
@@ -191,6 +193,16 @@ class TelegramNotifier:
         if not chat_id or not text:
             return
         
+        # Check access in private mode
+        if not self._is_allowed(chat_id):
+            # Only respond once per chat to avoid spam
+            if text.startswith("/") or is_valid_token_address(text):
+                await self.send_message_to(
+                    chat_id,
+                    "🔒 This bot is running in private mode and is not available for public use."
+                )
+            return
+        
         # Handle commands
         if text.startswith("/"):
             await self._handle_command(text, chat_id, username)
@@ -200,6 +212,16 @@ class TelegramNotifier:
         if is_valid_token_address(text):
             await self._handle_token_address(text, chat_id)
             return
+
+    def _is_allowed(self, chat_id: str) -> bool:
+        """Check if a chat_id is allowed to use the bot.
+        
+        In private mode, only the configured chat_id is allowed.
+        In public mode, everyone is allowed.
+        """
+        if not self._private_mode:
+            return True
+        return chat_id == self.chat_id
 
     async def _handle_command(
         self, command: str, chat_id: str, username: Optional[str] = None

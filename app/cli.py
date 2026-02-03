@@ -1007,6 +1007,7 @@ Examples:
             bot_token=settings.telegram_bot_token,
             chat_id=settings.telegram_chat_id,
             subscribers_db_path=settings.telegram_subscribers_db_path,
+            private_mode=settings.telegram_private_mode,
         )
         
         # Create token analyzer for Telegram bot
