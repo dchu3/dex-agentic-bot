@@ -115,7 +115,11 @@ class AutonomousScheduler:
                 break
 
     async def _run_cycle(self) -> "AutonomousCycleResult":
-        """Execute a single autonomous cycle."""
+        """Execute a single autonomous cycle.
+        
+        This cycle only reviews existing tokens and adjusts price triggers.
+        It does not discover new tokens or remove existing ones.
+        """
         from app.autonomous_agent import AutonomousCycleResult
 
         self._cycle_count += 1
@@ -125,27 +129,23 @@ class AutonomousScheduler:
         result = AutonomousCycleResult(timestamp=self._last_cycle)
 
         try:
-            # Step 1: Review existing watchlist
+            # Step 1: Review existing watchlist and adjust triggers
             existing_entries = await self.db.list_autonomous_entries()
-            reviews = await self.agent.review_watchlist(existing_entries)
+            if not existing_entries:
+                self._log("info", "No tokens in autonomous watchlist to review")
+                result.summary = "No tokens to review"
+            else:
+                reviews = await self.agent.review_watchlist(existing_entries)
 
-            # Step 2: Process reviews - remove, update, or keep
-            slots_to_fill = await self._process_reviews(reviews, result)
+                # Step 2: Process reviews - update triggers only (no removals)
+                await self._process_reviews(reviews, result)
 
-            # Step 3: If we have slots, discover new tokens
-            current_count = await self.db.count_autonomous_entries()
-            available_slots = self.max_tokens - current_count
+                # Step 3: Generate summary
+                result.summary = self._generate_summary(result)
+                self._log("info", f"Cycle complete: {result.summary}")
 
-            if available_slots > 0:
-                candidates = await self.agent.discover_tokens()
-                await self._add_new_tokens(candidates, available_slots, result)
-
-            # Step 4: Generate summary
-            result.summary = self._generate_summary(result)
-            self._log("info", f"Cycle complete: {result.summary}")
-
-            # Step 5: Send Telegram notification
-            if self.telegram and self.telegram.is_configured:
+            # Step 4: Send Telegram notification if there were updates
+            if self.telegram and self.telegram.is_configured and result.tokens_updated:
                 await self._send_cycle_notification(result)
 
         except Exception as e:
@@ -157,21 +157,29 @@ class AutonomousScheduler:
 
     async def _process_reviews(
         self, reviews: List["WatchlistReview"], result: "AutonomousCycleResult"
-    ) -> int:
-        """Process review decisions and return number of slots freed."""
-        slots_freed = 0
-
+    ) -> None:
+        """Process review decisions - update triggers only, no removals."""
         for review in reviews:
             try:
                 if review.action == "remove":
-                    # Remove the token
-                    removed = await self.db.remove_autonomous_entry(
-                        review.token_address, "solana"
-                    )
-                    if removed:
-                        result.tokens_removed.append(review.symbol)
-                        slots_freed += 1
-                        self._log("info", f"Removed {review.symbol}: {review.reasoning}")
+                    # Ignore remove decisions - treat as update if triggers provided
+                    if review.new_alert_above or review.new_alert_below:
+                        await self.db.update_autonomous_entry(
+                            entry_id=review.entry_id,
+                            alert_above=review.new_alert_above,
+                            alert_below=review.new_alert_below,
+                            momentum_score=review.new_momentum_score,
+                            review_notes=f"[Remove ignored] {review.reasoning}",
+                        )
+                        result.tokens_updated.append(review)
+                        self._log("info", f"Updated {review.symbol} (remove ignored): {review.reasoning}")
+                    else:
+                        # No triggers to update, just log
+                        await self.db.update_autonomous_entry(
+                            entry_id=review.entry_id,
+                            review_notes=f"[Remove ignored] {review.reasoning}",
+                        )
+                        self._log("info", f"Keeping {review.symbol} (remove ignored): {review.reasoning}")
 
                 elif review.action == "update":
                     # Update triggers and score
@@ -196,15 +204,18 @@ class AutonomousScheduler:
             except Exception as e:
                 result.errors.append(f"Failed to process {review.symbol}: {str(e)}")
 
-        return slots_freed
-
     async def _add_new_tokens(
         self,
         candidates: List["TokenCandidate"],
         max_to_add: int,
         result: "AutonomousCycleResult",
     ) -> None:
-        """Add new token candidates to the watchlist."""
+        """Add new token candidates to the watchlist.
+        
+        Note: This method is retained for potential future use but is not
+        called in the current simplified autonomous mode which only adjusts
+        triggers for existing tokens.
+        """
         added = 0
 
         # Sort by momentum score descending
@@ -251,13 +262,6 @@ class AutonomousScheduler:
         """Generate a human-readable summary of the cycle."""
         parts = []
 
-        if result.tokens_added:
-            symbols = [c.symbol for c in result.tokens_added]
-            parts.append(f"Added: {', '.join(symbols)}")
-
-        if result.tokens_removed:
-            parts.append(f"Removed: {', '.join(result.tokens_removed)}")
-
         if result.tokens_updated:
             symbols = [r.symbol for r in result.tokens_updated]
             parts.append(f"Updated: {', '.join(symbols)}")
@@ -282,33 +286,10 @@ class AutonomousScheduler:
         """Format cycle results as a Telegram message."""
         timestamp = result.timestamp.strftime("%Y-%m-%d %H:%M UTC")
         lines = [
-            "🤖 <b>Autonomous Watchlist Update</b>",
+            "🤖 <b>Autonomous Trigger Update</b>",
             f"⏰ {timestamp}",
             "",
         ]
-
-        # Added tokens
-        if result.tokens_added:
-            lines.append("📈 <b>New Positions:</b>")
-            for candidate in result.tokens_added:
-                price_fmt = self._format_price(candidate.current_price)
-                change_emoji = "🟢" if candidate.price_change_24h >= 0 else "🔴"
-                lines.append(
-                    f"  • <b>{candidate.symbol}</b> @ {price_fmt} "
-                    f"{change_emoji} {candidate.price_change_24h:+.1f}%"
-                )
-                lines.append(
-                    f"    📊 Score: {candidate.momentum_score:.0f} | "
-                    f"Vol: ${candidate.volume_24h:,.0f}"
-                )
-            lines.append("")
-
-        # Removed tokens
-        if result.tokens_removed:
-            lines.append("📉 <b>Closed Positions:</b>")
-            for symbol in result.tokens_removed:
-                lines.append(f"  • {symbol}")
-            lines.append("")
 
         # Updated tokens
         if result.tokens_updated:
@@ -319,6 +300,10 @@ class AutonomousScheduler:
                 lines.append(
                     f"  • <b>{review.symbol}</b>: ↑{above_fmt} ↓{below_fmt}"
                 )
+                if review.reasoning:
+                    # Truncate long reasoning
+                    reason = review.reasoning[:80] + "..." if len(review.reasoning) > 80 else review.reasoning
+                    lines.append(f"    💬 {reason}")
             lines.append("")
 
         # Errors

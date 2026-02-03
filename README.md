@@ -207,33 +207,30 @@ Current Price: $0.000021
 
 ## Autonomous Watchlist Management
 
-The bot includes an **autonomous agent** that can automatically discover, manage, and monitor Solana tokens with upward momentum potential.
+The bot includes an **autonomous agent** that can automatically monitor and adjust price triggers for tokens in your watchlist.
 
 ### Features
 
-- **Automatic Discovery**: Finds trending Solana tokens with strong momentum indicators
-- **Smart Triggers**: Sets take-profit (10% above) and stop-loss (5% below) automatically
+- **AI-Driven Analysis**: Uses Gemini AI to analyze each token and determine optimal trigger levels
+- **Automatic Trigger Adjustment**: Updates take-profit and stop-loss levels based on price movement
+- **Trailing Stops**: Automatically raises stop-loss as price increases to lock in gains
 - **Hourly Reviews**: Re-evaluates positions every 60 minutes (configurable)
-- **Position Management**: Maintains up to 5 tokens, replacing underperformers
-- **Trailing Stops**: Automatically raises stop-loss as price increases
-- **Telegram Alerts**: Sends notifications for adds, removes, and trigger updates
+- **Telegram Alerts**: Sends notifications when triggers are updated
 
 ### How It Works
 
 ```
-Hour 0 (Discovery):
-  Agent searches trending Solana tokens
-  → Analyzes volume, price momentum, liquidity
-  → Runs rugcheck safety analysis
-  → Adds top 5 candidates with triggers:
-    BONK: price=$0.00002, ↑$0.000022, ↓$0.000019
-
-Hour 1 (Review):
-  Agent reviews current positions
-  → BONK: +15% ✅ KEEP, raise stop to $0.000021
-  → WIF: -8% ❌ REPLACE with ZEUS (better momentum)
-  → Updates triggers, sends Telegram notification
+Every 60 minutes (configurable):
+  Agent reviews tokens in autonomous watchlist
+  → Gets current prices via DexScreener
+  → Analyzes price movement since last review
+  → Adjusts triggers to protect gains:
+    BONK: price up 15% → raise stop-loss to lock gains
+    WIF: price stable → keep triggers unchanged
+  → Sends Telegram notification with updates
 ```
+
+**Note:** The autonomous mode only adjusts triggers for tokens you manually add to the autonomous watchlist. It does not automatically discover or add new tokens.
 
 ### Configuration
 
@@ -245,8 +242,6 @@ AUTONOMOUS_ENABLED=true
 AUTONOMOUS_INTERVAL_MINS=60     # Cycle interval (5-1440 minutes)
 AUTONOMOUS_MAX_TOKENS=5         # Max tokens in watchlist (1-20)
 AUTONOMOUS_CHAIN=solana         # Target blockchain
-AUTONOMOUS_MIN_VOLUME_USD=10000 # Minimum 24h volume
-AUTONOMOUS_MIN_LIQUIDITY_USD=5000  # Minimum liquidity
 ```
 
 ### Usage
@@ -265,7 +260,7 @@ AUTONOMOUS_MIN_LIQUIDITY_USD=5000  # Minimum liquidity
 # Check autonomous scheduler status
 > /autonomous status
 
-# Manually trigger a cycle
+# Manually trigger a cycle (reviews and adjusts triggers)
 > /autonomous run
 
 # View autonomously managed tokens
@@ -279,22 +274,34 @@ AUTONOMOUS_MIN_LIQUIDITY_USD=5000  # Minimum liquidity
 > /autonomous clear
 ```
 
+### Adding Tokens to Autonomous Watchlist
+
+To add tokens for autonomous trigger management, first add them to your watchlist, then the autonomous agent will manage their triggers. Use the watchlist commands:
+
+```bash
+# Add a token to watchlist
+> /watch BONK solana
+
+# Set initial alerts (the autonomous agent will adjust these)
+> /alert BONK above 0.00003
+> /alert BONK below 0.000025
+```
+
 ### Telegram Notifications
 
 When enabled, you'll receive messages like:
 
 ```
-🤖 Autonomous Watchlist Update
+🤖 Autonomous Trigger Update
 ⏰ 2026-01-14 12:00 UTC
 
-📈 New Positions:
-  • BONK @ $0.00002345 🟢 +15.2%
-    📊 Score: 78 | Vol: $1,234,567
-
 🔄 Updated Triggers:
-  • WIF: ↑$0.0012 ↓$0.00098
+  • BONK: ↑$0.000035 ↓$0.000028
+    💬 Price up 12%, raising stop-loss to lock gains
+  • WIF: ↑$0.0015 ↓$0.00095
+    💬 Momentum strong, widening take-profit target
 
-📋 Added: BONK | Updated: WIF
+📋 Updated: BONK, WIF
 ```
 
 ## Architecture
