@@ -277,8 +277,7 @@ async def test_set_commands(notifier):
         command_names = [c["command"] for c in commands]
         assert "start" in command_names
         assert "help" in command_names
-        assert "subscribe" in command_names
-        assert "unsubscribe" in command_names
+        assert "analyze" in command_names
         assert "status" in command_names
 
 
@@ -320,10 +319,9 @@ async def test_handle_help_command(notifier):
         call_args = mock_client.post.call_args
         message_text = call_args[1]["json"]["text"]
 
-        assert "DEX Agentic Bot" in message_text
-        assert "/watch" in message_text
-        assert "/alert" in message_text
-        assert "/subscribe" in message_text
+        assert "Token Safety" in message_text
+        assert "/analyze" in message_text
+        assert "/help" in message_text
 
 
 @pytest.mark.asyncio

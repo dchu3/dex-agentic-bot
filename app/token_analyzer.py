@@ -1,0 +1,529 @@
+"""Token safety and market analysis module."""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+
+from google import genai
+from google.genai import types
+
+if TYPE_CHECKING:
+    from app.mcp_client import MCPManager
+
+# Type alias for log callback
+LogCallback = Callable[[str, str, Optional[Dict[str, Any]]], None]
+
+# Regex patterns for address detection
+EVM_ADDRESS_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
+SOLANA_ADDRESS_PATTERN = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+
+
+@dataclass
+class TokenData:
+    """Raw data collected about a token."""
+
+    address: str
+    chain: str
+    symbol: Optional[str] = None
+    name: Optional[str] = None
+    price_usd: Optional[float] = None
+    price_change_24h: Optional[float] = None
+    volume_24h: Optional[float] = None
+    liquidity_usd: Optional[float] = None
+    market_cap: Optional[float] = None
+    fdv: Optional[float] = None
+    pools: List[Dict[str, Any]] = field(default_factory=list)
+    safety_data: Optional[Dict[str, Any]] = None
+    safety_status: str = "Unknown"  # Safe, Risky, Honeypot, Unknown
+    raw_dexscreener: Optional[Dict[str, Any]] = None
+    errors: List[str] = field(default_factory=list)
+
+
+@dataclass
+class AnalysisReport:
+    """Complete analysis report for a token."""
+
+    token_data: TokenData
+    ai_analysis: str
+    generated_at: datetime
+    telegram_message: str
+
+
+def detect_chain(address: str) -> Optional[str]:
+    """Detect blockchain from address format.
+    
+    Args:
+        address: Token address to analyze
+        
+    Returns:
+        Chain name ('ethereum', 'solana') or None if unrecognized
+    """
+    address = address.strip()
+    
+    if EVM_ADDRESS_PATTERN.match(address):
+        return "ethereum"  # Default EVM chain, can be overridden
+    
+    if SOLANA_ADDRESS_PATTERN.match(address):
+        # Additional check: Solana addresses don't start with 0x
+        # and typically have mixed case
+        if not address.startswith("0x"):
+            return "solana"
+    
+    return None
+
+
+def is_valid_token_address(text: str) -> bool:
+    """Check if text looks like a valid token address.
+    
+    Args:
+        text: Text to check
+        
+    Returns:
+        True if text appears to be a token address
+    """
+    text = text.strip()
+    return bool(EVM_ADDRESS_PATTERN.match(text) or SOLANA_ADDRESS_PATTERN.match(text))
+
+
+# System prompt for token analysis
+ANALYSIS_SYSTEM_PROMPT = """You are a crypto token analyst providing comprehensive safety and market analysis reports.
+
+## Your Task
+Analyze the provided token data and generate a clear, actionable report for the user.
+
+## Analysis Focus Areas
+1. **Safety Assessment**: Evaluate honeypot/rugcheck results, identify red flags
+2. **Market Health**: Analyze liquidity depth, volume trends, price stability
+3. **Risk Factors**: Identify potential concerns (low liquidity, high taxes, centralized ownership)
+4. **Overall Rating**: Provide a clear safety verdict
+
+## Response Format
+Provide a concise analysis in 2-3 paragraphs:
+1. Safety summary and any red flags
+2. Market/liquidity analysis
+3. Overall assessment and recommendation
+
+Keep it brief but informative. Use plain text, no markdown formatting.
+Do NOT repeat the raw data - the user already sees that in the report header.
+Focus on INSIGHTS and INTERPRETATION of the data.
+"""
+
+
+class TokenAnalyzer:
+    """Analyzes tokens for safety and market data using MCP tools and AI."""
+
+    def __init__(
+        self,
+        api_key: str,
+        mcp_manager: "MCPManager",
+        model_name: str = "gemini-2.5-flash",
+        verbose: bool = False,
+        log_callback: Optional[LogCallback] = None,
+    ) -> None:
+        self.mcp_manager = mcp_manager
+        self.model_name = model_name
+        self.verbose = verbose
+        self.log_callback = log_callback
+        self.client = genai.Client(api_key=api_key)
+
+    def _log(self, level: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
+        """Log a message if verbose mode is enabled."""
+        if self.verbose and self.log_callback:
+            self.log_callback(level, message, data)
+
+    async def analyze(self, address: str, chain: Optional[str] = None) -> AnalysisReport:
+        """Analyze a token and generate a comprehensive report.
+        
+        Args:
+            address: Token contract address
+            chain: Blockchain (auto-detected if not provided)
+            
+        Returns:
+            Complete analysis report with AI insights
+        """
+        # Auto-detect chain if not provided
+        if not chain:
+            chain = detect_chain(address)
+            if not chain:
+                # Default to ethereum for unknown formats
+                chain = "ethereum"
+        
+        self._log("info", f"Analyzing token {address} on {chain}")
+        
+        # Collect data from MCP tools
+        token_data = await self._collect_token_data(address, chain)
+        
+        # Generate AI analysis
+        ai_analysis = await self._generate_ai_analysis(token_data)
+        
+        # Format as Telegram message
+        telegram_message = self._format_telegram_report(token_data, ai_analysis)
+        
+        return AnalysisReport(
+            token_data=token_data,
+            ai_analysis=ai_analysis,
+            generated_at=datetime.utcnow(),
+            telegram_message=telegram_message,
+        )
+
+    async def _collect_token_data(self, address: str, chain: str) -> TokenData:
+        """Collect token data from various MCP sources."""
+        token_data = TokenData(address=address, chain=chain)
+        
+        # Run data collection in parallel
+        tasks = [
+            self._fetch_dexscreener_data(address, chain, token_data),
+            self._fetch_safety_data(address, chain, token_data),
+        ]
+        
+        await asyncio.gather(*tasks, return_exceptions=True)
+        
+        return token_data
+
+    async def _fetch_dexscreener_data(
+        self, address: str, chain: str, token_data: TokenData
+    ) -> None:
+        """Fetch token data from DexScreener."""
+        try:
+            client = self.mcp_manager.get_client("dexscreener")
+            if not client:
+                token_data.errors.append("DexScreener client not available")
+                return
+            
+            self._log("tool", f"→ dexscreener_getTokenPools({address})")
+            result = await client.call_tool("getTokenPools", {"tokenAddress": address})
+            self._log("tool", "✓ dexscreener_getTokenPools")
+            
+            if not result:
+                token_data.errors.append("No data from DexScreener")
+                return
+            
+            token_data.raw_dexscreener = result
+            
+            # Parse the response - handle both list and dict formats
+            pairs = []
+            if isinstance(result, list):
+                pairs = result
+            elif isinstance(result, dict):
+                pairs = result.get("pairs", []) or [result]
+            
+            if not pairs:
+                token_data.errors.append("No pairs found for token")
+                return
+            
+            # Get data from first/best pair
+            best_pair = pairs[0]
+            
+            # Extract base token info
+            base_token = best_pair.get("baseToken", {})
+            token_data.symbol = base_token.get("symbol", "Unknown")
+            token_data.name = base_token.get("name", "Unknown")
+            
+            # Price data
+            token_data.price_usd = self._safe_float(best_pair.get("priceUsd"))
+            price_change = best_pair.get("priceChange", {})
+            token_data.price_change_24h = self._safe_float(price_change.get("h24"))
+            
+            # Volume and liquidity
+            volume = best_pair.get("volume", {})
+            token_data.volume_24h = self._safe_float(volume.get("h24"))
+            token_data.liquidity_usd = self._safe_float(
+                best_pair.get("liquidity", {}).get("usd")
+            )
+            
+            # Market cap / FDV
+            token_data.market_cap = self._safe_float(best_pair.get("marketCap"))
+            token_data.fdv = self._safe_float(best_pair.get("fdv"))
+            
+            # Collect pool info
+            for pair in pairs[:5]:  # Top 5 pools
+                pool_info = {
+                    "dex": pair.get("dexId", "Unknown"),
+                    "pair": pair.get("pairAddress", ""),
+                    "liquidity": self._safe_float(pair.get("liquidity", {}).get("usd")),
+                    "volume_24h": self._safe_float(pair.get("volume", {}).get("h24")),
+                }
+                token_data.pools.append(pool_info)
+                
+        except Exception as e:
+            self._log("error", f"DexScreener fetch failed: {str(e)}")
+            token_data.errors.append(f"DexScreener error: {str(e)}")
+
+    async def _fetch_safety_data(
+        self, address: str, chain: str, token_data: TokenData
+    ) -> None:
+        """Fetch safety data from appropriate source based on chain."""
+        try:
+            if chain == "solana":
+                await self._fetch_rugcheck_data(address, token_data)
+            elif chain in ("ethereum", "eth", "bsc", "base"):
+                await self._fetch_honeypot_data(address, chain, token_data)
+            else:
+                token_data.safety_status = "Unverified"
+                token_data.safety_data = {"note": f"Safety checks not available for {chain}"}
+        except Exception as e:
+            self._log("error", f"Safety check failed: {str(e)}")
+            token_data.safety_status = "Unknown"
+            token_data.errors.append(f"Safety check error: {str(e)}")
+
+    async def _fetch_honeypot_data(
+        self, address: str, chain: str, token_data: TokenData
+    ) -> None:
+        """Fetch honeypot data for EVM chains."""
+        client = self.mcp_manager.get_client("honeypot")
+        if not client:
+            token_data.safety_status = "Unverified"
+            token_data.errors.append("Honeypot client not available")
+            return
+        
+        # Map chain names
+        chain_map = {"ethereum": "ethereum", "eth": "ethereum", "bsc": "bsc", "base": "base"}
+        api_chain = chain_map.get(chain.lower(), "ethereum")
+        
+        self._log("tool", f"→ honeypot_check_honeypot({address}, {api_chain})")
+        result = await client.call_tool("check_honeypot", {
+            "address": address,
+            "chain": api_chain,
+        })
+        self._log("tool", "✓ honeypot_check_honeypot")
+        
+        token_data.safety_data = result
+        
+        # Parse safety status
+        if isinstance(result, dict):
+            is_honeypot = result.get("isHoneypot", False)
+            honeypot_result = result.get("honeypotResult", {})
+            
+            if is_honeypot or honeypot_result.get("isHoneypot"):
+                token_data.safety_status = "Honeypot"
+            else:
+                # Check for high taxes or other risks
+                simulation = result.get("simulationResult", {})
+                buy_tax = self._safe_float(simulation.get("buyTax", 0))
+                sell_tax = self._safe_float(simulation.get("sellTax", 0))
+                
+                if buy_tax > 10 or sell_tax > 10:
+                    token_data.safety_status = "Risky"
+                else:
+                    token_data.safety_status = "Safe"
+
+    async def _fetch_rugcheck_data(
+        self, address: str, token_data: TokenData
+    ) -> None:
+        """Fetch rugcheck data for Solana tokens."""
+        client = self.mcp_manager.get_client("rugcheck")
+        if not client:
+            token_data.safety_status = "Unverified"
+            token_data.errors.append("Rugcheck client not available")
+            return
+        
+        self._log("tool", f"→ rugcheck_getTokenSafetySummary({address})")
+        result = await client.call_tool("getTokenSafetySummary", {"mint": address})
+        self._log("tool", "✓ rugcheck_getTokenSafetySummary")
+        
+        token_data.safety_data = result
+        
+        # Parse safety status
+        if isinstance(result, dict):
+            risk_level = result.get("riskLevel", "").lower()
+            if risk_level in ("good", "low"):
+                token_data.safety_status = "Safe"
+            elif risk_level in ("medium", "warn"):
+                token_data.safety_status = "Risky"
+            elif risk_level in ("high", "danger", "rug"):
+                token_data.safety_status = "Dangerous"
+            else:
+                token_data.safety_status = "Unknown"
+
+    async def _generate_ai_analysis(self, token_data: TokenData) -> str:
+        """Generate AI analysis of the token data."""
+        # Build context for AI
+        context = self._build_analysis_context(token_data)
+        
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=context,
+                config=types.GenerateContentConfig(
+                    system_instruction=ANALYSIS_SYSTEM_PROMPT,
+                    max_output_tokens=500,
+                ),
+            )
+            
+            if response.candidates and response.candidates[0].content:
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, "text") and part.text:
+                        return part.text.strip()
+            
+            return "Unable to generate AI analysis."
+            
+        except Exception as e:
+            self._log("error", f"AI analysis failed: {str(e)}")
+            return f"AI analysis unavailable: {str(e)}"
+
+    def _build_analysis_context(self, token_data: TokenData) -> str:
+        """Build context string for AI analysis."""
+        lines = [
+            f"Token: {token_data.symbol or 'Unknown'} ({token_data.name or 'Unknown'})",
+            f"Chain: {token_data.chain}",
+            f"Address: {token_data.address}",
+            "",
+            "=== Market Data ===",
+            f"Price: ${token_data.price_usd or 0:.10f}",
+            f"24h Change: {token_data.price_change_24h or 0:.2f}%",
+            f"24h Volume: ${token_data.volume_24h or 0:,.0f}",
+            f"Liquidity: ${token_data.liquidity_usd or 0:,.0f}",
+            f"Market Cap: ${token_data.market_cap or 0:,.0f}",
+            "",
+            "=== Safety Data ===",
+            f"Status: {token_data.safety_status}",
+        ]
+        
+        # Add safety details
+        if token_data.safety_data:
+            if isinstance(token_data.safety_data, dict):
+                # Honeypot data
+                sim = token_data.safety_data.get("simulationResult", {})
+                if sim:
+                    lines.append(f"Buy Tax: {sim.get('buyTax', 'N/A')}%")
+                    lines.append(f"Sell Tax: {sim.get('sellTax', 'N/A')}%")
+                
+                # Rugcheck data
+                risks = token_data.safety_data.get("risks", [])
+                if risks:
+                    lines.append(f"Risks: {', '.join(str(r) for r in risks[:5])}")
+        
+        # Add pool info
+        if token_data.pools:
+            lines.append("")
+            lines.append("=== Top Pools ===")
+            for pool in token_data.pools[:3]:
+                lines.append(
+                    f"- {pool['dex']}: ${pool.get('liquidity', 0):,.0f} liquidity"
+                )
+        
+        # Add errors if any
+        if token_data.errors:
+            lines.append("")
+            lines.append("=== Data Issues ===")
+            for err in token_data.errors:
+                lines.append(f"- {err}")
+        
+        return "\n".join(lines)
+
+    def _format_telegram_report(self, token_data: TokenData, ai_analysis: str) -> str:
+        """Format the analysis as a Telegram HTML message."""
+        # Safety emoji
+        safety_emoji = {
+            "Safe": "✅",
+            "Risky": "⚠️",
+            "Honeypot": "❌",
+            "Dangerous": "❌",
+            "Unverified": "❓",
+            "Unknown": "❓",
+        }.get(token_data.safety_status, "❓")
+        
+        # Price change emoji
+        change = token_data.price_change_24h or 0
+        change_emoji = "🟢" if change >= 0 else "🔴"
+        
+        # Format numbers
+        price_fmt = self._format_price(token_data.price_usd)
+        volume_fmt = self._format_large_number(token_data.volume_24h)
+        liquidity_fmt = self._format_large_number(token_data.liquidity_usd)
+        mcap_fmt = self._format_large_number(token_data.market_cap)
+        
+        lines = [
+            "🔍 <b>Token Analysis Report</b>",
+            "",
+            f"<b>Token:</b> {token_data.symbol or 'Unknown'}",
+            f"<b>Chain:</b> {token_data.chain.capitalize()}",
+            f"<b>Address:</b> <code>{token_data.address}</code>",
+            "",
+            "━━━ 💰 <b>Price &amp; Market</b> ━━━",
+            f"<b>Price:</b> {price_fmt}",
+            f"<b>24h Change:</b> {change_emoji} {change:+.2f}%",
+            f"<b>Market Cap:</b> {mcap_fmt}",
+            f"<b>Volume 24h:</b> {volume_fmt}",
+            "",
+            "━━━ 💧 <b>Liquidity</b> ━━━",
+            f"<b>Total:</b> {liquidity_fmt}",
+        ]
+        
+        # Add top pool
+        if token_data.pools:
+            top_pool = token_data.pools[0]
+            pool_liq = self._format_large_number(top_pool.get("liquidity"))
+            lines.append(f"<b>Top Pool:</b> {top_pool['dex']} ({pool_liq})")
+        
+        # Safety section
+        lines.extend([
+            "",
+            "━━━ 🛡️ <b>Safety Check</b> ━━━",
+            f"<b>Status:</b> {safety_emoji} {token_data.safety_status}",
+        ])
+        
+        # Add safety details
+        if token_data.safety_data and isinstance(token_data.safety_data, dict):
+            sim = token_data.safety_data.get("simulationResult", {})
+            if sim:
+                buy_tax = sim.get("buyTax", "N/A")
+                sell_tax = sim.get("sellTax", "N/A")
+                lines.append(f"<b>Buy Tax:</b> {buy_tax}%")
+                lines.append(f"<b>Sell Tax:</b> {sell_tax}%")
+        
+        # AI Analysis section
+        lines.extend([
+            "",
+            "━━━ 🤖 <b>AI Analysis</b> ━━━",
+            ai_analysis,
+        ])
+        
+        # Footer
+        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        lines.extend([
+            "",
+            f"⏰ {timestamp}",
+        ])
+        
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_price(price: Optional[float]) -> str:
+        """Format price with appropriate precision."""
+        if price is None:
+            return "N/A"
+        if price >= 1:
+            return f"${price:,.4f}"
+        elif price >= 0.0001:
+            return f"${price:.6f}"
+        else:
+            return f"${price:.10f}"
+
+    @staticmethod
+    def _format_large_number(value: Optional[float]) -> str:
+        """Format large numbers with K/M/B suffix."""
+        if value is None:
+            return "N/A"
+        if value >= 1_000_000_000:
+            return f"${value / 1_000_000_000:.2f}B"
+        elif value >= 1_000_000:
+            return f"${value / 1_000_000:.2f}M"
+        elif value >= 1_000:
+            return f"${value / 1_000:.2f}K"
+        else:
+            return f"${value:,.0f}"
+
+    @staticmethod
+    def _safe_float(value: Any) -> Optional[float]:
+        """Safely convert value to float."""
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None

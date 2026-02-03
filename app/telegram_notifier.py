@@ -10,34 +10,38 @@ from typing import Optional, TYPE_CHECKING
 import httpx
 
 from app.telegram_subscribers import SubscriberDB
+from app.token_analyzer import TokenAnalyzer, is_valid_token_address, detect_chain
 
 if TYPE_CHECKING:
     from app.watchlist_poller import TriggeredAlert
 
 TELEGRAM_API_BASE = "https://api.telegram.org/bot"
 
-HELP_MESSAGE = """🤖 <b>DEX Agentic Bot</b>
+HELP_MESSAGE = """🔍 <b>Token Safety &amp; Analysis Bot</b>
 
-I send you price alerts when your watched tokens cross thresholds.
+Send me any token address and I'll analyze it for you!
 
-<b>Commands (in CLI):</b>
-• <code>/watch &lt;token&gt; [chain]</code> - Add to watchlist
-• <code>/alert &lt;token&gt; above|below &lt;price&gt;</code> - Set alert
-• <code>/watchlist</code> - View watched tokens
-• <code>/alerts</code> - View triggered alerts
+<b>Supported Formats:</b>
+• EVM (Ethereum/BSC/Base): <code>0x...</code>
+• Solana: Base58 address
 
-<b>Telegram Commands:</b>
-• /subscribe - Subscribe to price alerts
-• /unsubscribe - Unsubscribe from alerts
-• /help - Show this help
+<b>What You Get:</b>
+📊 Price &amp; market data
+💧 Liquidity info
+🛡️ Safety check (honeypot/rugcheck)
+🤖 AI-powered analysis
+
+<b>Commands:</b>
+• /analyze &lt;address&gt; - Analyze a token
+• /help - Show this message
 • /status - Check bot status
 
-This bot is notification-only. Use the CLI for full functionality.
+Just paste a token address to get started!
 """
 
 
 class TelegramNotifier:
-    """Async Telegram bot client for sending alert notifications."""
+    """Async Telegram bot client for token analysis and alert notifications."""
 
     def __init__(
         self,
@@ -46,6 +50,7 @@ class TelegramNotifier:
         timeout: float = 10.0,
         poll_interval: float = 2.0,
         subscribers_db_path: Optional[Path] = None,
+        token_analyzer: Optional["TokenAnalyzer"] = None,
     ) -> None:
         self.bot_token = bot_token
         self.chat_id = chat_id  # Legacy: used for backwards compatibility
@@ -56,6 +61,8 @@ class TelegramNotifier:
         self._last_update_id: int = 0
         self._running: bool = False
         self._subscribers_db = SubscriberDB(subscribers_db_path)
+        self._token_analyzer = token_analyzer
+        self._analyzing: set[str] = set()  # Track chats currently being analyzed
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client."""
@@ -81,6 +88,10 @@ class TelegramNotifier:
         """Check if the bot is currently polling for messages."""
         return self._running and self._polling_task is not None
 
+    def set_token_analyzer(self, analyzer: "TokenAnalyzer") -> None:
+        """Set the token analyzer instance."""
+        self._token_analyzer = analyzer
+
     async def set_commands(self) -> bool:
         """Register bot commands with Telegram for the command menu.
         
@@ -93,9 +104,8 @@ class TelegramNotifier:
         commands = [
             {"command": "start", "description": "Show welcome message"},
             {"command": "help", "description": "Show available commands"},
-            {"command": "subscribe", "description": "Subscribe to price alerts"},
-            {"command": "unsubscribe", "description": "Unsubscribe from alerts"},
-            {"command": "status", "description": "Check bot and subscription status"},
+            {"command": "analyze", "description": "Analyze a token address"},
+            {"command": "status", "description": "Check bot status"},
         ]
 
         try:
@@ -181,24 +191,114 @@ class TelegramNotifier:
         if not chat_id or not text:
             return
         
-        # Handle commands from any user
+        # Handle commands
         if text.startswith("/"):
-            await self._handle_command(text.lower(), chat_id, username)
+            await self._handle_command(text, chat_id, username)
+            return
+        
+        # Check if text is a token address
+        if is_valid_token_address(text):
+            await self._handle_token_address(text, chat_id)
+            return
 
     async def _handle_command(
         self, command: str, chat_id: str, username: Optional[str] = None
     ) -> None:
         """Handle a bot command."""
-        cmd = command.split()[0].split("@")[0]
+        parts = command.split()
+        cmd = parts[0].lower().split("@")[0]
         
         if cmd in ("/help", "/start"):
             await self.send_message_to(chat_id, HELP_MESSAGE)
         elif cmd == "/status":
             await self._send_status(chat_id)
+        elif cmd == "/analyze":
+            # Handle /analyze <address>
+            if len(parts) > 1:
+                address = parts[1].strip()
+                await self._handle_token_address(address, chat_id)
+            else:
+                await self.send_message_to(
+                    chat_id, 
+                    "❌ Please provide a token address.\n\nUsage: /analyze &lt;address&gt;"
+                )
+        # Legacy commands - keep for backwards compatibility but don't advertise
         elif cmd == "/subscribe":
             await self._handle_subscribe(chat_id, username)
         elif cmd == "/unsubscribe":
             await self._handle_unsubscribe(chat_id)
+
+    async def _handle_token_address(self, address: str, chat_id: str) -> None:
+        """Handle a token address - analyze and return report."""
+        if not self._token_analyzer:
+            await self.send_message_to(
+                chat_id,
+                "❌ Token analyzer not available. Please try again later."
+            )
+            return
+        
+        # Prevent duplicate analysis for same chat
+        if chat_id in self._analyzing:
+            await self.send_message_to(
+                chat_id,
+                "⏳ Already analyzing a token for you. Please wait..."
+            )
+            return
+        
+        self._analyzing.add(chat_id)
+        
+        try:
+            # Send "analyzing" status
+            chain = detect_chain(address)
+            chain_name = chain.capitalize() if chain else "Unknown"
+            await self.send_message_to(
+                chat_id,
+                f"🔍 Analyzing token on {chain_name}...\n\n<code>{address}</code>\n\nThis may take a few seconds."
+            )
+            
+            # Run analysis
+            report = await self._token_analyzer.analyze(address, chain)
+            
+            # Send report (handle long messages)
+            await self._send_long_message(chat_id, report.telegram_message)
+            
+        except Exception as e:
+            await self.send_message_to(
+                chat_id,
+                f"❌ Analysis failed: {str(e)}\n\nPlease check the address and try again."
+            )
+        finally:
+            self._analyzing.discard(chat_id)
+
+    async def _send_long_message(
+        self, chat_id: str, text: str, max_length: int = 4000
+    ) -> None:
+        """Send a long message, splitting if necessary."""
+        if len(text) <= max_length:
+            await self.send_message_to(chat_id, text)
+            return
+        
+        # Split at paragraph breaks or newlines
+        parts = []
+        current = ""
+        
+        for line in text.split("\n"):
+            if len(current) + len(line) + 1 > max_length:
+                if current:
+                    parts.append(current)
+                current = line
+            else:
+                current = current + "\n" + line if current else line
+        
+        if current:
+            parts.append(current)
+        
+        for i, part in enumerate(parts):
+            if len(parts) > 1:
+                part = f"{part}\n\n<i>({i+1}/{len(parts)})</i>"
+            await self.send_message_to(chat_id, part)
+            if i < len(parts) - 1:
+                await asyncio.sleep(0.5)  # Brief delay between messages
 
     async def _handle_subscribe(
         self, chat_id: str, username: Optional[str] = None
@@ -234,16 +334,13 @@ class TelegramNotifier:
     async def _send_status(self, chat_id: str) -> None:
         """Send bot status message."""
         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-        is_subscribed = await self._subscribers_db.is_subscribed(chat_id)
-        subscriber_count = await self._subscribers_db.get_subscriber_count()
-        sub_status = "✅ Subscribed" if is_subscribed else "❌ Not subscribed"
+        analyzer_status = "✅ Ready" if self._token_analyzer else "❌ Not configured"
         message = (
             "✅ <b>Bot Status</b>\n\n"
             f"<b>Status:</b> Online\n"
-            f"<b>Time:</b> {timestamp}\n"
-            f"<b>Your alerts:</b> {sub_status}\n"
-            f"<b>Total subscribers:</b> {subscriber_count}\n\n"
-            "Monitoring your watchlist for price alerts."
+            f"<b>Analyzer:</b> {analyzer_status}\n"
+            f"<b>Time:</b> {timestamp}\n\n"
+            "Send a token address to analyze it!"
         )
         await self.send_message_to(chat_id, message)
 
