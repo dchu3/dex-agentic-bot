@@ -375,7 +375,6 @@ class TokenAnalyzer:
                 contents=context,
                 config=types.GenerateContentConfig(
                     system_instruction=ANALYSIS_SYSTEM_PROMPT,
-                    max_output_tokens=500,
                 ),
             )
             
