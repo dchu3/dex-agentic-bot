@@ -194,13 +194,29 @@ class TokenAnalyzer:
                 token_data.errors.append("DexScreener client not available")
                 return
             
-            self._log("tool", f"→ dexscreener_getTokenPools({address})")
-            result = await client.call_tool("getTokenPools", {"tokenAddress": address})
-            self._log("tool", "✓ dexscreener_getTokenPools")
+            self._log("tool", f"→ dexscreener_get_token_pools({chain}, {address})")
+            result = await client.call_tool("get_token_pools", {
+                "chainId": chain,
+                "tokenAddress": address,
+            })
+            self._log("tool", "✓ dexscreener_get_token_pools")
             
             if not result:
                 token_data.errors.append("No data from DexScreener")
                 return
+            
+            # Handle MCP error strings
+            if isinstance(result, str):
+                if result.startswith("MCP error"):
+                    token_data.errors.append(f"DexScreener: {result}")
+                    return
+                # Try to parse as JSON if it's a string
+                try:
+                    import json
+                    result = json.loads(result)
+                except (json.JSONDecodeError, TypeError):
+                    token_data.errors.append(f"DexScreener: unexpected response format")
+                    return
             
             token_data.raw_dexscreener = result
             
@@ -321,23 +337,32 @@ class TokenAnalyzer:
             token_data.errors.append("Rugcheck client not available")
             return
         
-        self._log("tool", f"→ rugcheck_getTokenSafetySummary({address})")
-        result = await client.call_tool("getTokenSafetySummary", {"mint": address})
-        self._log("tool", "✓ rugcheck_getTokenSafetySummary")
+        self._log("tool", f"→ rugcheck_get_token_summary({address})")
+        result = await client.call_tool("get_token_summary", {"token_address": address})
+        self._log("tool", "✓ rugcheck_get_token_summary")
+        
+        # Handle MCP error strings
+        if isinstance(result, str):
+            if result.startswith("MCP error"):
+                token_data.safety_status = "Unknown"
+                token_data.errors.append(f"Rugcheck: {result}")
+                return
         
         token_data.safety_data = result
         
-        # Parse safety status
+        # Parse safety status from rugcheck response
+        # Response format: {"score": 1, "score_normalised": 1, "risks": [], "lpLockedPct": ...}
         if isinstance(result, dict):
-            risk_level = result.get("riskLevel", "").lower()
-            if risk_level in ("good", "low"):
+            score = result.get("score_normalised", result.get("score", 0))
+            risks = result.get("risks", [])
+            
+            # Score interpretation: lower is better (fewer risks)
+            if score <= 500 and not risks:
                 token_data.safety_status = "Safe"
-            elif risk_level in ("medium", "warn"):
+            elif score <= 2000 or len(risks) <= 2:
                 token_data.safety_status = "Risky"
-            elif risk_level in ("high", "danger", "rug"):
-                token_data.safety_status = "Dangerous"
             else:
-                token_data.safety_status = "Unknown"
+                token_data.safety_status = "Dangerous"
 
     async def _generate_ai_analysis(self, token_data: TokenData) -> str:
         """Generate AI analysis of the token data."""
@@ -354,10 +379,13 @@ class TokenAnalyzer:
                 ),
             )
             
-            if response.candidates and response.candidates[0].content:
-                for part in response.candidates[0].content.parts:
-                    if hasattr(part, "text") and part.text:
-                        return part.text.strip()
+            # Safely extract text from response
+            if response and response.candidates:
+                candidate = response.candidates[0]
+                if candidate and candidate.content and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if hasattr(part, "text") and part.text:
+                            return part.text.strip()
             
             return "Unable to generate AI analysis."
             
