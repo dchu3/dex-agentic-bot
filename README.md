@@ -38,8 +38,10 @@ TELEGRAM_PRIVATE_MODE=true           # Set to true to restrict access
 
 # MCP Servers (token data sources)
 MCP_DEXSCREENER_CMD=npx @mcp-dexscreener/server
+MCP_DEXPAPRIKA_CMD=dexpaprika-mcp
 MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 MCP_RUGCHECK_CMD=node /path/to/dex-rugcheck-mcp/dist/index.js
+MCP_SOLANA_RPC_CMD=node /path/to/solana-rpc-mcp/dist/index.js
 ```
 
 #### Private Mode
@@ -190,8 +192,10 @@ This bot uses MCP (Model Context Protocol) servers for data:
 | Server | Purpose | Chains |
 |--------|---------|--------|
 | [mcp-dexscreener](https://github.com/janswist/mcp-dexscreener) | Token prices, pools, volume | All |
+| [dexpaprika-mcp](https://github.com/coinpaprika/dexpaprika-mcp) | Pool details, OHLCV data | All |
 | [dex-honeypot-mcp](https://github.com/dchu3/dex-honeypot-mcp) | Honeypot detection | Ethereum, BSC, Base |
 | [dex-rugcheck-mcp](https://github.com/dchu3/dex-rugcheck-mcp) | Token safety | Solana |
+| [solana-rpc-mcp](https://github.com/dchu3/solana-rpc-mcp) | Direct Solana RPC queries | Solana |
 
 ## License
 
