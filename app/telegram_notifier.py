@@ -282,7 +282,9 @@ class TelegramNotifier:
             report = await self._token_analyzer.analyze(address, chain)
             
             # Send report (handle long messages)
-            await self._send_long_message(chat_id, report.telegram_message)
+            await self._send_long_message(
+                chat_id, report.telegram_message, disable_web_page_preview=True
+            )
             
         except Exception as e:
             await self.send_message_to(
@@ -293,11 +295,17 @@ class TelegramNotifier:
             self._analyzing.discard(chat_id)
 
     async def _send_long_message(
-        self, chat_id: str, text: str, max_length: int = 4000
+        self,
+        chat_id: str,
+        text: str,
+        max_length: int = 4000,
+        disable_web_page_preview: bool = False,
     ) -> None:
         """Send a long message, splitting if necessary."""
         if len(text) <= max_length:
-            await self.send_message_to(chat_id, text)
+            await self.send_message_to(
+                chat_id, text, disable_web_page_preview=disable_web_page_preview
+            )
             return
         
         # Split at paragraph breaks or newlines
@@ -318,7 +326,9 @@ class TelegramNotifier:
         for i, part in enumerate(parts):
             if len(parts) > 1:
                 part = f"{part}\n\n<i>({i+1}/{len(parts)})</i>"
-            await self.send_message_to(chat_id, part)
+            await self.send_message_to(
+                chat_id, part, disable_web_page_preview=disable_web_page_preview
+            )
             if i < len(parts) - 1:
                 await asyncio.sleep(0.5)  # Brief delay between messages
 
@@ -408,6 +418,7 @@ class TelegramNotifier:
         text: str,
         parse_mode: str = "HTML",
         disable_notification: bool = False,
+        disable_web_page_preview: bool = False,
     ) -> bool:
         """Send a message to a specific chat.
         
@@ -416,6 +427,7 @@ class TelegramNotifier:
             text: Message text (supports HTML formatting)
             parse_mode: Message parse mode (HTML or Markdown)
             disable_notification: Send silently
+            disable_web_page_preview: Disable link previews
             
         Returns:
             True if message was sent successfully
@@ -431,6 +443,7 @@ class TelegramNotifier:
                 "text": text,
                 "parse_mode": parse_mode,
                 "disable_notification": disable_notification,
+                "disable_web_page_preview": disable_web_page_preview,
             }
             response = await client.post(url, json=payload)
             data = response.json()

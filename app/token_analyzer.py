@@ -453,6 +453,22 @@ class TokenAnalyzer:
         
         return "\n".join(lines)
 
+    @staticmethod
+    def _build_dexscreener_url(chain: str, pair_address: Optional[str], token_address: str) -> str:
+        """Build DexScreener URL for the token.
+        
+        Args:
+            chain: Blockchain name (e.g., 'solana', 'ethereum')
+            pair_address: Liquidity pair address (preferred)
+            token_address: Token contract address (fallback for search)
+            
+        Returns:
+            DexScreener URL (pair page if available, otherwise search page)
+        """
+        if pair_address:
+            return f"https://dexscreener.com/{chain.lower()}/{pair_address}"
+        return f"https://dexscreener.com/search?q={token_address}"
+
     def _format_telegram_report(self, token_data: TokenData, ai_analysis: str) -> str:
         """Format the analysis as a Telegram HTML message."""
         # Safety emoji
@@ -475,12 +491,19 @@ class TokenAnalyzer:
         liquidity_fmt = self._format_large_number(token_data.liquidity_usd)
         mcap_fmt = self._format_large_number(token_data.market_cap)
         
+        # Build DexScreener URL
+        pair_address = token_data.pools[0].get("pair") if token_data.pools else None
+        dexscreener_url = self._build_dexscreener_url(
+            token_data.chain, pair_address, token_data.address
+        )
+        
         lines = [
             "🔍 <b>Token Analysis Report</b>",
             "",
             f"<b>Token:</b> {token_data.symbol or 'Unknown'}",
             f"<b>Chain:</b> {token_data.chain.capitalize()}",
             f"<b>Address:</b> <code>{token_data.address}</code>",
+            f'📊 <a href="{dexscreener_url}">View on DexScreener</a>',
             "",
             "━━━ 💰 <b>Price &amp; Market</b> ━━━",
             f"<b>Price:</b> {price_fmt}",
