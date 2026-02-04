@@ -37,7 +37,7 @@ TELEGRAM_CHAT_ID=your-chat-id        # Your Telegram chat ID
 TELEGRAM_PRIVATE_MODE=true           # Set to true to restrict access
 
 # MCP Servers (token data sources)
-MCP_DEXSCREENER_CMD=npx @mcp-dexscreener/server
+MCP_DEXSCREENER_CMD=node /path/to/dex-screener-mcp/dist/index.js
 MCP_DEXPAPRIKA_CMD=dexpaprika-mcp
 MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 MCP_RUGCHECK_CMD=node /path/to/dex-rugcheck-mcp/dist/index.js
@@ -191,7 +191,7 @@ This bot uses MCP (Model Context Protocol) servers for data:
 
 | Server | Purpose | Chains |
 |--------|---------|--------|
-| [mcp-dexscreener](https://github.com/janswist/mcp-dexscreener) | Token prices, pools, volume | All |
+| [dex-screener-mcp](https://github.com/dchu3/dex-screener-mcp) | Token prices, pools, volume | All |
 | [dexpaprika-mcp](https://github.com/coinpaprika/dexpaprika-mcp) | Pool details, OHLCV data | All |
 | [dex-honeypot-mcp](https://github.com/dchu3/dex-honeypot-mcp) | Honeypot detection | Ethereum, BSC, Base |
 | [dex-rugcheck-mcp](https://github.com/dchu3/dex-rugcheck-mcp) | Token safety | Solana |

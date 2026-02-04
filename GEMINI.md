@@ -46,7 +46,7 @@ The core of the application is a Python-based "Agentic Planner" that interacts w
 - **Google Generative AI SDK:** For interacting with the Gemini API.
 - **Pydantic & Pydantic Settings:** For configuration management and data validation.
 - **Rich:** For rich terminal output.
-- **Node.js 18+ & npm:** Used by some MCP servers (e.g., `mcp-dexscreener`, `dex-honeypot-mcp`).
+- **Node.js 18+ & npm:** Used by some MCP servers (e.g., `dex-screener-mcp`, `dex-honeypot-mcp`).
 
 ## Building and Running:
 
@@ -76,7 +76,7 @@ GEMINI_API_KEY=your-key-here
 GEMINI_MODEL=gemini-2.5-flash
 
 # MCP Server commands (update paths as needed)
-MCP_DEXSCREENER_CMD=node /path/to/mcp-dexscreener/index.js
+MCP_DEXSCREENER_CMD=node /path/to/dex-screener-mcp/dist/index.js
 MCP_DEXPAPRIKA_CMD=dexpaprika-mcp
 MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 
