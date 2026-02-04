@@ -342,7 +342,7 @@ async def _search_token(
         try:
             # Search for the token
             query = f"{symbol} {chain}" if chain else symbol
-            result = await dexscreener.call_tool("searchPairs", {"query": query})
+            result = await dexscreener.call_tool("search_pairs", {"query": query})
             
             if isinstance(result, dict) and result.get("pairs"):
                 pairs = result["pairs"]
@@ -652,7 +652,7 @@ async def _cmd_fix_addresses(
             # Search by symbol to find correct address
             output.status(f"Looking up {entry.symbol}...")
             result = await dexscreener.call_tool(
-                "searchPairs",
+                "search_pairs",
                 {"query": entry.symbol},
             )
             

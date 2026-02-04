@@ -60,7 +60,7 @@ External servers that expose tools to the AI agent:
 
 ### Tool Naming
 
-MCP tools are namespaced as `{client}_{method}` (e.g., `dexscreener_searchPairs`, `honeypot_check_honeypot`). The `parse_function_call_name()` function in `tool_converter.py` splits these back into client and method.
+MCP tools are namespaced as `{client}_{method}` (e.g., `dexscreener_search_pairs`, `honeypot_check_honeypot`). The `parse_function_call_name()` function in `tool_converter.py` splits these back into client and method.
 
 ### Async Patterns
 

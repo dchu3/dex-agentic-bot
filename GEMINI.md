@@ -33,9 +33,10 @@ The core of the application is a Python-based "Agentic Planner" that interacts w
 │  DexScreener  │ │  DexPaprika   │ │   Honeypot    │
 │    (MCP)      │ │    (MCP)      │ │    (MCP)      │
 ├───────────────┤ ├───────────────┤ ├───────────────┤
-│ • searchPairs │ │ • getPools    │ │ • check_      │
-│ • getTrending │ │ • getDetails  │ │   honeypot    │
-│ • getTokenInfo│ │ • getNetworks │ │               │
+│ • search_pairs│ │ • getPools    │ │ • check_      │
+│ • get_trending│ │ • getDetails  │ │   honeypot    │
+│ • get_token   │ │ • getNetworks │ │               │
+│   _info       │
 └───────────────┘ └───────────────┘ └───────────────┘
 ```
 
