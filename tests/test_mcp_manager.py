@@ -62,7 +62,7 @@ def test_format_tools_for_system_prompt_with_tools():
     # Simulate tools being loaded
     manager.dexscreener._tools = [
         {
-            "name": "searchPairs",
+            "name": "search_pairs",
             "description": "Search for token pairs by query",
             "inputSchema": {
                 "type": "object",
@@ -71,7 +71,7 @@ def test_format_tools_for_system_prompt_with_tools():
             },
         },
         {
-            "name": "getTokenInfo",
+            "name": "get_token_info",
             "description": "Get token information",
             "inputSchema": {
                 "type": "object",
@@ -85,11 +85,11 @@ def test_format_tools_for_system_prompt_with_tools():
     result = manager.format_tools_for_system_prompt()
     
     assert "### dexscreener tools:" in result
-    assert "dexscreener_searchPairs" in result
+    assert "dexscreener_search_pairs" in result
     assert "[REQUIRED: query:string]" in result
-    assert "dexscreener_getTokenInfo" in result
-    # getTokenInfo has no required params, so no [REQUIRED: ...] tag
-    assert "- dexscreener_getTokenInfo: Get token information" in result
+    assert "dexscreener_get_token_info" in result
+    # get_token_info has no required params, so no [REQUIRED: ...] tag
+    assert "- dexscreener_get_token_info: Get token information" in result
 
 
 def test_format_tools_for_system_prompt_empty_tools():
