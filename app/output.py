@@ -37,16 +37,23 @@ class CLIOutput:
         self.format = format
         self.verbose = verbose
         self.stream = stream or sys.stdout
-        self._console: Optional[Any] = None
+        self.__console: Optional[Any] = None
 
-        # Initialize rich console for table output
+        # Verify rich is available when table output is requested
         if format == OutputFormat.TABLE:
             try:
-                from rich.console import Console
-                self._console = Console()
+                from rich.console import Console  # noqa: F401
             except ImportError:
                 self.format = OutputFormat.TEXT
                 print("⚠️  'rich' library not installed, using text output", file=sys.stderr)
+
+    @property
+    def _console(self) -> Any:
+        """Lazy-initialise the Rich Console on first access."""
+        if self.__console is None:
+            from rich.console import Console
+            self.__console = Console()
+        return self.__console
 
     def result(self, result: PlannerResult) -> None:
         """Output a planner result."""
