@@ -47,13 +47,13 @@ class Settings(BaseSettings):
     )
 
     agentic_max_iterations: int = Field(
-        default=8, alias="AGENTIC_MAX_ITERATIONS", ge=1, le=15
+        default=15, alias="AGENTIC_MAX_ITERATIONS", ge=1, le=25
     )
     agentic_max_tool_calls: int = Field(
         default=30, alias="AGENTIC_MAX_TOOL_CALLS", ge=1, le=100
     )
     agentic_timeout_seconds: int = Field(
-        default=90, alias="AGENTIC_TIMEOUT_SECONDS", ge=10, le=300
+        default=120, alias="AGENTIC_TIMEOUT_SECONDS", ge=10, le=300
     )
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
