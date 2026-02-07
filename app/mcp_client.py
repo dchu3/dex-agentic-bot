@@ -307,6 +307,7 @@ class MCPManager:
         self.rugcheck = MCPClient("rugcheck", rugcheck_cmd) if rugcheck_cmd else None
         self.solana = MCPClient("solana", solana_rpc_cmd) if solana_rpc_cmd else None
         self.watchlist_provider = watchlist_provider
+        self._gemini_functions_cache: Optional[List["types.FunctionDeclaration"]] = None
 
     async def start(self) -> None:
         tasks = [
@@ -320,6 +321,7 @@ class MCPManager:
         if self.solana:
             tasks.append(self.solana.start())
         await asyncio.gather(*tasks)
+        self._gemini_functions_cache = None  # Invalidate after (re)start
 
     async def shutdown(self) -> None:
         tasks = [
@@ -333,9 +335,13 @@ class MCPManager:
         if self.solana:
             tasks.append(self.solana.stop())
         await asyncio.gather(*tasks)
+        self._gemini_functions_cache = None  # Invalidate on shutdown
 
     def get_gemini_functions(self) -> List["types.FunctionDeclaration"]:
-        """Get all MCP tools as Gemini function declarations."""
+        """Get all MCP tools as Gemini function declarations (cached)."""
+        if self._gemini_functions_cache is not None:
+            return self._gemini_functions_cache
+
         all_functions: List["types.FunctionDeclaration"] = []
         clients = [self.dexscreener, self.dexpaprika]
         if self.honeypot:
@@ -349,6 +355,7 @@ class MCPManager:
         # Add watchlist tools if provider is configured
         if self.watchlist_provider:
             all_functions.extend(self.watchlist_provider.to_gemini_functions())
+        self._gemini_functions_cache = all_functions
         return all_functions
 
     def format_tools_for_system_prompt(self) -> str:

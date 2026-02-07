@@ -182,6 +182,10 @@ class WatchlistPoller:
                 logger.warning(f"Failed to fetch prices for chain {chain}: {e}")
                 continue
 
+        # Clean up expired cache entries after each poll cycle
+        if self.price_cache:
+            await self.price_cache.cleanup_expired()
+
         return triggered_alerts
 
     async def _fetch_prices(
@@ -190,14 +194,16 @@ class WatchlistPoller:
         """Fetch current prices and market caps for a list of tokens on a chain.
         
         Uses price cache to avoid redundant API calls when data is still fresh.
+        Uncached tokens are fetched in parallel with a concurrency limit.
         """
         prices: Dict[str, TokenPriceData] = {}
+        uncached_entries: List[WatchlistEntry] = []
 
         # Try DexScreener first for price data
         dexscreener = self.mcp_manager.get_client("dexscreener")
         if dexscreener:
+            # Resolve cached entries first
             for entry in entries:
-                # Check cache first
                 if self.price_cache:
                     cached = await self.price_cache.get(chain, entry.token_address)
                     if cached is not None:
@@ -205,40 +211,56 @@ class WatchlistPoller:
                         if price_data is not None:
                             prices[entry.token_address] = price_data
                             continue
+                uncached_entries.append(entry)
 
-                try:
-                    result = await dexscreener.call_tool(
-                        "get_token_pools",
-                        {"chainId": chain, "tokenAddress": entry.token_address},
-                    )
-                    # Cache the result
-                    if self.price_cache and result:
-                        await self.price_cache.set(chain, entry.token_address, result)
-                    
-                    price_data = self._extract_price_from_dexscreener(result)
-                    if price_data is not None:
-                        prices[entry.token_address] = price_data
-                except Exception as e:
-                    logger.debug(f"DexScreener fetch failed for {entry.symbol}: {e}")
-                    continue
+            # Fetch uncached tokens in parallel
+            if uncached_entries:
+                sem = asyncio.Semaphore(5)
 
-        # Fallback to DexPaprika for any missing prices
+                async def _fetch_one(entry: WatchlistEntry) -> None:
+                    async with sem:
+                        try:
+                            result = await dexscreener.call_tool(
+                                "get_token_pools",
+                                {"chainId": chain, "tokenAddress": entry.token_address},
+                            )
+                            if self.price_cache and result:
+                                await self.price_cache.set(chain, entry.token_address, result)
+                            price_data = self._extract_price_from_dexscreener(result)
+                            if price_data is not None:
+                                prices[entry.token_address] = price_data
+                        except Exception as e:
+                            logger.debug(f"DexScreener fetch failed for {entry.symbol}: {e}")
+
+                await asyncio.gather(
+                    *[_fetch_one(e) for e in uncached_entries],
+                    return_exceptions=True,
+                )
+
+        # Fallback to DexPaprika for any missing prices (also parallel)
         dexpaprika = self.mcp_manager.get_client("dexpaprika")
         if dexpaprika:
-            for entry in entries:
-                if entry.token_address in prices:
-                    continue
-                try:
-                    result = await dexpaprika.call_tool(
-                        "getTokenDetails",
-                        {"network": chain, "tokenAddress": entry.token_address},
-                    )
-                    price = self._extract_price_from_dexpaprika(result)
-                    if price is not None:
-                        prices[entry.token_address] = TokenPriceData(price=price)
-                except Exception as e:
-                    logger.debug(f"DexPaprika fetch failed for {entry.symbol}: {e}")
-                    continue
+            missing = [e for e in entries if e.token_address not in prices]
+            if missing:
+                sem = asyncio.Semaphore(5)
+
+                async def _fetch_fallback(entry: WatchlistEntry) -> None:
+                    async with sem:
+                        try:
+                            result = await dexpaprika.call_tool(
+                                "getTokenDetails",
+                                {"network": chain, "tokenAddress": entry.token_address},
+                            )
+                            price = self._extract_price_from_dexpaprika(result)
+                            if price is not None:
+                                prices[entry.token_address] = TokenPriceData(price=price)
+                        except Exception as e:
+                            logger.debug(f"DexPaprika fetch failed for {entry.symbol}: {e}")
+
+                await asyncio.gather(
+                    *[_fetch_fallback(e) for e in missing],
+                    return_exceptions=True,
+                )
 
         return prices
 
