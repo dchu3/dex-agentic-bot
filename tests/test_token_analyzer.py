@@ -12,6 +12,7 @@ from app.token_analyzer import (
     EVM_ADDRESS_PATTERN,
     SOLANA_ADDRESS_PATTERN,
 )
+from app.formatting import format_price, format_large_number
 
 
 class TestAddressDetection:
@@ -135,18 +136,18 @@ class TestTokenAnalyzer:
 
     def test_format_price(self):
         """Test price formatting."""
-        assert TokenAnalyzer._format_price(1.5) == "$1.5000"
-        assert TokenAnalyzer._format_price(0.001) == "$0.001000"
-        assert TokenAnalyzer._format_price(0.00000001) == "$0.0000000100"
-        assert TokenAnalyzer._format_price(None) == "N/A"
+        assert format_price(1.5) == "$1.5000"
+        assert format_price(0.001) == "$0.001000"
+        assert format_price(0.00000001) == "$0.0000000100"
+        assert format_price(None) == "N/A"
 
     def test_format_large_number(self):
         """Test large number formatting."""
-        assert TokenAnalyzer._format_large_number(1_500_000_000) == "$1.50B"
-        assert TokenAnalyzer._format_large_number(5_000_000) == "$5.00M"
-        assert TokenAnalyzer._format_large_number(50_000) == "$50.00K"
-        assert TokenAnalyzer._format_large_number(500) == "$500"
-        assert TokenAnalyzer._format_large_number(None) == "N/A"
+        assert format_large_number(1_500_000_000) == "$1.50B"
+        assert format_large_number(5_000_000) == "$5.00M"
+        assert format_large_number(50_000) == "$50.00K"
+        assert format_large_number(500) == "$500"
+        assert format_large_number(None) == "N/A"
 
     def test_safe_float(self):
         """Test safe float conversion."""

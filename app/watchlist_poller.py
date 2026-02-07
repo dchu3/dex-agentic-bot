@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from app.watchlist import WatchlistDB, WatchlistEntry, AlertRecord
@@ -123,7 +123,7 @@ class WatchlistPoller:
             try:
                 await self._check_prices()
                 self._consecutive_failures = 0
-                self._last_successful_check = datetime.now()
+                self._last_successful_check = datetime.now(timezone.utc)
             except asyncio.CancelledError:
                 break
             except Exception as e:

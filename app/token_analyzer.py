@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from google import genai
 from google.genai import types
+
+from app.formatting import format_price, format_large_number
 
 if TYPE_CHECKING:
     from app.mcp_client import MCPManager
@@ -166,7 +168,7 @@ class TokenAnalyzer:
         return AnalysisReport(
             token_data=token_data,
             ai_analysis=ai_analysis,
-            generated_at=datetime.utcnow(),
+            generated_at=datetime.now(timezone.utc),
             telegram_message=telegram_message,
         )
 
@@ -486,10 +488,10 @@ class TokenAnalyzer:
         change_emoji = "🟢" if change >= 0 else "🔴"
         
         # Format numbers
-        price_fmt = self._format_price(token_data.price_usd)
-        volume_fmt = self._format_large_number(token_data.volume_24h)
-        liquidity_fmt = self._format_large_number(token_data.liquidity_usd)
-        mcap_fmt = self._format_large_number(token_data.market_cap)
+        price_fmt = format_price(token_data.price_usd)
+        volume_fmt = format_large_number(token_data.volume_24h)
+        liquidity_fmt = format_large_number(token_data.liquidity_usd)
+        mcap_fmt = format_large_number(token_data.market_cap)
         
         # Build DexScreener URL
         pair_address = token_data.pools[0].get("pair") if token_data.pools else None
@@ -518,7 +520,7 @@ class TokenAnalyzer:
         # Add top pool
         if token_data.pools:
             top_pool = token_data.pools[0]
-            pool_liq = self._format_large_number(top_pool.get("liquidity"))
+            pool_liq = format_large_number(top_pool.get("liquidity"))
             lines.append(f"<b>Top Pool:</b> {top_pool['dex']} ({pool_liq})")
         
         # Safety section
@@ -545,39 +547,13 @@ class TokenAnalyzer:
         ])
         
         # Footer
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         lines.extend([
             "",
             f"⏰ {timestamp}",
         ])
         
         return "\n".join(lines)
-
-    @staticmethod
-    def _format_price(price: Optional[float]) -> str:
-        """Format price with appropriate precision."""
-        if price is None:
-            return "N/A"
-        if price >= 1:
-            return f"${price:,.4f}"
-        elif price >= 0.0001:
-            return f"${price:.6f}"
-        else:
-            return f"${price:.10f}"
-
-    @staticmethod
-    def _format_large_number(value: Optional[float]) -> str:
-        """Format large numbers with K/M/B suffix."""
-        if value is None:
-            return "N/A"
-        if value >= 1_000_000_000:
-            return f"${value / 1_000_000_000:.2f}B"
-        elif value >= 1_000_000:
-            return f"${value / 1_000_000:.2f}M"
-        elif value >= 1_000:
-            return f"${value / 1_000:.2f}K"
-        else:
-            return f"${value:,.0f}"
 
     @staticmethod
     def _safe_float(value: Any) -> Optional[float]:
