@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -123,5 +123,5 @@ class SubscriberDB:
             username=row["username"],
             subscribed_at=datetime.fromisoformat(row["subscribed_at"])
             if row["subscribed_at"]
-            else datetime.utcnow(),
+            else datetime.now(timezone.utc),
         )

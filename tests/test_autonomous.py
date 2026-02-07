@@ -2,7 +2,7 @@
 
 import asyncio
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -189,7 +189,7 @@ class TestAutonomousWatchlistAgent:
                     token_address="abc123",
                     symbol="TEST",
                     chain="solana",
-                    added_at=datetime.utcnow(),
+                    added_at=datetime.now(timezone.utc),
                 )
             ]
 
@@ -383,7 +383,7 @@ class TestAutonomousScheduler:
             )
 
             # Test with no changes
-            result = AutonomousCycleResult(timestamp=datetime.utcnow())
+            result = AutonomousCycleResult(timestamp=datetime.now(timezone.utc))
             summary = scheduler._generate_summary(result)
             assert summary == "No changes"
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -319,7 +319,7 @@ class WatchlistDB:
     ) -> None:
         """Update the last known price for a watchlist entry."""
         conn = await self._ensure_connected()
-        checked_at = checked_at or datetime.utcnow()
+        checked_at = checked_at or datetime.now(timezone.utc)
         async with self._lock:
             await conn.execute(
                 "UPDATE watchlist SET last_price = ?, last_checked = ? WHERE id = ?",
@@ -372,7 +372,7 @@ class WatchlistDB:
         Lookups use case-insensitive comparison.
         """
         conn = await self._ensure_connected()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         chain_lower = chain.lower()
         async with self._lock:
             # Check if entry exists (case-insensitive)
@@ -472,7 +472,7 @@ class WatchlistDB:
     ) -> bool:
         """Update an autonomously managed entry with new data."""
         conn = await self._ensure_connected()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         async with self._lock:
             updates = ["last_reviewed = ?"]
             params: List[Any] = [now]
@@ -599,7 +599,7 @@ class WatchlistDB:
             token_address=row["token_address"],
             symbol=row["symbol"],
             chain=row["chain"],
-            added_at=datetime.fromisoformat(row["added_at"]) if row["added_at"] else datetime.utcnow(),
+            added_at=datetime.fromisoformat(row["added_at"]) if row["added_at"] else datetime.now(timezone.utc),
             alert_above=row["alert_above"],
             alert_below=row["alert_below"],
             last_price=row["last_price"],
@@ -619,7 +619,7 @@ class WatchlistDB:
             alert_type=row["alert_type"],
             threshold=row["threshold"],
             triggered_price=row["triggered_price"],
-            triggered_at=datetime.fromisoformat(row["triggered_at"]) if row["triggered_at"] else datetime.utcnow(),
+            triggered_at=datetime.fromisoformat(row["triggered_at"]) if row["triggered_at"] else datetime.now(timezone.utc),
             acknowledged=bool(row["acknowledged"]),
             symbol=row["symbol"] if "symbol" in row.keys() else None,
             chain=row["chain"] if "chain" in row.keys() else None,

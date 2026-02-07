@@ -1,7 +1,7 @@
 """Tests for price cache."""
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -157,7 +157,7 @@ class TestCachedPrice:
 
     def test_cached_price_creation(self):
         """Test creating a CachedPrice."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         cached = CachedPrice(data={"price": 100}, cached_at=now)
         
         assert cached.data == {"price": 100}

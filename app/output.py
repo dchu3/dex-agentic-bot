@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from enum import Enum
 from typing import Any, Dict, Generator, List, Optional, TYPE_CHECKING
 
+from app.formatting import format_price
 from app.types import PlannerResult
 
 if TYPE_CHECKING:
@@ -337,9 +338,9 @@ class CLIOutput:
 
         for entry in entries:
             addr_short = entry.token_address[:10] + "..." if len(entry.token_address) > 10 else entry.token_address
-            price = self._format_price(entry.last_price) if entry.last_price else "-"
-            above = self._format_price(entry.alert_above) if entry.alert_above else "-"
-            below = self._format_price(entry.alert_below) if entry.alert_below else "-"
+            price = format_price(entry.last_price) if entry.last_price else "-"
+            above = format_price(entry.alert_above) if entry.alert_above else "-"
+            below = format_price(entry.alert_below) if entry.alert_below else "-"
 
             table.add_row(
                 entry.symbol,
@@ -363,8 +364,8 @@ class CLIOutput:
             direction = "dropped below"
             color = "red"
 
-        threshold = self._format_price(alert.threshold)
-        current = self._format_price(alert.current_price)
+        threshold = format_price(alert.threshold)
+        current = format_price(alert.current_price)
 
         if self.format == OutputFormat.JSON:
             output = {
@@ -425,8 +426,8 @@ class CLIOutput:
 
         for alert in alerts:
             alert_type = "🔺 above" if alert.alert_type == "above" else "🔻 below"
-            threshold = self._format_price(alert.threshold)
-            triggered = self._format_price(alert.triggered_price)
+            threshold = format_price(alert.threshold)
+            triggered = format_price(alert.triggered_price)
             time_str = alert.triggered_at.strftime("%Y-%m-%d %H:%M")
 
             table.add_row(
@@ -538,13 +539,3 @@ class CLIOutput:
         content = Group(header, cmd_table, examples)
         panel = Panel(content, border_style="cyan", padding=(1, 2))
         self._console.print(panel)
-
-    @staticmethod
-    def _format_price(price: float) -> str:
-        """Format price with appropriate precision."""
-        if price >= 1:
-            return f"${price:,.4f}"
-        elif price >= 0.0001:
-            return f"${price:.6f}"
-        else:
-            return f"${price:.10f}"

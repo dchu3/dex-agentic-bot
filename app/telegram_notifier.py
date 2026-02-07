@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 import httpx
 
+from app.formatting import format_price, format_large_number
 from app.telegram_subscribers import SubscriberDB
 from app.token_analyzer import TokenAnalyzer, is_valid_token_address, detect_chain
 
@@ -365,7 +366,7 @@ class TelegramNotifier:
 
     async def _send_status(self, chat_id: str) -> None:
         """Send bot status message."""
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         analyzer_status = "✅ Ready" if self._token_analyzer else "❌ Not configured"
         message = (
             "✅ <b>Bot Status</b>\n\n"
@@ -498,25 +499,25 @@ class TelegramNotifier:
             emoji = "🔻"
             direction = "Dropped below"
 
-        threshold = self._format_price(alert.threshold)
-        current = self._format_price(alert.current_price)
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        threshold = format_price(alert.threshold)
+        current = format_price(alert.current_price)
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
         # Build market cap line if available
         market_cap_line = ""
         if alert.market_cap is not None:
-            market_cap_line = f"<b>Market Cap:</b> {self._format_market_cap(alert.market_cap)}\n"
+            market_cap_line = f"<b>Market Cap:</b> {format_large_number(alert.market_cap)}\n"
 
         # Build liquidity line if available
         liquidity_line = ""
         if alert.liquidity is not None:
-            liquidity_line = f"<b>Liquidity:</b> {self._format_liquidity(alert.liquidity)}\n"
+            liquidity_line = f"<b>Liquidity:</b> {format_large_number(alert.liquidity)}\n"
 
         # Build auto-adjusted thresholds line if applicable
         new_thresholds_line = ""
         if alert.new_alert_above is not None and alert.new_alert_below is not None:
-            new_above_fmt = self._format_price(alert.new_alert_above)
-            new_below_fmt = self._format_price(alert.new_alert_below)
+            new_above_fmt = format_price(alert.new_alert_above)
+            new_below_fmt = format_price(alert.new_alert_below)
             new_thresholds_line = (
                 f"\n🔄 <b>New Triggers Set:</b>\n"
                 f"  🎯 Take Profit: {new_above_fmt}\n"
@@ -536,42 +537,6 @@ class TelegramNotifier:
             f"⏰ {timestamp}"
         )
 
-    @staticmethod
-    def _format_price(price: float) -> str:
-        """Format price with appropriate precision."""
-        if price >= 1:
-            return f"${price:,.4f}"
-        elif price >= 0.0001:
-            return f"${price:.6f}"
-        else:
-            return f"${price:.10f}"
-
-    @staticmethod
-    def _format_market_cap(market_cap: float) -> str:
-        """Format market cap with appropriate suffix (K, M, B, T)."""
-        if market_cap >= 1_000_000_000_000:
-            return f"${market_cap / 1_000_000_000_000:.2f}T"
-        elif market_cap >= 1_000_000_000:
-            return f"${market_cap / 1_000_000_000:.2f}B"
-        elif market_cap >= 1_000_000:
-            return f"${market_cap / 1_000_000:.2f}M"
-        elif market_cap >= 1_000:
-            return f"${market_cap / 1_000:.2f}K"
-        else:
-            return f"${market_cap:,.0f}"
-
-    @staticmethod
-    def _format_liquidity(liquidity: float) -> str:
-        """Format liquidity with appropriate suffix (K, M, B)."""
-        if liquidity >= 1_000_000_000:
-            return f"${liquidity / 1_000_000_000:.2f}B"
-        elif liquidity >= 1_000_000:
-            return f"${liquidity / 1_000_000:.2f}M"
-        elif liquidity >= 1_000:
-            return f"${liquidity / 1_000:.2f}K"
-        else:
-            return f"${liquidity:,.0f}"
-
     # --- Autonomous Watchlist Notifications ---
 
     async def send_token_added(
@@ -585,10 +550,10 @@ class TelegramNotifier:
         reasoning: str,
     ) -> bool:
         """Send notification when a token is added to autonomous watchlist."""
-        price_fmt = self._format_price(price)
-        above_fmt = self._format_price(alert_above)
-        below_fmt = self._format_price(alert_below)
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        price_fmt = format_price(price)
+        above_fmt = format_price(alert_above)
+        below_fmt = format_price(alert_below)
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
         message = (
             f"📈 <b>New Position Added</b>\n\n"
@@ -611,7 +576,7 @@ class TelegramNotifier:
         reasoning: str,
     ) -> bool:
         """Send notification when a token is removed from autonomous watchlist."""
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
         message = (
             f"📉 <b>Position Closed</b>\n\n"
@@ -633,7 +598,7 @@ class TelegramNotifier:
         reasoning: str,
     ) -> bool:
         """Send notification when price triggers are updated."""
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
         lines = [
             f"🔄 <b>Triggers Updated</b>\n",
@@ -642,13 +607,13 @@ class TelegramNotifier:
         ]
 
         if new_above is not None:
-            old_fmt = self._format_price(old_above) if old_above else "—"
-            new_fmt = self._format_price(new_above)
+            old_fmt = format_price(old_above) if old_above else "—"
+            new_fmt = format_price(new_above)
             lines.append(f"<b>Take Profit:</b> {old_fmt} → {new_fmt}")
 
         if new_below is not None:
-            old_fmt = self._format_price(old_below) if old_below else "—"
-            new_fmt = self._format_price(new_below)
+            old_fmt = format_price(old_below) if old_below else "—"
+            new_fmt = format_price(new_below)
             lines.append(f"<b>Stop Loss:</b> {old_fmt} → {new_fmt}")
 
         lines.extend([
@@ -664,7 +629,7 @@ class TelegramNotifier:
         cycle_number: int,
     ) -> bool:
         """Send periodic watchlist summary."""
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
         lines = [
             f"📊 <b>Watchlist Summary</b> (Cycle #{cycle_number})\n",
@@ -676,7 +641,7 @@ class TelegramNotifier:
         else:
             lines.append(f"<b>{len(entries)} Active Positions:</b>\n")
             for entry in entries:
-                price_fmt = self._format_price(entry.last_price) if entry.last_price else "—"
+                price_fmt = format_price(entry.last_price) if entry.last_price else "—"
                 score = entry.momentum_score or 0
                 lines.append(
                     f"• <b>{entry.symbol}</b> @ {price_fmt} (Score: {score:.0f})"

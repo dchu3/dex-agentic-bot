@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+
+from app.formatting import format_price
 
 if TYPE_CHECKING:
     from app.autonomous_agent import (
@@ -123,7 +125,7 @@ class AutonomousScheduler:
         from app.autonomous_agent import AutonomousCycleResult
 
         self._cycle_count += 1
-        self._last_cycle = datetime.utcnow()
+        self._last_cycle = datetime.now(timezone.utc)
         self._log("info", f"Starting autonomous cycle #{self._cycle_count}")
 
         result = AutonomousCycleResult(timestamp=self._last_cycle)
@@ -295,8 +297,8 @@ class AutonomousScheduler:
         if result.tokens_updated:
             lines.append("🔄 <b>Updated Triggers:</b>")
             for review in result.tokens_updated:
-                above_fmt = self._format_price(review.new_alert_above) if review.new_alert_above else "—"
-                below_fmt = self._format_price(review.new_alert_below) if review.new_alert_below else "—"
+                above_fmt = format_price(review.new_alert_above) if review.new_alert_above else "—"
+                below_fmt = format_price(review.new_alert_below) if review.new_alert_below else "—"
                 lines.append(
                     f"  • <b>{review.symbol}</b>: ↑{above_fmt} ↓{below_fmt}"
                 )
@@ -314,18 +316,6 @@ class AutonomousScheduler:
         lines.append(f"📋 {result.summary}")
 
         return "\n".join(lines)
-
-    @staticmethod
-    def _format_price(price: Optional[float]) -> str:
-        """Format price with appropriate precision."""
-        if price is None:
-            return "—"
-        if price >= 1:
-            return f"${price:,.4f}"
-        elif price >= 0.0001:
-            return f"${price:.6f}"
-        else:
-            return f"${price:.10f}"
 
     def get_status(self) -> Dict[str, Any]:
         """Get current scheduler status."""

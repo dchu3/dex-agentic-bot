@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
 
@@ -41,7 +41,7 @@ class PriceCache:
 
     def _is_expired(self, cached: CachedPrice) -> bool:
         """Check if a cached entry has expired."""
-        age = datetime.utcnow() - cached.cached_at
+        age = datetime.now(timezone.utc) - cached.cached_at
         return age > timedelta(seconds=self.ttl_seconds)
 
     async def get(self, chain: str, token_address: str) -> Optional[Any]:
@@ -84,7 +84,7 @@ class PriceCache:
         async with self._lock:
             self._cache[key] = CachedPrice(
                 data=data,
-                cached_at=datetime.utcnow(),
+                cached_at=datetime.now(timezone.utc),
             )
 
     async def clear(self) -> int:

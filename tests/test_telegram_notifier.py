@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 
+from app.formatting import format_price, format_large_number
 from app.telegram_notifier import TelegramNotifier
 from app.watchlist_poller import TriggeredAlert
 
@@ -228,18 +229,18 @@ def test_format_alert_below(notifier):
 
 def test_format_price():
     """Test price formatting with different magnitudes."""
-    assert TelegramNotifier._format_price(1234.5678) == "$1,234.5678"
-    assert TelegramNotifier._format_price(1.5) == "$1.5000"
-    assert TelegramNotifier._format_price(0.001234) == "$0.001234"
-    assert TelegramNotifier._format_price(0.00001234) == "$0.0000123400"
+    assert format_price(1234.5678) == "$1,234.5678"
+    assert format_price(1.5) == "$1.5000"
+    assert format_price(0.001234) == "$0.001234"
+    assert format_price(0.00001234) == "$0.0000123400"
 
 
 def test_format_liquidity():
     """Test liquidity formatting with different magnitudes."""
-    assert TelegramNotifier._format_liquidity(1500000000) == "$1.50B"
-    assert TelegramNotifier._format_liquidity(2500000) == "$2.50M"
-    assert TelegramNotifier._format_liquidity(500000) == "$500.00K"
-    assert TelegramNotifier._format_liquidity(750) == "$750"
+    assert format_large_number(1500000000) == "$1.50B"
+    assert format_large_number(2500000) == "$2.50M"
+    assert format_large_number(500000) == "$500.00K"
+    assert format_large_number(750) == "$750"
 
 
 @pytest.mark.asyncio
