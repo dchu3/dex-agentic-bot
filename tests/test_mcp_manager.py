@@ -152,3 +152,51 @@ def test_truncate_description_at_word_boundary():
     assert len(result) <= 33  # 30 + "..."
     # Should break at word boundary
     assert result in ["This is a test description...", "This is a test..."]
+
+
+def test_mcp_manager_with_blockscout():
+    """Test MCPManager initializes blockscout client when cmd is provided."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        blockscout_cmd="echo blockscout",
+    )
+
+    assert manager.blockscout is not None
+    assert manager.blockscout.name == "blockscout"
+
+
+def test_mcp_manager_without_blockscout():
+    """Test MCPManager skips blockscout client when cmd is empty."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        blockscout_cmd="",
+    )
+
+    assert manager.blockscout is None
+
+
+def test_mcp_manager_get_client_blockscout():
+    """Test get_client returns blockscout when configured."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        blockscout_cmd="echo blockscout",
+    )
+
+    client = manager.get_client("blockscout")
+    assert client is not None
+    assert client.name == "blockscout"
+
+
+def test_mcp_manager_get_client_without_blockscout():
+    """Test get_client returns None when blockscout is not configured."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        blockscout_cmd="",
+    )
+
+    client = manager.get_client("blockscout")
+    assert client is None

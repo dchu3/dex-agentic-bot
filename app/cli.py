@@ -860,6 +860,11 @@ Examples:
         help="Disable rugcheck MCP server (faster startup)",
     )
     parser.add_argument(
+        "--no-blockscout",
+        action="store_true",
+        help="Disable blockscout MCP server (faster startup)",
+    )
+    parser.add_argument(
         "--no-polling",
         action="store_true",
         help="Disable background price polling for watchlist alerts",
@@ -937,6 +942,11 @@ Examples:
             "Rugcheck",
             optional=args.no_rugcheck or not settings.mcp_rugcheck_cmd,
         )
+        _validate_command_exists(
+            settings.mcp_blockscout_cmd,
+            "Blockscout",
+            optional=args.no_blockscout or not settings.mcp_blockscout_cmd,
+        )
     except Exception as exc:
         output.error(str(exc))
         sys.exit(1)
@@ -949,6 +959,7 @@ Examples:
         honeypot_cmd="" if args.no_honeypot else settings.mcp_honeypot_cmd,
         rugcheck_cmd="" if args.no_rugcheck else settings.mcp_rugcheck_cmd,
         solana_rpc_cmd=settings.mcp_solana_rpc_cmd,
+        blockscout_cmd="" if args.no_blockscout else settings.mcp_blockscout_cmd,
     )
 
     try:

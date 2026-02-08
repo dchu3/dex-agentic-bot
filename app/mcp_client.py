@@ -299,6 +299,7 @@ class MCPManager:
         honeypot_cmd: str = "",
         rugcheck_cmd: str = "",
         solana_rpc_cmd: str = "",
+        blockscout_cmd: str = "",
         watchlist_provider: Optional[Any] = None,
     ) -> None:
         self.dexscreener = MCPClient("dexscreener", dexscreener_cmd)
@@ -306,6 +307,7 @@ class MCPManager:
         self.honeypot = MCPClient("honeypot", honeypot_cmd) if honeypot_cmd else None
         self.rugcheck = MCPClient("rugcheck", rugcheck_cmd) if rugcheck_cmd else None
         self.solana = MCPClient("solana", solana_rpc_cmd) if solana_rpc_cmd else None
+        self.blockscout = MCPClient("blockscout", blockscout_cmd) if blockscout_cmd else None
         self.watchlist_provider = watchlist_provider
         self._gemini_functions_cache: Optional[List["types.FunctionDeclaration"]] = None
 
@@ -320,6 +322,8 @@ class MCPManager:
             tasks.append(self.rugcheck.start())
         if self.solana:
             tasks.append(self.solana.start())
+        if self.blockscout:
+            tasks.append(self.blockscout.start())
         await asyncio.gather(*tasks)
         self._gemini_functions_cache = None  # Invalidate after (re)start
 
@@ -334,6 +338,8 @@ class MCPManager:
             tasks.append(self.rugcheck.stop())
         if self.solana:
             tasks.append(self.solana.stop())
+        if self.blockscout:
+            tasks.append(self.blockscout.stop())
         await asyncio.gather(*tasks)
         self._gemini_functions_cache = None  # Invalidate on shutdown
 
@@ -350,6 +356,8 @@ class MCPManager:
             clients.append(self.rugcheck)
         if self.solana:
             clients.append(self.solana)
+        if self.blockscout:
+            clients.append(self.blockscout)
         for client in clients:
             all_functions.extend(client.to_gemini_functions())
         # Add watchlist tools if provider is configured
@@ -368,6 +376,8 @@ class MCPManager:
             clients.append(self.rugcheck)
         if self.solana:
             clients.append(self.solana)
+        if self.blockscout:
+            clients.append(self.blockscout)
         for client in clients:
             if client.tools:
                 lines.append(f"\n### {client.name} tools:")
@@ -436,6 +446,7 @@ class MCPManager:
             "honeypot": self.honeypot,
             "rugcheck": self.rugcheck,
             "solana": self.solana,
+            "blockscout": self.blockscout,
             "watchlist": self.watchlist_provider,
         }
         return clients.get(name)
