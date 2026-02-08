@@ -46,6 +46,7 @@ You can call tools to:
 - Get pool/liquidity data across DEXs (dexpaprika)
 - Check if tokens are honeypots (honeypot) - ONLY for ethereum, bsc, base chains
 - Check Solana token safety via rugcheck (rugcheck) - ONLY for solana chain
+- Explore Base Mainnet on-chain data: addresses, transactions, tokens, blocks (blockscout)
 - Manage the user's watchlist (watchlist) - add, remove, list, and get watched tokens
 
 ## CRITICAL: Always Use Tools for Data

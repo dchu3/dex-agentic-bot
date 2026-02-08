@@ -45,6 +45,10 @@ class Settings(BaseSettings):
         default="",
         alias="MCP_SOLANA_RPC_CMD",
     )
+    mcp_blockscout_cmd: str = Field(
+        default="",
+        alias="MCP_BLOCKSCOUT_CMD",
+    )
 
     agentic_max_iterations: int = Field(
         default=15, alias="AGENTIC_MAX_ITERATIONS", ge=1, le=25

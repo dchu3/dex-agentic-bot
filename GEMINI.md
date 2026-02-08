@@ -27,17 +27,17 @@ The core of the application is a Python-based "Agentic Planner" that interacts w
 │  - Table-formatted responses                                │
 └─────────────────────────┬───────────────────────────────────┘
                           │
-        ┌─────────────────┼─────────────────┐
-        ▼                 ▼                 ▼
-┌───────────────┐ ┌───────────────┐ ┌───────────────┐
-│  DexScreener  │ │  DexPaprika   │ │   Honeypot    │
-│    (MCP)      │ │    (MCP)      │ │    (MCP)      │
-├───────────────┤ ├───────────────┤ ├───────────────┤
-│ • search_pairs│ │ • getPools    │ │ • check_      │
-│ • get_trending│ │ • getDetails  │ │   honeypot    │
-│ • get_token   │ │ • getNetworks │ │               │
+        ┌─────────────────┼─────────────────┬─────────────────┐
+        ▼                 ▼                 ▼                 ▼
+┌───────────────┐ ┌───────────────┐ ┌───────────────┐ ┌───────────────┐
+│  DexScreener  │ │  DexPaprika   │ │   Honeypot    │ │  Blockscout   │
+│    (MCP)      │ │    (MCP)      │ │    (MCP)      │ │    (MCP)      │
+├───────────────┤ ├───────────────┤ ├───────────────┤ ├───────────────┤
+│ • search_pairs│ │ • getPools    │ │ • check_      │ │ • search      │
+│ • get_trending│ │ • getDetails  │ │   honeypot    │ │ • get_address │
+│ • get_token   │ │ • getNetworks │ │               │ │ • get_token   │
 │   _info       │
-└───────────────┘ └───────────────┘ └───────────────┘
+└───────────────┘ └───────────────┘ └───────────────┘ └───────────────┘
 ```
 
 ## Technologies Used:
@@ -79,6 +79,7 @@ GEMINI_MODEL=gemini-2.5-flash
 MCP_DEXSCREENER_CMD=node /path/to/dex-screener-mcp/dist/index.js
 MCP_DEXPAPRIKA_CMD=dexpaprika-mcp
 MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
+MCP_BLOCKSCOUT_CMD=node /path/to/dex-blockscout-mcp/dist/index.js
 
 # Agent settings
 AGENTIC_MAX_ITERATIONS=15
