@@ -2,6 +2,12 @@
 
 A Telegram bot that provides comprehensive token safety checks and market analysis. Send any token address and get an AI-powered report with price data, liquidity info, safety checks, and investment insights.
 
+> [!WARNING]
+> **API Cost & Security Notice**
+> This bot uses the Gemini API (or other LLM APIs) which **incur usage costs** with every request. Each token analysis triggers multiple API calls that count toward your billing. Set spending limits in your API provider's dashboard to avoid unexpected charges.
+>
+> **Never commit API keys to source control.** If deploying publicly, be aware that anyone with access can trigger API calls at your expense. The bot defaults to **private mode** — configure your `TELEGRAM_CHAT_ID` before use. If you choose to disable private mode, do so with caution and monitor your API usage closely.
+
 ## Features
 
 - 🔍 **Instant Analysis** - Send a token address, get a detailed report
@@ -34,7 +40,7 @@ TELEGRAM_BOT_TOKEN=your-telegram-bot-token
 
 # Optional: Restrict bot to specific chat (private mode)
 TELEGRAM_CHAT_ID=your-chat-id        # Your Telegram chat ID
-TELEGRAM_PRIVATE_MODE=true           # Set to true to restrict access
+TELEGRAM_PRIVATE_MODE=true           # Private by default; set to false to allow public access
 
 # MCP Servers (token data sources)
 MCP_DEXSCREENER_CMD=node /path/to/dex-screener-mcp/dist/index.js
@@ -46,12 +52,15 @@ MCP_SOLANA_RPC_CMD=node /path/to/solana-rpc-mcp/dist/index.js
 
 #### Private Mode
 
-By default, the bot is **public** - anyone can send token addresses and receive reports.
+By default, the bot runs in **private mode** — only messages from your configured `TELEGRAM_CHAT_ID` are processed.
 
-To restrict the bot to only your personal use:
-1. Set `TELEGRAM_PRIVATE_MODE=true` in `.env`
-2. Set `TELEGRAM_CHAT_ID` to your Telegram chat ID
-3. Only messages from that chat ID will be processed
+To set up private mode:
+1. Set `TELEGRAM_CHAT_ID` to your Telegram chat ID in `.env`
+2. Only messages from that chat ID will be processed
+
+To make the bot public (use with caution — see warning above):
+1. Set `TELEGRAM_PRIVATE_MODE=false` in `.env`
+2. Anyone will be able to send token addresses and trigger API calls at your expense
 
 To find your chat ID, send a message to your bot and check the logs, or use [@userinfobot](https://t.me/userinfobot).
 
