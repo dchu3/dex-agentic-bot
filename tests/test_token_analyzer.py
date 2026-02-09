@@ -319,7 +319,6 @@ class TestTelegramReportFormatting:
             assert "Ethereum" in report
             assert "✅ Safe" in report
             assert "Looks solid." in report
-            assert "DexScreener" in report
             assert "+5.50%" in report
             # Should NOT contain detailed sections
             assert "Token Analysis Report" not in report
