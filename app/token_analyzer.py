@@ -53,6 +53,7 @@ class AnalysisReport:
     ai_analysis: str
     generated_at: datetime
     telegram_message: str
+    tweet_message: str = ""
 
 
 def detect_chain(address: str) -> Optional[str]:
@@ -114,6 +115,12 @@ Do NOT repeat the raw data - the user already sees that in the report header.
 Focus on INSIGHTS and INTERPRETATION of the data.
 """
 
+TWEET_ANALYSIS_SYSTEM_PROMPT = """You are a crypto token analyst. Provide a single punchy sentence summarizing the token's safety and market outlook.
+
+Keep it under 100 characters. No markdown. No disclaimers. Be direct and opinionated.
+Examples: "Solid liquidity and clean contract — looks healthy.", "Low liquidity and high sell tax — proceed with caution."
+"""
+
 
 class TokenAnalyzer:
     """Analyzes tokens for safety and market data using MCP tools and AI."""
@@ -162,14 +169,19 @@ class TokenAnalyzer:
         # Generate AI analysis
         ai_analysis = await self._generate_ai_analysis(token_data)
         
-        # Format as Telegram message
+        # Generate tweet-length AI verdict
+        tweet_verdict = await self._generate_tweet_verdict(token_data)
+        
+        # Format as Telegram messages
         telegram_message = self._format_telegram_report(token_data, ai_analysis)
+        tweet_message = self._format_tweet_report(token_data, tweet_verdict)
         
         return AnalysisReport(
             token_data=token_data,
             ai_analysis=ai_analysis,
             generated_at=datetime.now(timezone.utc),
             telegram_message=telegram_message,
+            tweet_message=tweet_message,
         )
 
     async def _collect_token_data(self, address: str, chain: str) -> TokenData:
@@ -470,6 +482,66 @@ class TokenAnalyzer:
         if pair_address:
             return f"https://dexscreener.com/{chain.lower()}/{pair_address}"
         return f"https://dexscreener.com/search?q={token_address}"
+
+    async def _generate_tweet_verdict(self, token_data: TokenData) -> str:
+        """Generate a single-sentence AI verdict for the tweet summary."""
+        context = self._build_analysis_context(token_data)
+        
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=context,
+                config=types.GenerateContentConfig(
+                    system_instruction=TWEET_ANALYSIS_SYSTEM_PROMPT,
+                ),
+            )
+            
+            if response and response.candidates:
+                candidate = response.candidates[0]
+                if candidate and candidate.content and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if hasattr(part, "text") and part.text:
+                            return part.text.strip()
+            
+            return "Unable to generate verdict."
+            
+        except Exception as e:
+            self._log("error", f"Tweet verdict generation failed: {str(e)}")
+            return "Verdict unavailable."
+
+    def _format_tweet_report(self, token_data: TokenData, tweet_verdict: str) -> str:
+        """Format a concise tweet-friendly Telegram message (~500 chars)."""
+        safety_emoji = {
+            "Safe": "✅",
+            "Risky": "⚠️",
+            "Honeypot": "❌",
+            "Dangerous": "❌",
+            "Unverified": "❓",
+            "Unknown": "❓",
+        }.get(token_data.safety_status, "❓")
+        
+        change = token_data.price_change_24h or 0
+        change_emoji = "🟢" if change >= 0 else "🔴"
+        
+        price_fmt = format_price(token_data.price_usd)
+        mcap_fmt = format_large_number(token_data.market_cap)
+        
+        pair_address = token_data.pools[0].get("pair") if token_data.pools else None
+        dexscreener_url = self._build_dexscreener_url(
+            token_data.chain, pair_address, token_data.address
+        )
+        
+        lines = [
+            f"🔍 <b>{token_data.symbol or 'Unknown'}</b> ({token_data.chain.capitalize()})",
+            f"<code>{token_data.address}</code>",
+            f"💰 {price_fmt} {change_emoji} {change:+.2f}%",
+            f"📊 MCap: {mcap_fmt}",
+            f"🛡️ {safety_emoji} {token_data.safety_status}",
+            f"🤖 {tweet_verdict}",
+            f'📊 <a href="{dexscreener_url}">DexScreener</a>',
+        ]
+        
+        return "\n".join(lines)
 
     def _format_telegram_report(self, token_data: TokenData, ai_analysis: str) -> str:
         """Format the analysis as a Telegram HTML message."""

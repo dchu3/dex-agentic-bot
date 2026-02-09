@@ -290,3 +290,67 @@ class TestTelegramReportFormatting:
             assert "AI Analysis" in report
             assert "✅ Safe" in report
             assert "AI analysis here" in report
+
+    def test_format_tweet_report_structure(self):
+        """Test that tweet report has expected concise structure."""
+        token_data = TokenData(
+            address="0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+            chain="ethereum",
+            symbol="PEPE",
+            name="Pepe",
+            price_usd=0.00001234,
+            price_change_24h=5.5,
+            volume_24h=1000000,
+            liquidity_usd=5000000,
+            market_cap=5000000000,
+            safety_status="Safe",
+            pools=[{"dex": "uniswap", "pair": "0xabc", "liquidity": 3000000}],
+        )
+        
+        with patch("app.token_analyzer.genai"):
+            analyzer = TokenAnalyzer(
+                api_key="test-key",
+                mcp_manager=MagicMock(),
+            )
+            
+            report = analyzer._format_tweet_report(token_data, "Looks solid.")
+            
+            assert "PEPE" in report
+            assert "Ethereum" in report
+            assert "✅ Safe" in report
+            assert "Looks solid." in report
+            assert "DexScreener" in report
+            assert "+5.50%" in report
+            # Should NOT contain detailed sections
+            assert "Token Analysis Report" not in report
+            assert "Liquidity" not in report
+            assert "AI Analysis" not in report
+
+    def test_format_tweet_report_length(self):
+        """Test that tweet report stays concise."""
+        token_data = TokenData(
+            address="0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+            chain="ethereum",
+            symbol="PEPE",
+            name="Pepe",
+            price_usd=0.00001234,
+            price_change_24h=-12.3,
+            market_cap=5000000000,
+            safety_status="Risky",
+            pools=[{"dex": "uniswap", "pair": "0xabc", "liquidity": 3000000}],
+        )
+        
+        with patch("app.token_analyzer.genai"):
+            analyzer = TokenAnalyzer(
+                api_key="test-key",
+                mcp_manager=MagicMock(),
+            )
+            
+            report = analyzer._format_tweet_report(token_data, "High sell tax detected.")
+            
+            # Should be under 500 chars (excluding HTML tags)
+            import re
+            plain_text = re.sub(r"<[^>]+>", "", report)
+            assert len(plain_text) < 500
+            assert "🔴" in report
+            assert "⚠️" in report

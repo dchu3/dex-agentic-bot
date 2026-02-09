@@ -33,7 +33,8 @@ Send me any token address and I'll analyze it for you!
 🤖 AI-powered analysis
 
 <b>Commands:</b>
-• /analyze &lt;address&gt; - Analyze a token
+• /analyze &lt;address&gt; - Quick tweet-style summary
+• /full &lt;address&gt; - Detailed analysis report
 • /help - Show this message
 • /status - Check bot status
 
@@ -107,7 +108,8 @@ class TelegramNotifier:
         commands = [
             {"command": "start", "description": "Show welcome message"},
             {"command": "help", "description": "Show available commands"},
-            {"command": "analyze", "description": "Analyze a token address"},
+            {"command": "analyze", "description": "Quick tweet-style token summary"},
+            {"command": "full", "description": "Detailed token analysis report"},
             {"command": "status", "description": "Check bot status"},
         ]
 
@@ -236,7 +238,6 @@ class TelegramNotifier:
         elif cmd == "/status":
             await self._send_status(chat_id)
         elif cmd == "/analyze":
-            # Handle /analyze <address>
             if len(parts) > 1:
                 address = parts[1].strip()
                 await self._handle_token_address(address, chat_id)
@@ -245,14 +246,31 @@ class TelegramNotifier:
                     chat_id, 
                     "❌ Please provide a token address.\n\nUsage: /analyze &lt;address&gt;"
                 )
+        elif cmd == "/full":
+            if len(parts) > 1:
+                address = parts[1].strip()
+                await self._handle_token_address(address, chat_id, full=True)
+            else:
+                await self.send_message_to(
+                    chat_id,
+                    "❌ Please provide a token address.\n\nUsage: /full &lt;address&gt;"
+                )
         # Legacy commands - keep for backwards compatibility but don't advertise
         elif cmd == "/subscribe":
             await self._handle_subscribe(chat_id, username)
         elif cmd == "/unsubscribe":
             await self._handle_unsubscribe(chat_id)
 
-    async def _handle_token_address(self, address: str, chat_id: str) -> None:
-        """Handle a token address - analyze and return report."""
+    async def _handle_token_address(
+        self, address: str, chat_id: str, full: bool = False
+    ) -> None:
+        """Handle a token address - analyze and return report.
+        
+        Args:
+            address: Token contract address
+            chat_id: Telegram chat ID
+            full: If True, send detailed report; otherwise send tweet summary
+        """
         if not self._token_analyzer:
             await self.send_message_to(
                 chat_id,
@@ -282,9 +300,10 @@ class TelegramNotifier:
             # Run analysis
             report = await self._token_analyzer.analyze(address, chain)
             
-            # Send report (handle long messages)
+            # Send tweet summary or full report
+            message = report.telegram_message if full else report.tweet_message
             await self._send_long_message(
-                chat_id, report.telegram_message, disable_web_page_preview=True
+                chat_id, message, disable_web_page_preview=True
             )
             
         except Exception as e:

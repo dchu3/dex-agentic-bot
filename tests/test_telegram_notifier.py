@@ -279,7 +279,76 @@ async def test_set_commands(notifier):
         assert "start" in command_names
         assert "help" in command_names
         assert "analyze" in command_names
+        assert "full" in command_names
         assert "status" in command_names
+
+
+@pytest.mark.asyncio
+async def test_handle_full_command(notifier):
+    """Test /full command routes to _handle_token_address with full=True."""
+    with patch.object(
+        notifier, "_handle_token_address", new_callable=AsyncMock
+    ) as mock_handle:
+        await notifier._handle_command(
+            "/full 0x6982508145454Ce325dDbE47a25d4ec3d2311933", "123456"
+        )
+        mock_handle.assert_called_once_with(
+            "0x6982508145454Ce325dDbE47a25d4ec3d2311933", "123456", full=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_handle_full_command_no_address(notifier):
+    """Test /full without address sends usage message."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"ok": True}
+
+    with patch.object(notifier, "_get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        await notifier._handle_command("/full", "123456")
+
+        mock_client.post.assert_called_once()
+        call_args = mock_client.post.call_args
+        message_text = call_args[1]["json"]["text"]
+        assert "/full" in message_text
+        assert "address" in message_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_analyze_routes_without_full(notifier):
+    """Test /analyze routes to _handle_token_address without full flag."""
+    with patch.object(
+        notifier, "_handle_token_address", new_callable=AsyncMock
+    ) as mock_handle:
+        await notifier._handle_command(
+            "/analyze 0x6982508145454Ce325dDbE47a25d4ec3d2311933", "123456"
+        )
+        mock_handle.assert_called_once_with(
+            "0x6982508145454Ce325dDbE47a25d4ec3d2311933", "123456"
+        )
+
+
+@pytest.mark.asyncio
+async def test_raw_address_routes_without_full(notifier):
+    """Test raw address sends tweet summary (default, not full)."""
+    mock_analyzer = AsyncMock()
+    mock_report = MagicMock()
+    mock_report.tweet_message = "tweet summary"
+    mock_report.telegram_message = "full report"
+    mock_analyzer.analyze.return_value = mock_report
+    notifier._token_analyzer = mock_analyzer
+
+    with patch.object(notifier, "send_message_to", new_callable=AsyncMock):
+        with patch.object(notifier, "_send_long_message", new_callable=AsyncMock) as mock_send:
+            await notifier._handle_token_address(
+                "0x6982508145454Ce325dDbE47a25d4ec3d2311933", "123456"
+            )
+            mock_send.assert_called_once()
+            sent_text = mock_send.call_args[0][1]
+            assert sent_text == "tweet summary"
 
 
 @pytest.mark.asyncio
