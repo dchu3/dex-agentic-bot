@@ -525,6 +525,8 @@ class TokenAnalyzer:
         
         price_fmt = format_price(token_data.price_usd)
         mcap_fmt = format_large_number(token_data.market_cap)
+        volume_fmt = format_large_number(token_data.volume_24h)
+        liquidity_fmt = format_large_number(token_data.liquidity_usd)
         
         pair_address = token_data.pools[0].get("pair") if token_data.pools else None
         dexscreener_url = self._build_dexscreener_url(
@@ -535,7 +537,8 @@ class TokenAnalyzer:
             f"🔍 <b>{token_data.symbol or 'Unknown'}</b> ({token_data.chain.capitalize()})",
             f"<code>{token_data.address}</code>",
             f"💰 {price_fmt} {change_emoji} {change:+.2f}%",
-            f"📊 MCap: {mcap_fmt}",
+            f"📊 MCap: {mcap_fmt} | Vol: {volume_fmt}",
+            f"💧 Liq: {liquidity_fmt}",
             f"🛡️ {safety_emoji} {token_data.safety_status}",
             f"🤖 {tweet_verdict}",
             f'📊 <a href="{dexscreener_url}">DexScreener</a>',
