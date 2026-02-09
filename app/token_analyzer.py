@@ -537,9 +537,7 @@ class TokenAnalyzer:
             f"💰 {price_fmt} {change_emoji} {change:+.2f}%",
             f"📊 MCap: {mcap_fmt}",
             f"🛡️ {safety_emoji} {token_data.safety_status}",
-            "",
             f"🤖 {tweet_verdict}",
-            "",
             f'📊 <a href="{dexscreener_url}">DexScreener</a>',
         ]
         
