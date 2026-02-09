@@ -533,6 +533,7 @@ class TokenAnalyzer:
         
         lines = [
             f"🔍 <b>{token_data.symbol or 'Unknown'}</b> ({token_data.chain.capitalize()})",
+            f"<code>{token_data.address}</code>",
             f"💰 {price_fmt} {change_emoji} {change:+.2f}%",
             f"📊 MCap: {mcap_fmt}",
             f"🛡️ {safety_emoji} {token_data.safety_status}",
