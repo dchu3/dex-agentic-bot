@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -40,7 +41,7 @@ class TokenData:
     fdv: Optional[float] = None
     pools: List[Dict[str, Any]] = field(default_factory=list)
     safety_data: Optional[Dict[str, Any]] = None
-    safety_status: str = "Unknown"  # Safe, Risky, Honeypot, Unknown
+    safety_status: str = "Unverified"  # Safe, Risky, Honeypot, Dangerous, Unverified
     raw_dexscreener: Optional[Dict[str, Any]] = None
     errors: List[str] = field(default_factory=list)
 
@@ -194,7 +195,14 @@ class TokenAnalyzer:
             self._fetch_safety_data(address, chain, token_data),
         ]
         
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Log any silently swallowed exceptions
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                task_name = ["dexscreener", "safety"][i]
+                self._log("error", f"Data collection task '{task_name}' failed: {result}")
+                token_data.errors.append(f"{task_name} error: {result}")
         
         return token_data
 
@@ -308,7 +316,7 @@ class TokenAnalyzer:
                 token_data.safety_data = {"note": f"Safety checks not available for {chain}"}
         except Exception as e:
             self._log("error", f"Safety check failed: {str(e)}")
-            token_data.safety_status = "Unknown"
+            token_data.safety_status = "Unverified"
             token_data.errors.append(f"Safety check error: {str(e)}")
 
     async def _fetch_honeypot_data(
@@ -369,8 +377,26 @@ class TokenAnalyzer:
         # Handle MCP error strings
         if isinstance(result, str):
             if result.startswith("MCP error"):
-                token_data.safety_status = "Unknown"
+                token_data.safety_status = "Unverified"
                 token_data.errors.append(f"Rugcheck: {result}")
+                return
+            # Try parsing non-error strings as JSON
+            try:
+                result = json.loads(result)
+            except (json.JSONDecodeError, ValueError):
+                token_data.safety_status = "Unverified"
+                self._log("warning", f"Unexpected rugcheck string result: {result[:200]}")
+                token_data.errors.append(f"Rugcheck: unexpected response format")
+                return
+        
+        # Unwrap list results (e.g. [{"score": ..., "risks": [...]}])
+        if isinstance(result, list):
+            if result and isinstance(result[0], dict):
+                result = result[0]
+            else:
+                token_data.safety_status = "Unverified"
+                self._log("warning", f"Unexpected rugcheck list result: {str(result)[:200]}")
+                token_data.errors.append("Rugcheck: unexpected response format")
                 return
         
         token_data.safety_data = result
@@ -378,16 +404,24 @@ class TokenAnalyzer:
         # Parse safety status from rugcheck response
         # Response format: {"score": 1, "score_normalised": 1, "risks": [], "lpLockedPct": ...}
         if isinstance(result, dict):
-            score = result.get("score_normalised", result.get("score", 0))
-            risks = result.get("risks", [])
-            
-            # Score interpretation: lower is better (fewer risks)
-            if score <= 500 and not risks:
-                token_data.safety_status = "Safe"
-            elif score <= 2000 or len(risks) <= 2:
-                token_data.safety_status = "Risky"
-            else:
-                token_data.safety_status = "Dangerous"
+            self._parse_rugcheck_score(result, token_data)
+        else:
+            token_data.safety_status = "Unverified"
+            self._log("warning", f"Unexpected rugcheck result type: {type(result).__name__}")
+            token_data.errors.append("Rugcheck: unexpected response format")
+    
+    def _parse_rugcheck_score(self, result: Dict[str, Any], token_data: TokenData) -> None:
+        """Parse rugcheck score and set safety status."""
+        score = result.get("score_normalised", result.get("score", 0))
+        risks = result.get("risks", [])
+        
+        # Score interpretation: lower is better (fewer risks)
+        if score <= 500 and not risks:
+            token_data.safety_status = "Safe"
+        elif score <= 2000 or len(risks) <= 2:
+            token_data.safety_status = "Risky"
+        else:
+            token_data.safety_status = "Dangerous"
 
     async def _generate_ai_analysis(self, token_data: TokenData) -> str:
         """Generate AI analysis of the token data."""
