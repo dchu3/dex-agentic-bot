@@ -74,7 +74,7 @@ class TestTokenData:
         assert data.address == "0x6982508145454Ce325dDbE47a25d4ec3d2311933"
         assert data.chain == "ethereum"
         assert data.symbol == "PEPE"
-        assert data.safety_status == "Unknown"
+        assert data.safety_status == "Unverified"
         assert data.pools == []
         assert data.errors == []
 
@@ -353,3 +353,127 @@ class TestTelegramReportFormatting:
             assert len(plain_text) < 500
             assert "🔴" in report
             assert "⚠️" in report
+
+
+class TestRugcheckResultHandling:
+    """Tests for rugcheck result type handling in _fetch_rugcheck_data."""
+
+    @pytest.fixture
+    def analyzer_with_rugcheck(self):
+        """Create analyzer with mock rugcheck client."""
+        manager = MagicMock()
+        rugcheck = AsyncMock()
+        manager.get_client = lambda name: rugcheck if name == "rugcheck" else None
+        
+        with patch("app.token_analyzer.genai"):
+            analyzer = TokenAnalyzer(
+                api_key="test-key",
+                mcp_manager=manager,
+            )
+        return analyzer, rugcheck
+
+    @pytest.mark.asyncio
+    async def test_dict_result_safe(self, analyzer_with_rugcheck):
+        """Test dict result with low score is parsed as Safe."""
+        analyzer, rugcheck = analyzer_with_rugcheck
+        rugcheck.call_tool = AsyncMock(return_value={
+            "score_normalised": 100,
+            "risks": [],
+        })
+        token_data = TokenData(address="So1ana", chain="solana")
+        await analyzer._fetch_rugcheck_data("So1ana", token_data)
+        assert token_data.safety_status == "Safe"
+
+    @pytest.mark.asyncio
+    async def test_dict_result_risky(self, analyzer_with_rugcheck):
+        """Test dict result with moderate score is parsed as Risky."""
+        analyzer, rugcheck = analyzer_with_rugcheck
+        rugcheck.call_tool = AsyncMock(return_value={
+            "score_normalised": 1500,
+            "risks": [{"name": "low_lp"}],
+        })
+        token_data = TokenData(address="So1ana", chain="solana")
+        await analyzer._fetch_rugcheck_data("So1ana", token_data)
+        assert token_data.safety_status == "Risky"
+
+    @pytest.mark.asyncio
+    async def test_dict_result_dangerous(self, analyzer_with_rugcheck):
+        """Test dict result with high score is parsed as Dangerous."""
+        analyzer, rugcheck = analyzer_with_rugcheck
+        rugcheck.call_tool = AsyncMock(return_value={
+            "score_normalised": 5000,
+            "risks": [{"name": "a"}, {"name": "b"}, {"name": "c"}],
+        })
+        token_data = TokenData(address="So1ana", chain="solana")
+        await analyzer._fetch_rugcheck_data("So1ana", token_data)
+        assert token_data.safety_status == "Dangerous"
+
+    @pytest.mark.asyncio
+    async def test_list_result_unwrapped(self, analyzer_with_rugcheck):
+        """Test list result is unwrapped and parsed correctly."""
+        analyzer, rugcheck = analyzer_with_rugcheck
+        rugcheck.call_tool = AsyncMock(return_value=[{
+            "score_normalised": 200,
+            "risks": [],
+        }])
+        token_data = TokenData(address="So1ana", chain="solana")
+        await analyzer._fetch_rugcheck_data("So1ana", token_data)
+        assert token_data.safety_status == "Safe"
+        assert isinstance(token_data.safety_data, dict)
+
+    @pytest.mark.asyncio
+    async def test_empty_list_result(self, analyzer_with_rugcheck):
+        """Test empty list result sets Unverified."""
+        analyzer, rugcheck = analyzer_with_rugcheck
+        rugcheck.call_tool = AsyncMock(return_value=[])
+        token_data = TokenData(address="So1ana", chain="solana")
+        await analyzer._fetch_rugcheck_data("So1ana", token_data)
+        assert token_data.safety_status == "Unverified"
+        assert any("unexpected" in e.lower() for e in token_data.errors)
+
+    @pytest.mark.asyncio
+    async def test_mcp_error_string(self, analyzer_with_rugcheck):
+        """Test MCP error string sets Unverified."""
+        analyzer, rugcheck = analyzer_with_rugcheck
+        rugcheck.call_tool = AsyncMock(return_value="MCP error: tool not found")
+        token_data = TokenData(address="So1ana", chain="solana")
+        await analyzer._fetch_rugcheck_data("So1ana", token_data)
+        assert token_data.safety_status == "Unverified"
+        assert any("MCP error" in e for e in token_data.errors)
+
+    @pytest.mark.asyncio
+    async def test_json_string_result(self, analyzer_with_rugcheck):
+        """Test JSON string result is parsed."""
+        analyzer, rugcheck = analyzer_with_rugcheck
+        import json
+        rugcheck.call_tool = AsyncMock(return_value=json.dumps({
+            "score_normalised": 300,
+            "risks": [],
+        }))
+        token_data = TokenData(address="So1ana", chain="solana")
+        await analyzer._fetch_rugcheck_data("So1ana", token_data)
+        assert token_data.safety_status == "Safe"
+
+    @pytest.mark.asyncio
+    async def test_non_json_string_result(self, analyzer_with_rugcheck):
+        """Test non-JSON, non-MCP-error string sets Unverified."""
+        analyzer, rugcheck = analyzer_with_rugcheck
+        rugcheck.call_tool = AsyncMock(return_value="some unexpected text")
+        token_data = TokenData(address="So1ana", chain="solana")
+        await analyzer._fetch_rugcheck_data("So1ana", token_data)
+        assert token_data.safety_status == "Unverified"
+        assert any("unexpected" in e.lower() for e in token_data.errors)
+
+    @pytest.mark.asyncio
+    async def test_no_rugcheck_client(self):
+        """Test missing rugcheck client sets Unverified."""
+        manager = MagicMock()
+        manager.get_client = lambda name: None
+        
+        with patch("app.token_analyzer.genai"):
+            analyzer = TokenAnalyzer(api_key="test-key", mcp_manager=manager)
+        
+        token_data = TokenData(address="So1ana", chain="solana")
+        await analyzer._fetch_rugcheck_data("So1ana", token_data)
+        assert token_data.safety_status == "Unverified"
+        assert any("not available" in e.lower() for e in token_data.errors)
