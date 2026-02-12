@@ -200,3 +200,51 @@ def test_mcp_manager_get_client_without_blockscout():
 
     client = manager.get_client("blockscout")
     assert client is None
+
+
+def test_mcp_manager_with_trader():
+    """Test MCPManager initializes trader client when cmd is provided."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        trader_cmd="echo trader",
+    )
+
+    assert manager.trader is not None
+    assert manager.trader.name == "trader"
+
+
+def test_mcp_manager_without_trader():
+    """Test MCPManager skips trader client when cmd is empty."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        trader_cmd="",
+    )
+
+    assert manager.trader is None
+
+
+def test_mcp_manager_get_client_trader():
+    """Test get_client returns trader when configured."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        trader_cmd="echo trader",
+    )
+
+    client = manager.get_client("trader")
+    assert client is not None
+    assert client.name == "trader"
+
+
+def test_mcp_manager_get_client_without_trader():
+    """Test get_client returns None when trader is not configured."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        trader_cmd="",
+    )
+
+    client = manager.get_client("trader")
+    assert client is None

@@ -300,6 +300,7 @@ class MCPManager:
         rugcheck_cmd: str = "",
         solana_rpc_cmd: str = "",
         blockscout_cmd: str = "",
+        trader_cmd: str = "",
         watchlist_provider: Optional[Any] = None,
     ) -> None:
         self.dexscreener = MCPClient("dexscreener", dexscreener_cmd)
@@ -308,6 +309,7 @@ class MCPManager:
         self.rugcheck = MCPClient("rugcheck", rugcheck_cmd) if rugcheck_cmd else None
         self.solana = MCPClient("solana", solana_rpc_cmd) if solana_rpc_cmd else None
         self.blockscout = MCPClient("blockscout", blockscout_cmd) if blockscout_cmd else None
+        self.trader = MCPClient("trader", trader_cmd) if trader_cmd else None
         self.watchlist_provider = watchlist_provider
         self._gemini_functions_cache: Optional[List["types.FunctionDeclaration"]] = None
 
@@ -324,6 +326,8 @@ class MCPManager:
             tasks.append(self.solana.start())
         if self.blockscout:
             tasks.append(self.blockscout.start())
+        if self.trader:
+            tasks.append(self.trader.start())
         await asyncio.gather(*tasks)
         self._gemini_functions_cache = None  # Invalidate after (re)start
 
@@ -340,6 +344,8 @@ class MCPManager:
             tasks.append(self.solana.stop())
         if self.blockscout:
             tasks.append(self.blockscout.stop())
+        if self.trader:
+            tasks.append(self.trader.stop())
         await asyncio.gather(*tasks)
         self._gemini_functions_cache = None  # Invalidate on shutdown
 
@@ -358,6 +364,8 @@ class MCPManager:
             clients.append(self.solana)
         if self.blockscout:
             clients.append(self.blockscout)
+        if self.trader:
+            clients.append(self.trader)
         for client in clients:
             all_functions.extend(client.to_gemini_functions())
         # Add watchlist tools if provider is configured
@@ -378,6 +386,8 @@ class MCPManager:
             clients.append(self.solana)
         if self.blockscout:
             clients.append(self.blockscout)
+        if self.trader:
+            clients.append(self.trader)
         for client in clients:
             if client.tools:
                 lines.append(f"\n### {client.name} tools:")
@@ -447,6 +457,7 @@ class MCPManager:
             "rugcheck": self.rugcheck,
             "solana": self.solana,
             "blockscout": self.blockscout,
+            "trader": self.trader,
             "watchlist": self.watchlist_provider,
         }
         return clients.get(name)

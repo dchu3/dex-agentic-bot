@@ -49,6 +49,7 @@ MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 MCP_RUGCHECK_CMD=node /path/to/dex-rugcheck-mcp/dist/index.js
 MCP_SOLANA_RPC_CMD=node /path/to/solana-rpc-mcp/dist/index.js
 MCP_BLOCKSCOUT_CMD=node /path/to/dex-blockscout-mcp/dist/index.js
+MCP_TRADER_CMD=node /path/to/dex-trader-mcp/dist/index.js
 ```
 
 #### Private Mode
@@ -207,6 +208,7 @@ This bot uses MCP (Model Context Protocol) servers for data:
 | [dex-rugcheck-mcp](https://github.com/dchu3/dex-rugcheck-mcp) | Token safety | Solana |
 | [solana-rpc-mcp](https://github.com/dchu3/solana-rpc-mcp) | Direct Solana RPC queries | Solana |
 | [dex-blockscout-mcp](https://github.com/dchu3/dex-blockscout-mcp) | Block explorer data | Base, Ethereum |
+| [dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp) | Token trading via Jupiter | Solana |
 
 ## License
 
