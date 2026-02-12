@@ -210,6 +210,8 @@ This bot uses MCP (Model Context Protocol) servers for data:
 | [dex-blockscout-mcp](https://github.com/dchu3/dex-blockscout-mcp) | Block explorer data | Base, Ethereum |
 | [dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp) | Token trading via Jupiter | Solana |
 
+Each MCP server subprocess automatically runs with its project root as the working directory (detected via `package.json` or `pyproject.toml`). This means servers can load their own `.env` files independently — for example, `dex-trader-mcp` reads `SOLANA_PRIVATE_KEY` from its own `.env`, not from this bot's `.env`.
+
 ## License
 
 MIT
