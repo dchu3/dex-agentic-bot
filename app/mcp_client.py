@@ -8,6 +8,7 @@ import shlex
 import sys
 import uuid
 from asyncio.subprocess import Process
+from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -34,6 +35,7 @@ class MCPClient:
         if not self._command_args:
             raise ValueError(f"Empty MCP command for {name!r}")
         self._command_repr = " ".join(self._command_args)
+        self._cwd = self._resolve_cwd()
         self.process: Optional[Process] = None
         self._reader_task: Optional[asyncio.Task[None]] = None
         self._stderr_task: Optional[asyncio.Task[None]] = None
@@ -42,6 +44,25 @@ class MCPClient:
         self._pending: Dict[str, asyncio.Future[Any]] = {}
         self._initialized = False
         self._tools: list[Dict[str, Any]] = []
+
+    def _resolve_cwd(self) -> Optional[str]:
+        """Derive working directory from the script path in the command.
+
+        For commands like ``node /path/to/project/dist/index.js``, walk up
+        from the script path until a ``package.json`` (Node) or ``pyproject.toml``
+        (Python) is found and use that directory as cwd.  This lets MCP servers
+        load their own ``.env`` files via ``dotenv/config`` or similar.
+        """
+        for arg in self._command_args:
+            p = Path(arg)
+            if not p.is_absolute() or not p.is_file():
+                continue
+            for parent in p.parents:
+                if (parent / "package.json").is_file() or (
+                    parent / "pyproject.toml"
+                ).is_file():
+                    return str(parent)
+        return None
 
     @property
     def tools(self) -> list[Dict[str, Any]]:
@@ -65,6 +86,7 @@ class MCPClient:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=self._cwd,
         )
         if self.process and self.process.returncode is not None:
             code = self.process.returncode
