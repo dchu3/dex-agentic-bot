@@ -865,6 +865,11 @@ Examples:
         help="Disable blockscout MCP server (faster startup)",
     )
     parser.add_argument(
+        "--no-trader",
+        action="store_true",
+        help="Disable trader MCP server (faster startup)",
+    )
+    parser.add_argument(
         "--no-polling",
         action="store_true",
         help="Disable background price polling for watchlist alerts",
@@ -947,6 +952,11 @@ Examples:
             "Blockscout",
             optional=args.no_blockscout or not settings.mcp_blockscout_cmd,
         )
+        _validate_command_exists(
+            settings.mcp_trader_cmd,
+            "Trader",
+            optional=args.no_trader or not settings.mcp_trader_cmd,
+        )
     except Exception as exc:
         output.error(str(exc))
         sys.exit(1)
@@ -960,6 +970,7 @@ Examples:
         rugcheck_cmd="" if args.no_rugcheck else settings.mcp_rugcheck_cmd,
         solana_rpc_cmd=settings.mcp_solana_rpc_cmd,
         blockscout_cmd="" if args.no_blockscout else settings.mcp_blockscout_cmd,
+        trader_cmd="" if args.no_trader else settings.mcp_trader_cmd,
     )
 
     try:
