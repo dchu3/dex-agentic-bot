@@ -86,3 +86,27 @@ async def test_add_and_close_lag_position_with_daily_pnl(db):
 
     daily_pnl = await db.get_daily_lag_realized_pnl()
     assert daily_pnl == pytest.approx(2.0)
+
+
+@pytest.mark.asyncio
+async def test_lag_position_opened_at_is_timezone_aware(db):
+    """Positions read from DB must have timezone-aware opened_at."""
+    position = await db.add_lag_position(
+        token_address="So11111111111111111111111111111111111111111",
+        symbol="SOL",
+        chain="solana",
+        entry_price=150.0,
+        quantity_token=1.0,
+        notional_usd=25.0,
+        stop_price=148.8,
+        take_price=152.25,
+        dry_run=True,
+    )
+    assert position.opened_at.tzinfo is not None
+
+    positions = await db.list_open_lag_positions(chain="solana")
+    assert positions[0].opened_at.tzinfo is not None
+
+    now = datetime.now(timezone.utc)
+    age = (now - positions[0].opened_at).total_seconds()
+    assert age >= 0

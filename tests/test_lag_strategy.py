@@ -209,3 +209,43 @@ async def test_lag_cycle_disabled(db):
     result = await engine.run_cycle()
     assert result.summary == "Lag strategy disabled"
     assert result.samples_taken == 0
+
+
+@pytest.mark.asyncio
+async def test_lag_cycle_skips_token_after_error(db):
+    """Token that fails with an error is skipped on subsequent cycles."""
+    await db.add_entry(
+        token_address="FailMint1111111111111111111111111111111111111",
+        symbol="FAIL",
+        chain="solana",
+    )
+    await db.add_entry(
+        token_address="So11111111111111111111111111111111111111111",
+        symbol="GOOD",
+        chain="solana",
+    )
+
+    class FailingTraderClient(MockTraderClient):
+        async def call_tool(self, method: str, arguments: Dict[str, Any]) -> Any:
+            if method == "getQuote":
+                out_mint = arguments.get("outputMint", "")
+                if "failmint" in out_mint.lower():
+                    return "Error: Jupiter quote failed (400): TOKEN_NOT_TRADABLE"
+            return await super().call_tool(method, arguments)
+
+    manager = MockMCPManager(
+        dexscreener=MockDexScreenerClient(price_usd=1.20, liquidity_usd=50000),
+        trader=FailingTraderClient(buy_price=1.00, sell_price=1.15),
+    )
+    engine = LagStrategyEngine(db=db, mcp_manager=manager, config=_config())
+
+    # First cycle: FAIL errors, GOOD succeeds
+    r1 = await engine.run_cycle()
+    assert len(r1.errors) == 1
+    assert "FAIL" in r1.errors[0]
+    assert r1.samples_taken >= 1  # GOOD was sampled
+
+    # Second cycle: FAIL is skipped (no new error), GOOD still processed
+    r2 = await engine.run_cycle()
+    assert len(r2.errors) == 0
+    assert r2.samples_taken >= 1

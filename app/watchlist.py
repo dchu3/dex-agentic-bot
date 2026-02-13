@@ -919,7 +919,10 @@ class WatchlistDB:
         row = await cursor.fetchone()
         if not row:
             return None
-        return datetime.fromisoformat(row["opened_at"]) if row["opened_at"] else None
+        if not row["opened_at"]:
+            return None
+        dt = datetime.fromisoformat(row["opened_at"])
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
     async def get_daily_lag_realized_pnl(self, day: Optional[datetime] = None) -> float:
         """Get total realized PnL for the UTC calendar day."""
@@ -1086,6 +1089,14 @@ class WatchlistDB:
         )
 
     @staticmethod
+    def _parse_dt(value: Any) -> Optional[datetime]:
+        """Parse a datetime string ensuring timezone-awareness (UTC)."""
+        if not value:
+            return None
+        dt = datetime.fromisoformat(value)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+    @staticmethod
     def _row_to_lag_position(row: aiosqlite.Row) -> LagPosition:
         """Convert a database row to LagPosition."""
         return LagPosition(
@@ -1098,8 +1109,8 @@ class WatchlistDB:
             notional_usd=row["notional_usd"],
             stop_price=row["stop_price"],
             take_price=row["take_price"],
-            opened_at=datetime.fromisoformat(row["opened_at"]) if row["opened_at"] else datetime.now(timezone.utc),
-            closed_at=datetime.fromisoformat(row["closed_at"]) if row["closed_at"] else None,
+            opened_at=WatchlistDB._parse_dt(row["opened_at"]) or datetime.now(timezone.utc),
+            closed_at=WatchlistDB._parse_dt(row["closed_at"]),
             exit_price=row["exit_price"],
             realized_pnl_usd=row["realized_pnl_usd"],
             status=row["status"],

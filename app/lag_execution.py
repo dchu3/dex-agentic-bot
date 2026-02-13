@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional, Sequence
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -12,6 +16,16 @@ class TraderMethodSet:
 
     quote_method: str
     execute_method: str
+    buy_method: str = ""
+    sell_method: str = ""
+
+    def execute_for_side(self, side: str) -> str:
+        """Return the best execute method for the given trade side."""
+        if side == "buy" and self.buy_method:
+            return self.buy_method
+        if side == "sell" and self.sell_method:
+            return self.sell_method
+        return self.execute_method
 
 
 @dataclass
@@ -96,14 +110,28 @@ class TraderExecutionService:
             contains_candidates=("swap", "trade", "order"),
         )
 
+        # Side-specific execute methods for traders that expose buy/sell separately
+        buy_method = self._pick_method(
+            tool_names,
+            exact_candidates=("buy_token", "buy", "buyToken"),
+            contains_candidates=("buy",),
+        )
+        sell_method = self._pick_method(
+            tool_names,
+            exact_candidates=("sell_token", "sell", "sellToken"),
+            contains_candidates=("sell",),
+        )
+
         if not quote_method:
             raise RuntimeError(f"Unable to resolve trader quote method from tools: {tool_names}")
-        if not execute_method:
+        if not execute_method and not (buy_method and sell_method):
             raise RuntimeError(f"Unable to resolve trader execute method from tools: {tool_names}")
 
         self._method_cache = TraderMethodSet(
             quote_method=quote_method,
             execute_method=execute_method,
+            buy_method=buy_method,
+            sell_method=sell_method,
         )
         return self._method_cache
 
@@ -152,8 +180,14 @@ class TraderExecutionService:
             quote_payload=None,
         )
         result = await trader.call_tool(method, args)
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                pass
         price = self._extract_price(result, side=side)
         if price is None or price <= 0:
+            logger.warning("Trader quote response has no valid price: %s", result)
             raise RuntimeError(f"Trader quote did not include a valid price (method: {method})")
 
         liquidity = self._extract_first_float(
@@ -188,7 +222,8 @@ class TraderExecutionService:
             )
 
         trader = self._get_trader_client()
-        method = self._resolve_methods().execute_method
+        methods = self._resolve_methods()
+        method = methods.execute_for_side(side)
         tool_schema = self._get_tool_schema(method)
         args = self._build_tool_args(
             tool_schema=tool_schema,
@@ -386,6 +421,14 @@ class TraderExecutionService:
                 "executionPrice",
                 "executedPrice",
                 "fillPrice",
+                "estimatedPrice",
+                "estimated_price",
+                "expectedPrice",
+                "expected_price",
+                "quotePrice",
+                "quote_price",
+                "swapPrice",
+                "swap_price",
             ),
         )
         if direct_price and direct_price > 0:

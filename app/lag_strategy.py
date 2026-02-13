@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
+
+_ERROR_SKIP_SECONDS = 300  # 5 minutes
 
 from app.lag_execution import TradeQuote, TraderExecutionService
 from app.watchlist import LagPosition, WatchlistEntry
@@ -77,6 +82,7 @@ class LagStrategyEngine:
             execute_method_override=config.execute_method,
             quote_mint=config.quote_mint,
         )
+        self._skip_until: Dict[str, datetime] = {}
 
     def _log(self, level: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
         if self.verbose and self.log_callback:
@@ -100,11 +106,19 @@ class LagStrategyEngine:
             return result
 
         for entry in tokens:
+            key = entry.token_address.lower()
+            skip_expires = self._skip_until.get(key)
+            if skip_expires and now < skip_expires:
+                logger.debug("Skipping %s until %s", entry.symbol, skip_expires.isoformat())
+                continue
+            self._skip_until.pop(key, None)
             try:
                 await self._process_entry_candidate(entry, result, now)
             except Exception as exc:
                 err = f"{entry.symbol}: {exc}"
                 result.errors.append(err)
+                self._skip_until[key] = now + timedelta(seconds=_ERROR_SKIP_SECONDS)
+                logger.info("Skipping %s for %ds after error: %s", entry.symbol, _ERROR_SKIP_SECONDS, exc)
                 await self.db.record_lag_event(
                     event_type="cycle_error",
                     message=err,
