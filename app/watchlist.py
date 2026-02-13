@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import aiosqlite
 
@@ -46,6 +47,77 @@ CREATE TABLE IF NOT EXISTS alert_history (
     acknowledged INTEGER DEFAULT 0,
     FOREIGN KEY (entry_id) REFERENCES watchlist(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS lag_price_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_address TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    chain TEXT NOT NULL,
+    reference_price REAL NOT NULL,
+    executable_price REAL NOT NULL,
+    edge_bps REAL NOT NULL,
+    liquidity_usd REAL,
+    signal_triggered INTEGER DEFAULT 0,
+    sampled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS lag_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_address TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    chain TEXT NOT NULL,
+    entry_price REAL NOT NULL,
+    quantity_token REAL NOT NULL,
+    notional_usd REAL NOT NULL,
+    stop_price REAL NOT NULL,
+    take_price REAL NOT NULL,
+    opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    closed_at TIMESTAMP,
+    exit_price REAL,
+    realized_pnl_usd REAL,
+    status TEXT NOT NULL DEFAULT 'open',
+    close_reason TEXT,
+    dry_run INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS lag_executions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    position_id INTEGER,
+    token_address TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    chain TEXT NOT NULL,
+    action TEXT NOT NULL,
+    requested_notional_usd REAL,
+    executed_price REAL,
+    quantity_token REAL,
+    tx_hash TEXT,
+    success INTEGER DEFAULT 0,
+    error TEXT,
+    metadata_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (position_id) REFERENCES lag_positions(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS lag_strategy_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_address TEXT,
+    symbol TEXT,
+    chain TEXT,
+    event_type TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info',
+    message TEXT NOT NULL,
+    data_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_lag_positions_status
+ON lag_positions(status, chain);
+
+CREATE INDEX IF NOT EXISTS idx_lag_snapshots_token_time
+ON lag_price_snapshots(token_address, chain, sampled_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_lag_events_time
+ON lag_strategy_events(created_at DESC);
 """
 
 MIGRATION_V2 = """
@@ -89,6 +161,79 @@ class AlertRecord:
     # Joined fields
     symbol: Optional[str] = None
     chain: Optional[str] = None
+
+
+@dataclass
+class LagPriceSnapshot:
+    """Represents one lag strategy price sample."""
+
+    id: int
+    token_address: str
+    symbol: str
+    chain: str
+    reference_price: float
+    executable_price: float
+    edge_bps: float
+    liquidity_usd: Optional[float] = None
+    signal_triggered: bool = False
+    sampled_at: Optional[datetime] = None
+
+
+@dataclass
+class LagPosition:
+    """Represents an open/closed lag strategy position."""
+
+    id: int
+    token_address: str
+    symbol: str
+    chain: str
+    entry_price: float
+    quantity_token: float
+    notional_usd: float
+    stop_price: float
+    take_price: float
+    opened_at: datetime
+    closed_at: Optional[datetime] = None
+    exit_price: Optional[float] = None
+    realized_pnl_usd: Optional[float] = None
+    status: str = "open"
+    close_reason: Optional[str] = None
+    dry_run: bool = True
+
+
+@dataclass
+class LagExecution:
+    """Represents a trader execution attempt."""
+
+    id: int
+    position_id: Optional[int]
+    token_address: str
+    symbol: str
+    chain: str
+    action: str
+    requested_notional_usd: Optional[float] = None
+    executed_price: Optional[float] = None
+    quantity_token: Optional[float] = None
+    tx_hash: Optional[str] = None
+    success: bool = False
+    error: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: Optional[datetime] = None
+
+
+@dataclass
+class LagStrategyEvent:
+    """Represents a lag strategy signal/diagnostic event."""
+
+    id: int
+    token_address: Optional[str]
+    symbol: Optional[str]
+    chain: Optional[str]
+    event_type: str
+    severity: str
+    message: str
+    data: Dict[str, Any] = field(default_factory=dict)
+    created_at: Optional[datetime] = None
 
 
 class WatchlistDB:
@@ -588,6 +733,305 @@ class WatchlistDB:
             await conn.commit()
             return cursor.rowcount
 
+    # --- Lag Strategy Persistence Operations ---
+
+    async def record_lag_snapshot(
+        self,
+        token_address: str,
+        symbol: str,
+        chain: str,
+        reference_price: float,
+        executable_price: float,
+        edge_bps: float,
+        liquidity_usd: Optional[float] = None,
+        signal_triggered: bool = False,
+    ) -> LagPriceSnapshot:
+        """Persist one lag sampling point."""
+        conn = await self._ensure_connected()
+        async with self._lock:
+            cursor = await conn.execute(
+                """
+                INSERT INTO lag_price_snapshots (
+                    token_address, symbol, chain, reference_price, executable_price,
+                    edge_bps, liquidity_usd, signal_triggered
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING *
+                """,
+                (
+                    token_address,
+                    _normalize_symbol(symbol),
+                    chain.lower(),
+                    reference_price,
+                    executable_price,
+                    edge_bps,
+                    liquidity_usd,
+                    int(signal_triggered),
+                ),
+            )
+            row = await cursor.fetchone()
+            await conn.commit()
+            return self._row_to_lag_snapshot(row)
+
+    async def add_lag_position(
+        self,
+        token_address: str,
+        symbol: str,
+        chain: str,
+        entry_price: float,
+        quantity_token: float,
+        notional_usd: float,
+        stop_price: float,
+        take_price: float,
+        dry_run: bool = True,
+    ) -> LagPosition:
+        """Create a new lag strategy position."""
+        conn = await self._ensure_connected()
+        async with self._lock:
+            cursor = await conn.execute(
+                """
+                INSERT INTO lag_positions (
+                    token_address, symbol, chain, entry_price, quantity_token,
+                    notional_usd, stop_price, take_price, dry_run
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING *
+                """,
+                (
+                    token_address,
+                    _normalize_symbol(symbol),
+                    chain.lower(),
+                    entry_price,
+                    quantity_token,
+                    notional_usd,
+                    stop_price,
+                    take_price,
+                    int(dry_run),
+                ),
+            )
+            row = await cursor.fetchone()
+            await conn.commit()
+            return self._row_to_lag_position(row)
+
+    async def get_open_lag_position(
+        self,
+        token_address: str,
+        chain: str,
+    ) -> Optional[LagPosition]:
+        """Get open lag position for a token if one exists."""
+        conn = await self._ensure_connected()
+        cursor = await conn.execute(
+            """
+            SELECT * FROM lag_positions
+            WHERE LOWER(token_address) = LOWER(?) AND chain = ? AND status = 'open'
+            ORDER BY opened_at DESC
+            LIMIT 1
+            """,
+            (token_address, chain.lower()),
+        )
+        row = await cursor.fetchone()
+        return self._row_to_lag_position(row) if row else None
+
+    async def list_open_lag_positions(
+        self,
+        chain: Optional[str] = None,
+    ) -> List[LagPosition]:
+        """List all open lag positions."""
+        conn = await self._ensure_connected()
+        if chain:
+            cursor = await conn.execute(
+                """
+                SELECT * FROM lag_positions
+                WHERE status = 'open' AND chain = ?
+                ORDER BY opened_at ASC
+                """,
+                (chain.lower(),),
+            )
+        else:
+            cursor = await conn.execute(
+                """
+                SELECT * FROM lag_positions
+                WHERE status = 'open'
+                ORDER BY opened_at ASC
+                """
+            )
+        rows = await cursor.fetchall()
+        return [self._row_to_lag_position(row) for row in rows]
+
+    async def count_open_lag_positions(self, chain: Optional[str] = None) -> int:
+        """Count open lag positions."""
+        conn = await self._ensure_connected()
+        if chain:
+            cursor = await conn.execute(
+                "SELECT COUNT(*) FROM lag_positions WHERE status = 'open' AND chain = ?",
+                (chain.lower(),),
+            )
+        else:
+            cursor = await conn.execute(
+                "SELECT COUNT(*) FROM lag_positions WHERE status = 'open'"
+            )
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
+
+    async def close_lag_position(
+        self,
+        position_id: int,
+        exit_price: float,
+        close_reason: str,
+        realized_pnl_usd: float,
+        closed_at: Optional[datetime] = None,
+    ) -> bool:
+        """Close an open lag position."""
+        conn = await self._ensure_connected()
+        closed_at = closed_at or datetime.now(timezone.utc)
+        async with self._lock:
+            cursor = await conn.execute(
+                """
+                UPDATE lag_positions
+                SET status = 'closed',
+                    closed_at = ?,
+                    exit_price = ?,
+                    realized_pnl_usd = ?,
+                    close_reason = ?
+                WHERE id = ? AND status = 'open'
+                """,
+                (closed_at, exit_price, realized_pnl_usd, close_reason, position_id),
+            )
+            await conn.commit()
+            return cursor.rowcount > 0
+
+    async def get_last_lag_entry_time(
+        self,
+        token_address: str,
+        chain: str,
+    ) -> Optional[datetime]:
+        """Get timestamp of the most recent lag position open for token."""
+        conn = await self._ensure_connected()
+        cursor = await conn.execute(
+            """
+            SELECT opened_at FROM lag_positions
+            WHERE LOWER(token_address) = LOWER(?) AND chain = ?
+            ORDER BY opened_at DESC
+            LIMIT 1
+            """,
+            (token_address, chain.lower()),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return datetime.fromisoformat(row["opened_at"]) if row["opened_at"] else None
+
+    async def get_daily_lag_realized_pnl(self, day: Optional[datetime] = None) -> float:
+        """Get total realized PnL for the UTC calendar day."""
+        conn = await self._ensure_connected()
+        day = day or datetime.now(timezone.utc)
+        day_str = day.strftime("%Y-%m-%d")
+        cursor = await conn.execute(
+            """
+            SELECT COALESCE(SUM(realized_pnl_usd), 0) AS pnl
+            FROM lag_positions
+            WHERE status = 'closed' AND DATE(closed_at) = DATE(?)
+            """,
+            (day_str,),
+        )
+        row = await cursor.fetchone()
+        return float(row["pnl"]) if row and row["pnl"] is not None else 0.0
+
+    async def record_lag_execution(
+        self,
+        position_id: Optional[int],
+        token_address: str,
+        symbol: str,
+        chain: str,
+        action: str,
+        requested_notional_usd: Optional[float],
+        executed_price: Optional[float],
+        quantity_token: Optional[float],
+        tx_hash: Optional[str],
+        success: bool,
+        error: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> LagExecution:
+        """Record a lag strategy execution attempt."""
+        conn = await self._ensure_connected()
+        async with self._lock:
+            cursor = await conn.execute(
+                """
+                INSERT INTO lag_executions (
+                    position_id, token_address, symbol, chain, action, requested_notional_usd,
+                    executed_price, quantity_token, tx_hash, success, error, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING *
+                """,
+                (
+                    position_id,
+                    token_address,
+                    _normalize_symbol(symbol),
+                    chain.lower(),
+                    action.lower(),
+                    requested_notional_usd,
+                    executed_price,
+                    quantity_token,
+                    tx_hash,
+                    int(success),
+                    error,
+                    json.dumps(metadata or {}, default=str),
+                ),
+            )
+            row = await cursor.fetchone()
+            await conn.commit()
+            return self._row_to_lag_execution(row)
+
+    async def record_lag_event(
+        self,
+        event_type: str,
+        message: str,
+        token_address: Optional[str] = None,
+        symbol: Optional[str] = None,
+        chain: Optional[str] = None,
+        severity: str = "info",
+        data: Optional[Dict[str, Any]] = None,
+    ) -> LagStrategyEvent:
+        """Record a lag strategy signal/diagnostic event."""
+        conn = await self._ensure_connected()
+        async with self._lock:
+            cursor = await conn.execute(
+                """
+                INSERT INTO lag_strategy_events (
+                    token_address, symbol, chain, event_type, severity, message, data_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                RETURNING *
+                """,
+                (
+                    token_address,
+                    _normalize_symbol(symbol) if symbol else None,
+                    chain.lower() if chain else None,
+                    event_type,
+                    severity,
+                    message,
+                    json.dumps(data or {}, default=str),
+                ),
+            )
+            row = await cursor.fetchone()
+            await conn.commit()
+            return self._row_to_lag_event(row)
+
+    async def list_recent_lag_events(self, limit: int = 50) -> List[LagStrategyEvent]:
+        """List recent lag strategy events."""
+        conn = await self._ensure_connected()
+        cursor = await conn.execute(
+            """
+            SELECT * FROM lag_strategy_events
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_lag_event(row) for row in rows]
+
     # --- Helper Methods ---
 
     @staticmethod
@@ -623,4 +1067,95 @@ class WatchlistDB:
             acknowledged=bool(row["acknowledged"]),
             symbol=row["symbol"] if "symbol" in row.keys() else None,
             chain=row["chain"] if "chain" in row.keys() else None,
+        )
+
+    @staticmethod
+    def _row_to_lag_snapshot(row: aiosqlite.Row) -> LagPriceSnapshot:
+        """Convert a database row to LagPriceSnapshot."""
+        return LagPriceSnapshot(
+            id=row["id"],
+            token_address=row["token_address"],
+            symbol=row["symbol"],
+            chain=row["chain"],
+            reference_price=row["reference_price"],
+            executable_price=row["executable_price"],
+            edge_bps=row["edge_bps"],
+            liquidity_usd=row["liquidity_usd"],
+            signal_triggered=bool(row["signal_triggered"]),
+            sampled_at=datetime.fromisoformat(row["sampled_at"]) if row["sampled_at"] else None,
+        )
+
+    @staticmethod
+    def _row_to_lag_position(row: aiosqlite.Row) -> LagPosition:
+        """Convert a database row to LagPosition."""
+        return LagPosition(
+            id=row["id"],
+            token_address=row["token_address"],
+            symbol=row["symbol"],
+            chain=row["chain"],
+            entry_price=row["entry_price"],
+            quantity_token=row["quantity_token"],
+            notional_usd=row["notional_usd"],
+            stop_price=row["stop_price"],
+            take_price=row["take_price"],
+            opened_at=datetime.fromisoformat(row["opened_at"]) if row["opened_at"] else datetime.now(timezone.utc),
+            closed_at=datetime.fromisoformat(row["closed_at"]) if row["closed_at"] else None,
+            exit_price=row["exit_price"],
+            realized_pnl_usd=row["realized_pnl_usd"],
+            status=row["status"],
+            close_reason=row["close_reason"],
+            dry_run=bool(row["dry_run"]),
+        )
+
+    @staticmethod
+    def _row_to_lag_execution(row: aiosqlite.Row) -> LagExecution:
+        """Convert a database row to LagExecution."""
+        metadata: Dict[str, Any] = {}
+        raw_metadata = row["metadata_json"]
+        if raw_metadata:
+            try:
+                parsed = json.loads(raw_metadata)
+                if isinstance(parsed, dict):
+                    metadata = parsed
+            except json.JSONDecodeError:
+                metadata = {}
+        return LagExecution(
+            id=row["id"],
+            position_id=row["position_id"],
+            token_address=row["token_address"],
+            symbol=row["symbol"],
+            chain=row["chain"],
+            action=row["action"],
+            requested_notional_usd=row["requested_notional_usd"],
+            executed_price=row["executed_price"],
+            quantity_token=row["quantity_token"],
+            tx_hash=row["tx_hash"],
+            success=bool(row["success"]),
+            error=row["error"],
+            metadata=metadata,
+            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
+        )
+
+    @staticmethod
+    def _row_to_lag_event(row: aiosqlite.Row) -> LagStrategyEvent:
+        """Convert a database row to LagStrategyEvent."""
+        data: Dict[str, Any] = {}
+        raw_data = row["data_json"]
+        if raw_data:
+            try:
+                parsed = json.loads(raw_data)
+                if isinstance(parsed, dict):
+                    data = parsed
+            except json.JSONDecodeError:
+                data = {}
+        return LagStrategyEvent(
+            id=row["id"],
+            token_address=row["token_address"],
+            symbol=row["symbol"],
+            chain=row["chain"],
+            event_type=row["event_type"],
+            severity=row["severity"],
+            message=row["message"],
+            data=data,
+            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
         )

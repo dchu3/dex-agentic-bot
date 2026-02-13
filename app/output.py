@@ -468,6 +468,7 @@ class CLIOutput:
                     "/alerts history": "Show alert history",
                     "/poller": "Show price monitor status",
                     "/fix-addresses": "Fix lowercase Solana addresses",
+                    "/lag [status|run|start|stop|positions|events]": "Manage lag strategy scheduler",
                     "/help": "Show this help",
                 },
             }
@@ -493,6 +494,9 @@ class CLIOutput:
             print("  /alerts history              Show alert history")
             print("  /poller                      Show price monitor status")
             print("  /fix-addresses               Fix lowercase Solana addresses")
+            print("  /lag status                  Show lag strategy status")
+            print("  /lag run                     Run one lag cycle")
+            print("  /lag positions               Show open lag positions")
             print("\n  /help             Show this help")
             print("\nExamples:")
             print("  > search for PEPE on ethereum")
@@ -532,6 +536,9 @@ class CLIOutput:
         cmd_table.add_row("  /alerts history", "Show alert history")
         cmd_table.add_row("  /poller", "Show price monitor status")
         cmd_table.add_row("  /fix-addresses", "Fix lowercase Solana addresses")
+        cmd_table.add_row("  /lag status", "Show lag strategy status")
+        cmd_table.add_row("  /lag run", "Run one lag cycle now")
+        cmd_table.add_row("  /lag positions", "List open lag positions")
         cmd_table.add_row("", "")
         cmd_table.add_row("  /help", "Show this help")
 

@@ -13,6 +13,7 @@ A Telegram bot that provides comprehensive token safety checks and market analys
 - 🔍 **Instant Analysis** - Send a token address, get a detailed report
 - 🛡️ **Safety Checks** - Honeypot detection (EVM) and Rugcheck (Solana)
 - 📊 **Market Data** - Price, volume, liquidity, market cap via DexScreener
+- ⚡ **Lag-Edge Strategy (Solana)** - Optional auto-execution loop via trader MCP
 - 🤖 **AI Insights** - Gemini-powered analysis and risk assessment
 - ⚡ **Multi-Chain** - Supports Ethereum, BSC, Base, and Solana
 
@@ -50,6 +51,15 @@ MCP_RUGCHECK_CMD=node /path/to/dex-rugcheck-mcp/dist/index.js
 MCP_SOLANA_RPC_CMD=node /path/to/solana-rpc-mcp/dist/index.js
 MCP_BLOCKSCOUT_CMD=node /path/to/dex-blockscout-mcp/dist/index.js
 MCP_TRADER_CMD=node /path/to/dex-trader-mcp/dist/index.js
+
+# Optional: Lag strategy (Solana-first)
+LAG_STRATEGY_ENABLED=false
+LAG_STRATEGY_DRY_RUN=true
+LAG_STRATEGY_INTERVAL_SECONDS=20
+LAG_STRATEGY_MIN_EDGE_BPS=30
+LAG_STRATEGY_MAX_POSITION_USD=25
+LAG_STRATEGY_MAX_OPEN_POSITIONS=2
+LAG_STRATEGY_DAILY_LOSS_LIMIT_USD=50
 ```
 
 #### Private Mode
@@ -103,6 +113,35 @@ Chain is auto-detected from the address format.
 | `/help` | Show help message |
 | `/status` | Check bot status |
 
+### Lag Strategy (Interactive CLI, Solana)
+
+The lag strategy runs in interactive mode and monitors **Solana tokens in your watchlist** (or autonomous watchlist), then opens/closes positions via trader MCP.
+
+1. Configure trader MCP and wallet (in the trader MCP project's `.env`, not this repo's `.env`).
+2. Add Solana tokens to watchlist (example: `/watch BONK solana`).
+3. Start interactive mode with lag scheduler enabled:
+
+```bash
+./scripts/start.sh --interactive --lag-strategy --lag-interval 20
+```
+
+By default this runs in **dry-run mode** (`LAG_STRATEGY_DRY_RUN=true`), so no real orders are sent.
+
+Useful `/lag` commands:
+- `/lag status` - Scheduler/risk status and cycle summary
+- `/lag run` - Run one cycle immediately
+- `/lag positions` - Show open lag positions
+- `/lag events` - Show recent lag strategy events
+- `/lag start` / `/lag stop` - Start or stop scheduler
+
+To enable live execution, either set `LAG_STRATEGY_DRY_RUN=false` in `.env` or start with:
+
+```bash
+./scripts/start.sh --interactive --lag-strategy --lag-live
+```
+
+Recommended risk controls to tune first: `LAG_STRATEGY_MIN_EDGE_BPS`, `LAG_STRATEGY_MAX_POSITION_USD`, `LAG_STRATEGY_MAX_OPEN_POSITIONS`, `LAG_STRATEGY_DAILY_LOSS_LIMIT_USD`.
+
 ### Example Report
 
 ```
@@ -142,6 +181,9 @@ deep liquidity and no concerning tax mechanisms...
 | `-i, --interactive` | Start interactive CLI mode |
 | `-v, --verbose` | Show debug information |
 | `--no-telegram` | Disable Telegram in interactive mode |
+| `--lag-strategy` | Enable lag-edge strategy scheduler |
+| `--lag-interval` | Lag strategy cycle interval in seconds |
+| `--lag-live` | Run lag strategy with live execution (disable dry-run) |
 
 ## Architecture
 

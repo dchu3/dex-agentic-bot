@@ -1,0 +1,463 @@
+"""Trader quote/execution helpers for lag strategy."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, Optional, Sequence
+
+
+@dataclass
+class TraderMethodSet:
+    """Resolved trader tool names for quote + execution."""
+
+    quote_method: str
+    execute_method: str
+
+
+@dataclass
+class TradeQuote:
+    """Normalized executable quote."""
+
+    price: float
+    method: str
+    raw: Any
+    liquidity_usd: Optional[float] = None
+
+
+@dataclass
+class TradeExecution:
+    """Normalized execution response."""
+
+    success: bool
+    method: Optional[str]
+    raw: Any
+    tx_hash: Optional[str] = None
+    executed_price: Optional[float] = None
+    quantity_token: Optional[float] = None
+    error: Optional[str] = None
+
+
+class TraderExecutionService:
+    """Handles trader tool discovery, quote retrieval, and trade execution."""
+
+    def __init__(
+        self,
+        mcp_manager: Any,
+        chain: str,
+        max_slippage_bps: int,
+        quote_method_override: str = "",
+        execute_method_override: str = "",
+        quote_mint: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    ) -> None:
+        self.mcp_manager = mcp_manager
+        self.chain = chain.lower()
+        self.max_slippage_bps = max_slippage_bps
+        self.quote_method_override = quote_method_override.strip()
+        self.execute_method_override = execute_method_override.strip()
+        self.quote_mint = quote_mint
+        self._method_cache: Optional[TraderMethodSet] = None
+
+    def _get_trader_client(self) -> Any:
+        trader = self.mcp_manager.get_client("trader")
+        if trader is None:
+            raise RuntimeError("Trader MCP client is not configured")
+        return trader
+
+    def _resolve_methods(self) -> TraderMethodSet:
+        if self._method_cache is not None:
+            return self._method_cache
+
+        trader = self._get_trader_client()
+        tool_names = [tool.get("name", "") for tool in (trader.tools or []) if tool.get("name")]
+        if not tool_names:
+            raise RuntimeError("Trader MCP client has no tools")
+
+        quote_method = self.quote_method_override or self._pick_method(
+            tool_names,
+            exact_candidates=(
+                "get_quote",
+                "quote",
+                "getQuote",
+                "quote_swap",
+                "swap_quote",
+                "jupiter_quote",
+            ),
+            contains_candidates=("quote",),
+        )
+        execute_method = self.execute_method_override or self._pick_method(
+            tool_names,
+            exact_candidates=(
+                "swap",
+                "execute_swap",
+                "trade",
+                "execute_trade",
+                "place_order",
+            ),
+            contains_candidates=("swap", "trade", "order"),
+        )
+
+        if not quote_method:
+            raise RuntimeError(f"Unable to resolve trader quote method from tools: {tool_names}")
+        if not execute_method:
+            raise RuntimeError(f"Unable to resolve trader execute method from tools: {tool_names}")
+
+        self._method_cache = TraderMethodSet(
+            quote_method=quote_method,
+            execute_method=execute_method,
+        )
+        return self._method_cache
+
+    @staticmethod
+    def _pick_method(
+        tool_names: Sequence[str],
+        exact_candidates: Sequence[str],
+        contains_candidates: Sequence[str],
+    ) -> str:
+        exact_lookup = {name.lower(): name for name in tool_names}
+        for candidate in exact_candidates:
+            hit = exact_lookup.get(candidate.lower())
+            if hit:
+                return hit
+
+        for name in tool_names:
+            lower_name = name.lower()
+            if any(token in lower_name for token in contains_candidates):
+                return name
+
+        return ""
+
+    def _get_tool_schema(self, method_name: str) -> Dict[str, Any]:
+        trader = self._get_trader_client()
+        for tool in trader.tools or []:
+            if tool.get("name") == method_name:
+                return tool
+        return {}
+
+    async def get_quote(
+        self,
+        token_address: str,
+        notional_usd: float,
+        side: str = "buy",
+    ) -> TradeQuote:
+        """Fetch executable quote from trader MCP."""
+        trader = self._get_trader_client()
+        method = self._resolve_methods().quote_method
+        tool_schema = self._get_tool_schema(method)
+        args = self._build_tool_args(
+            tool_schema=tool_schema,
+            token_address=token_address,
+            notional_usd=notional_usd,
+            side=side,
+            quantity_token=None,
+            quote_payload=None,
+        )
+        result = await trader.call_tool(method, args)
+        price = self._extract_price(result, side=side)
+        if price is None or price <= 0:
+            raise RuntimeError(f"Trader quote did not include a valid price (method: {method})")
+
+        liquidity = self._extract_first_float(
+            result,
+            ("liquidityUsd", "liquidity_usd", "liquidity", "liquidityUSD"),
+        )
+        return TradeQuote(price=price, method=method, raw=result, liquidity_usd=liquidity)
+
+    async def execute_trade(
+        self,
+        token_address: str,
+        notional_usd: float,
+        side: str,
+        quantity_token: Optional[float],
+        dry_run: bool,
+        quote: Optional[TradeQuote],
+    ) -> TradeExecution:
+        """Execute trade through trader MCP or simulate in dry-run mode."""
+        if dry_run:
+            executed_price = quote.price if quote else None
+            quantity = quantity_token
+            if quantity is None and executed_price and executed_price > 0:
+                quantity = notional_usd / executed_price
+            return TradeExecution(
+                success=True,
+                method=None,
+                raw={"dry_run": True},
+                tx_hash=None,
+                executed_price=executed_price,
+                quantity_token=quantity,
+                error=None,
+            )
+
+        trader = self._get_trader_client()
+        method = self._resolve_methods().execute_method
+        tool_schema = self._get_tool_schema(method)
+        args = self._build_tool_args(
+            tool_schema=tool_schema,
+            token_address=token_address,
+            notional_usd=notional_usd,
+            side=side,
+            quantity_token=quantity_token,
+            quote_payload=quote.raw if quote else None,
+        )
+        result = await trader.call_tool(method, args)
+
+        success = self._extract_success(result)
+        error = self._extract_error(result)
+        tx_hash = self._extract_tx_hash(result)
+        executed_price = self._extract_price(result, side=side)
+        executed_qty = self._extract_first_float(
+            result,
+            (
+                "quantity",
+                "quantityToken",
+                "qty",
+                "filledAmount",
+                "outputAmount",
+                "outAmount",
+                "amountOut",
+            ),
+        )
+
+        if success and executed_qty is None and executed_price and executed_price > 0:
+            executed_qty = notional_usd / executed_price
+
+        if not success and error is None:
+            error = f"Trader execute method '{method}' returned unsuccessful response"
+
+        return TradeExecution(
+            success=success,
+            method=method,
+            raw=result,
+            tx_hash=tx_hash,
+            executed_price=executed_price,
+            quantity_token=executed_qty,
+            error=error,
+        )
+
+    def _build_tool_args(
+        self,
+        tool_schema: Dict[str, Any],
+        token_address: str,
+        notional_usd: float,
+        side: str,
+        quantity_token: Optional[float],
+        quote_payload: Optional[Any],
+    ) -> Dict[str, Any]:
+        input_schema = tool_schema.get("inputSchema", {})
+        properties = input_schema.get("properties", {})
+        required = input_schema.get("required", [])
+
+        args: Dict[str, Any] = {}
+
+        for key in properties.keys():
+            value = self._value_for_param(
+                param_name=key,
+                token_address=token_address,
+                notional_usd=notional_usd,
+                side=side,
+                quantity_token=quantity_token,
+                quote_payload=quote_payload,
+            )
+            if value is not None:
+                args[key] = value
+
+        for key in required:
+            if key in args:
+                continue
+            value = self._value_for_param(
+                param_name=key,
+                token_address=token_address,
+                notional_usd=notional_usd,
+                side=side,
+                quantity_token=quantity_token,
+                quote_payload=quote_payload,
+            )
+            if value is None:
+                raise ValueError(f"Unable to infer required trader argument: {key}")
+            args[key] = value
+
+        return args
+
+    def _value_for_param(
+        self,
+        param_name: str,
+        token_address: str,
+        notional_usd: float,
+        side: str,
+        quantity_token: Optional[float],
+        quote_payload: Optional[Any],
+    ) -> Any:
+        key = param_name.lower()
+
+        if key in {"chain", "network", "chainid"}:
+            return self.chain
+        if key in {"side", "action", "direction", "trade_side"}:
+            return side
+        if "dry" in key and "run" in key:
+            return False
+
+        if quote_payload is not None:
+            if key in {"quote", "quote_response", "route", "route_plan", "swap_quote"}:
+                return quote_payload
+
+        is_tokenish = any(token in key for token in ("mint", "token", "address"))
+        if is_tokenish:
+            is_input = any(
+                token in key
+                for token in ("input", "from", "source", "sell", "inmint", "tokenin", "in_token")
+            )
+            is_output = any(
+                token in key
+                for token in ("output", "to", "destination", "buy", "outmint", "tokenout", "out_token")
+            )
+            if is_input:
+                return self.quote_mint if side == "buy" else token_address
+            if is_output:
+                return token_address if side == "buy" else self.quote_mint
+            return token_address
+
+        if "slippage" in key:
+            if "bps" in key:
+                return int(self.max_slippage_bps)
+            return round(self.max_slippage_bps / 100, 4)
+
+        if any(token in key for token in ("notional", "usd")):
+            return float(notional_usd)
+
+        if "lamport" in key:
+            return int(notional_usd * 1_000_000)
+
+        if "amount" in key or "size" in key or "qty" in key or "quantity" in key:
+            if quantity_token is not None and side == "sell":
+                return float(quantity_token)
+            return float(notional_usd)
+
+        if "symbol" in key:
+            return "USDC" if side == "buy" else "TOKEN"
+
+        return None
+
+    @classmethod
+    def _extract_success(cls, payload: Any) -> bool:
+        if isinstance(payload, dict):
+            if "success" in payload:
+                return bool(payload["success"])
+            if "ok" in payload:
+                return bool(payload["ok"])
+            status = payload.get("status")
+            if isinstance(status, str):
+                status_l = status.lower()
+                if status_l in {"success", "succeeded", "confirmed", "completed"}:
+                    return True
+                if status_l in {"failed", "error", "rejected"}:
+                    return False
+            err = payload.get("error")
+            if err:
+                return False
+        return True
+
+    @classmethod
+    def _extract_error(cls, payload: Any) -> Optional[str]:
+        if isinstance(payload, dict):
+            err = payload.get("error")
+            if isinstance(err, str):
+                return err
+            if isinstance(err, dict):
+                message = err.get("message")
+                if isinstance(message, str):
+                    return message
+        return None
+
+    @classmethod
+    def _extract_tx_hash(cls, payload: Any) -> Optional[str]:
+        value = cls._extract_first_value(
+            payload,
+            ("txHash", "tx_hash", "signature", "transactionHash", "txid", "hash"),
+        )
+        return value if isinstance(value, str) and value else None
+
+    @classmethod
+    def _extract_price(cls, payload: Any, side: str) -> Optional[float]:
+        direct_price = cls._extract_first_float(
+            payload,
+            (
+                "price",
+                "priceUsd",
+                "price_usd",
+                "executionPrice",
+                "executedPrice",
+                "fillPrice",
+            ),
+        )
+        if direct_price and direct_price > 0:
+            return direct_price
+
+        in_amount = cls._extract_first_float(
+            payload,
+            (
+                "inAmount",
+                "inputAmount",
+                "amountIn",
+                "fromAmount",
+                "input_amount",
+                "amount_in",
+            ),
+        )
+        out_amount = cls._extract_first_float(
+            payload,
+            (
+                "outAmount",
+                "outputAmount",
+                "amountOut",
+                "toAmount",
+                "output_amount",
+                "amount_out",
+            ),
+        )
+        if not in_amount or not out_amount:
+            return None
+        if in_amount <= 0 or out_amount <= 0:
+            return None
+        if side == "buy":
+            return in_amount / out_amount
+        return out_amount / in_amount
+
+    @classmethod
+    def _extract_first_float(
+        cls,
+        payload: Any,
+        keys: Sequence[str],
+    ) -> Optional[float]:
+        value = cls._extract_first_value(payload, keys)
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            cleaned = value.replace(",", "").strip()
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+        return None
+
+    @classmethod
+    def _extract_first_value(
+        cls,
+        payload: Any,
+        keys: Sequence[str],
+    ) -> Optional[Any]:
+        key_lookup = {key.lower() for key in keys}
+        for found_key, found_value in cls._walk_items(payload):
+            if found_key.lower() in key_lookup:
+                return found_value
+        return None
+
+    @classmethod
+    def _walk_items(cls, payload: Any) -> Iterable[tuple[str, Any]]:
+        if isinstance(payload, dict):
+            for key, value in payload.items():
+                yield str(key), value
+                yield from cls._walk_items(value)
+        elif isinstance(payload, list):
+            for item in payload:
+                yield from cls._walk_items(item)
