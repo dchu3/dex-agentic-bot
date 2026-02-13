@@ -135,7 +135,7 @@ class Settings(BaseSettings):
         default="solana", alias="LAG_STRATEGY_CHAIN"
     )
     lag_strategy_sample_notional_usd: float = Field(
-        default=25.0, alias="LAG_STRATEGY_SAMPLE_NOTIONAL_USD", ge=1
+        default=25.0, alias="LAG_STRATEGY_SAMPLE_NOTIONAL_USD", ge=0.01
     )
     lag_strategy_min_edge_bps: float = Field(
         default=30.0, alias="LAG_STRATEGY_MIN_EDGE_BPS", ge=0.1
@@ -147,7 +147,7 @@ class Settings(BaseSettings):
         default=100, alias="LAG_STRATEGY_MAX_SLIPPAGE_BPS", ge=1, le=5000
     )
     lag_strategy_max_position_usd: float = Field(
-        default=25.0, alias="LAG_STRATEGY_MAX_POSITION_USD", ge=1
+        default=25.0, alias="LAG_STRATEGY_MAX_POSITION_USD", ge=0.01
     )
     lag_strategy_max_open_positions: int = Field(
         default=2, alias="LAG_STRATEGY_MAX_OPEN_POSITIONS", ge=1, le=20
