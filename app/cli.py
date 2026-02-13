@@ -23,6 +23,8 @@ from app.watchlist_poller import WatchlistPoller, TriggeredAlert
 from app.watchlist_tools import WatchlistToolProvider
 from app.autonomous_agent import AutonomousWatchlistAgent
 from app.autonomous_scheduler import AutonomousScheduler
+from app.lag_scheduler import LagStrategyScheduler
+from app.lag_strategy import LagStrategyConfig, LagStrategyEngine
 
 # Known blockchain chain identifiers for parsing multi-word token names
 KNOWN_CHAINS = frozenset({
@@ -109,6 +111,7 @@ async def run_interactive(
     poller: Optional[WatchlistPoller] = None,
     telegram: Optional[TelegramNotifier] = None,
     autonomous_scheduler: Optional[AutonomousScheduler] = None,
+    lag_scheduler: Optional[LagStrategyScheduler] = None,
 ) -> None:
     """Run interactive REPL session."""
     output.info("DEX Agentic Bot - Interactive Mode")
@@ -160,6 +163,11 @@ async def run_interactive(
         interval_mins = autonomous_scheduler.interval_seconds // 60
         output.info(f"🤖 Autonomous watchlist manager started (every {interval_mins} mins)")
 
+    # Start lag strategy scheduler if enabled
+    if lag_scheduler:
+        await lag_scheduler.start()
+        output.info(f"⚡ Lag strategy scheduler started (every {lag_scheduler.interval_seconds}s)")
+
     try:
         while True:
             try:
@@ -176,7 +184,7 @@ async def run_interactive(
             if query.startswith("/"):
                 handled = await _handle_command(
                     query, output, watchlist_db, poller, mcp_manager,
-                    conversation_history, recent_tokens, autonomous_scheduler
+                    conversation_history, recent_tokens, autonomous_scheduler, lag_scheduler
                 )
                 if handled == "quit":
                     break
@@ -218,6 +226,8 @@ async def run_interactive(
                 pass
         if autonomous_scheduler:
             await autonomous_scheduler.stop()
+        if lag_scheduler:
+            await lag_scheduler.stop()
         if poller:
             await poller.stop()
         if telegram:
@@ -247,6 +257,7 @@ async def _handle_command(
     conversation_history: List[Dict[str, str]],
     recent_tokens: List[Dict[str, str]],
     autonomous_scheduler: Optional[AutonomousScheduler] = None,
+    lag_scheduler: Optional[LagStrategyScheduler] = None,
 ) -> Optional[str]:
     """Handle slash commands. Returns 'quit' to exit, True if handled, None otherwise."""
     try:
@@ -324,6 +335,11 @@ async def _handle_command(
     # Autonomous agent commands
     if cmd == "/autonomous":
         await _cmd_autonomous(parts[1:], output, db, autonomous_scheduler)
+        return True
+
+    # Lag strategy commands
+    if cmd == "/lag":
+        await _cmd_lag(parts[1:], output, db, lag_scheduler)
         return True
 
     output.warning(f"Unknown command: {query}. Use /help for available commands.")
@@ -790,6 +806,121 @@ async def _cmd_autonomous(
     output.warning(f"Unknown subcommand: {subcmd}. Use /autonomous for help.")
 
 
+async def _cmd_lag(
+    args: List[str],
+    output: CLIOutput,
+    db: WatchlistDB,
+    scheduler: Optional[LagStrategyScheduler],
+) -> None:
+    """Handle /lag command for lag strategy operations."""
+    if not args:
+        output.info("Lag Strategy Commands:")
+        output.info("  /lag status     - Show lag strategy status")
+        output.info("  /lag run        - Run one lag cycle now")
+        output.info("  /lag start      - Start lag scheduler")
+        output.info("  /lag stop       - Stop lag scheduler")
+        output.info("  /lag positions  - List open lag positions")
+        output.info("  /lag events     - Show recent lag events")
+        return
+
+    subcmd = args[0].lower()
+
+    if subcmd == "status":
+        if not scheduler:
+            output.warning("Lag strategy scheduler is not enabled.")
+            return
+        status = scheduler.get_status()
+        config = scheduler.engine.config
+        open_positions = await db.count_open_lag_positions(chain=config.chain)
+        daily_pnl = await db.get_daily_lag_realized_pnl()
+
+        output.info("⚡ Lag Strategy Status:")
+        output.info(f"  Running: {'✅ Yes' if status['running'] else '❌ No'}")
+        output.info(f"  Interval: {status['interval_seconds']} seconds")
+        output.info(f"  Chain: {config.chain}")
+        output.info(f"  Dry run: {'✅ Yes' if config.dry_run else '❌ No (LIVE)'}")
+        output.info(f"  Min edge: {config.min_edge_bps:.1f} bps")
+        output.info(f"  Max position: ${config.max_position_usd:,.2f}")
+        output.info(f"  Open positions: {open_positions}/{config.max_open_positions}")
+        output.info(f"  Daily realized PnL: ${daily_pnl:,.2f}")
+        output.info(f"  Cycles completed: {status['cycle_count']}")
+        if status["last_cycle"]:
+            output.info(f"  Last cycle: {status['last_cycle']}")
+        if status["last_summary"]:
+            output.info(f"  Last result: {status['last_summary']}")
+        return
+
+    if subcmd == "run":
+        if not scheduler:
+            output.warning("Lag strategy scheduler is not enabled.")
+            return
+        output.status("Running lag strategy cycle...")
+        result = await scheduler.run_cycle_now()
+        output.info(f"✅ Lag cycle complete: {result.summary}")
+        for position in result.entries_opened:
+            output.info(
+                f"  Opened: {position.symbol} @ ${position.entry_price:.10f} "
+                f"(qty: {position.quantity_token:.4f})"
+            )
+        for position in result.positions_closed:
+            pnl = position.realized_pnl_usd if position.realized_pnl_usd is not None else 0.0
+            output.info(f"  Closed: {position.symbol} (PnL: ${pnl:,.2f})")
+        for err in result.errors:
+            output.warning(f"  Error: {err}")
+        return
+
+    if subcmd == "start":
+        if not scheduler:
+            output.warning("Lag strategy scheduler is not enabled.")
+            return
+        if scheduler.is_running:
+            output.info("Lag strategy scheduler is already running.")
+            return
+        await scheduler.start()
+        output.info("✅ Lag strategy scheduler started")
+        return
+
+    if subcmd == "stop":
+        if not scheduler:
+            output.warning("Lag strategy scheduler is not enabled.")
+            return
+        if not scheduler.is_running:
+            output.info("Lag strategy scheduler is not running.")
+            return
+        await scheduler.stop()
+        output.info("✅ Lag strategy scheduler stopped")
+        return
+
+    if subcmd == "positions":
+        chain_filter = scheduler.engine.config.chain if scheduler else "solana"
+        positions = await db.list_open_lag_positions(chain=chain_filter)
+        if not positions:
+            output.info("No open lag positions.")
+            return
+        output.info(f"⚡ Open Lag Positions ({len(positions)}):")
+        for pos in positions:
+            output.info(
+                f"  • {pos.symbol} ({pos.chain}) entry ${pos.entry_price:.10f}, "
+                f"stop ${pos.stop_price:.10f}, take ${pos.take_price:.10f}, "
+                f"qty {pos.quantity_token:.4f}"
+            )
+        return
+
+    if subcmd == "events":
+        events = await db.list_recent_lag_events(limit=20)
+        if not events:
+            output.info("No lag events yet.")
+            return
+        output.info("⚡ Recent Lag Events:")
+        for event in events:
+            ts = event.created_at.isoformat() if event.created_at else "unknown-time"
+            symbol = event.symbol or "?"
+            output.info(f"  • [{ts}] {event.severity.upper()} {symbol}: {event.message}")
+        return
+
+    output.warning(f"Unknown subcommand: {subcmd}. Use /lag for help.")
+
+
 def _validate_command_exists(command: str, label: str, optional: bool = False) -> None:
     """Ensure the first token of a command is available on PATH or as a file."""
     if not command:
@@ -900,6 +1031,22 @@ Examples:
         type=int,
         default=None,
         help="Autonomous cycle interval in minutes (default: 60)",
+    )
+    parser.add_argument(
+        "--lag-strategy",
+        action="store_true",
+        help="Enable lag-edge strategy scheduler",
+    )
+    parser.add_argument(
+        "--lag-interval",
+        type=int,
+        default=None,
+        help="Lag strategy cycle interval in seconds (default: settings value, min: 5, max: 3600)",
+    )
+    parser.add_argument(
+        "--lag-live",
+        action="store_true",
+        help="Run lag strategy in live mode (overrides dry-run setting)",
     )
 
     args = parser.parse_args()
@@ -1085,6 +1232,57 @@ Examples:
             log_callback=log_callback if args.verbose else None,
         )
 
+    # Initialize lag strategy scheduler if enabled
+    lag_scheduler: Optional[LagStrategyScheduler] = None
+    lag_enabled = args.lag_strategy or settings.lag_strategy_enabled
+    if args.interactive and lag_enabled:
+        if args.no_trader or not mcp_manager.get_client("trader"):
+            output.warning("Lag strategy requires trader MCP client. Disable --no-trader or configure MCP_TRADER_CMD.")
+        else:
+            lag_interval = (
+                args.lag_interval
+                if args.lag_interval is not None
+                else settings.lag_strategy_interval_seconds
+            )
+            if not (5 <= lag_interval <= 3600):
+                output.error("Lag interval must be between 5 and 3600 seconds")
+                sys.exit(1)
+
+            lag_config = LagStrategyConfig(
+                enabled=True,
+                dry_run=False if args.lag_live else settings.lag_strategy_dry_run,
+                interval_seconds=lag_interval,
+                chain=settings.lag_strategy_chain.lower(),
+                sample_notional_usd=settings.lag_strategy_sample_notional_usd,
+                min_edge_bps=settings.lag_strategy_min_edge_bps,
+                min_liquidity_usd=settings.lag_strategy_min_liquidity_usd,
+                max_slippage_bps=settings.lag_strategy_max_slippage_bps,
+                max_position_usd=settings.lag_strategy_max_position_usd,
+                max_open_positions=settings.lag_strategy_max_open_positions,
+                cooldown_seconds=settings.lag_strategy_cooldown_seconds,
+                take_profit_bps=settings.lag_strategy_take_profit_bps,
+                stop_loss_bps=settings.lag_strategy_stop_loss_bps,
+                max_hold_seconds=settings.lag_strategy_max_hold_seconds,
+                daily_loss_limit_usd=settings.lag_strategy_daily_loss_limit_usd,
+                quote_method=settings.lag_strategy_quote_method,
+                execute_method=settings.lag_strategy_execute_method,
+                quote_mint=settings.lag_strategy_quote_mint,
+            )
+            lag_engine = LagStrategyEngine(
+                db=watchlist_db,
+                mcp_manager=mcp_manager,
+                config=lag_config,
+                verbose=args.verbose,
+                log_callback=log_callback if args.verbose else None,
+            )
+            lag_scheduler = LagStrategyScheduler(
+                engine=lag_engine,
+                interval_seconds=lag_interval,
+                telegram=telegram,
+                verbose=args.verbose,
+                log_callback=log_callback if args.verbose else None,
+            )
+
     # Initialize planner
     from app.agent import AgenticPlanner
 
@@ -1105,7 +1303,7 @@ Examples:
         elif args.interactive:
             await run_interactive(
                 planner, output, watchlist_db, mcp_manager,
-                poller, telegram, autonomous_scheduler
+                poller, telegram, autonomous_scheduler, lag_scheduler
             )
         elif query:
             await run_single_query(planner, query, output, context={})
