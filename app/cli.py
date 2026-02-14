@@ -1341,6 +1341,7 @@ Examples:
                 quote_method=settings.lag_strategy_quote_method,
                 execute_method=settings.lag_strategy_execute_method,
                 quote_mint=settings.lag_strategy_quote_mint,
+                rpc_url=settings.solana_rpc_url,
             )
             lag_engine = LagStrategyEngine(
                 db=watchlist_db,

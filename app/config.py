@@ -178,6 +178,12 @@ class Settings(BaseSettings):
         alias="LAG_STRATEGY_QUOTE_MINT",
     )
 
+    # Solana RPC URL for on-chain lookups (e.g. token decimals)
+    solana_rpc_url: str = Field(
+        default="https://api.mainnet-beta.solana.com",
+        alias="SOLANA_RPC_URL",
+    )
+
     # Alert auto-adjustment settings
     alert_auto_adjust_enabled: bool = Field(
         default=True, alias="ALERT_AUTO_ADJUST_ENABLED"

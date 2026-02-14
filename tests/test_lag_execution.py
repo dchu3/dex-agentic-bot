@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Tuple
 
 import pytest
 
-from app.lag_execution import TraderExecutionService
+from app.lag_execution import TraderExecutionService, get_token_decimals, _decimals_cache
 
 
 def test_extract_price_alternative_keys() -> None:
@@ -689,3 +689,201 @@ async def test_live_trade_without_tx_hash_is_failure() -> None:
     assert result.success is False
     assert result.error == "No transaction hash in trader response"
     assert result.tx_hash is None
+
+
+# --- Token decimals tests ---
+
+
+class Mock6DecimalTraderClient(MockRealTraderClient):
+    """Mock for a 6-decimal token (like WIF, PYTH, USDC)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.token_decimals = 6
+        self.token_price_usd = 2.50  # WIF-like price
+
+    async def call_tool(self, method: str, arguments: dict[str, Any]) -> Any:
+        self.calls.append((method, arguments))
+        if method == "get_quote":
+            sol_amount = arguments.get("amount", 0.0025)
+            sol_lamports = int(sol_amount * 1_000_000_000)
+            # 6-decimal token: raw units = human * 10^6
+            token_human = sol_amount * self.sol_price_usd / self.token_price_usd
+            token_raw = int(token_human * 10 ** self.token_decimals)
+            return {
+                "inputAmount": str(sol_lamports),
+                "outputAmount": str(token_raw),
+                "priceImpact": "0.01",
+                "slippageBps": 100,
+                "route": "Jupiter",
+            }
+        if method == "buy_token":
+            sol_amount = arguments.get("sol_amount", 0.0025)
+            token_human = sol_amount * self.sol_price_usd / self.token_price_usd
+            token_raw = int(token_human * 10 ** self.token_decimals)
+            return {
+                "status": "success",
+                "transaction": "buy-tx-6dec",
+                "solSpent": sol_amount,
+                "tokenReceived": str(token_raw),
+                "tokenMint": arguments.get("token_address", ""),
+                "explorer": "https://solscan.io/tx/buy-tx-6dec",
+            }
+        if method == "sell_token":
+            token_amount = arguments.get("token_amount", 0)
+            sol_received = token_amount * self.token_price_usd / self.sol_price_usd
+            return {
+                "status": "success",
+                "transaction": "sell-tx-6dec",
+                "tokenSold": token_amount,
+                "tokenMint": arguments.get("token_address", ""),
+                "solReceived": sol_received,
+                "explorer": "https://solscan.io/tx/sell-tx-6dec",
+            }
+        raise ValueError(f"Unknown method: {method}")
+
+
+@pytest.mark.asyncio
+async def test_buy_6_decimal_token_quantity_is_correct() -> None:
+    """tokenReceived for a 6-decimal token should be divided by 10^6, not 10^9."""
+    trader = Mock6DecimalTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    sol_price = 200.0
+    notional_usd = 0.50
+    token_price = 2.50
+    token_decimals = 6
+
+    quote = await service.get_quote(
+        token_address="WifMint111111111111111111111111111111111111",
+        notional_usd=notional_usd,
+        side="buy",
+        input_price_usd=sol_price,
+        token_decimals=token_decimals,
+    )
+    result = await service.execute_trade(
+        token_address="WifMint111111111111111111111111111111111111",
+        notional_usd=notional_usd,
+        side="buy",
+        quantity_token=None,
+        dry_run=False,
+        quote=quote,
+        input_price_usd=sol_price,
+        token_decimals=token_decimals,
+    )
+
+    assert result.success is True
+    # Expected: $0.50 / $2.50 = 0.2 tokens
+    expected_qty = notional_usd / token_price
+    assert result.quantity_token == pytest.approx(expected_qty, rel=0.01)
+
+
+@pytest.mark.asyncio
+async def test_sell_6_decimal_token_passes_correct_decimals() -> None:
+    """sell_token should pass the actual token_decimals, not hardcoded 9."""
+    trader = Mock6DecimalTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    sol_price = 200.0
+    quantity = 0.2
+    token_decimals = 6
+
+    quote = await service.get_quote(
+        token_address="WifMint111111111111111111111111111111111111",
+        notional_usd=0.50,
+        side="sell",
+        input_price_usd=sol_price,
+        token_decimals=token_decimals,
+    )
+    result = await service.execute_trade(
+        token_address="WifMint111111111111111111111111111111111111",
+        notional_usd=0.50,
+        side="sell",
+        quantity_token=quantity,
+        dry_run=False,
+        quote=quote,
+        input_price_usd=sol_price,
+        token_decimals=token_decimals,
+    )
+
+    assert result.success is True
+    # Verify token_decimals=6 was passed, not 9
+    sell_call = [(m, a) for m, a in trader.calls if m == "sell_token"][0]
+    assert sell_call[1]["token_decimals"] == 6
+    assert sell_call[1]["token_amount"] == pytest.approx(quantity)
+
+
+@pytest.mark.asyncio
+async def test_extract_price_uses_correct_decimals_for_buy() -> None:
+    """_extract_price should use token_decimals to convert tokenReceived correctly."""
+    extract = TraderExecutionService._extract_price
+    # 6-decimal token: 0.0025 SOL buys 0.2 tokens → tokenReceived = 200_000 (raw)
+    payload = {"solSpent": 0.0025, "tokenReceived": "200000"}
+    price = extract(payload, side="buy", native_price_usd=200.0, token_decimals=6)
+    # 0.0025 SOL * $200 = $0.50 spent, 200_000 / 10^6 = 0.2 tokens
+    # price = $0.50 / 0.2 = $2.50
+    assert price == pytest.approx(2.50)
+
+    # Same payload with wrong decimals (9) gives wrong price
+    wrong_price = extract(payload, side="buy", native_price_usd=200.0, token_decimals=9)
+    # 200_000 / 10^9 = 0.0002 tokens → price = $0.50 / 0.0002 = $2500 (wrong!)
+    assert wrong_price == pytest.approx(2500.0)
+    assert wrong_price != pytest.approx(2.50)
+
+
+def test_decimals_cache_returns_known_values() -> None:
+    """Pre-seeded cache entries should return immediately."""
+    # SOL native mint
+    assert _decimals_cache.get("So11111111111111111111111111111111111111112") == 9
+    # USDC
+    assert _decimals_cache.get("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v") == 6
+
+
+@pytest.mark.asyncio
+async def test_buy_quote_passes_native_input_decimals_not_token() -> None:
+    """get_quote for a buy should pass input_decimals=9 (SOL), not the token's decimals."""
+    trader = Mock6DecimalTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    await service.get_quote(
+        token_address="WifMint111111111111111111111111111111111111",
+        notional_usd=0.50,
+        side="buy",
+        input_price_usd=200.0,
+        token_decimals=6,
+    )
+    quote_call = [(m, a) for m, a in trader.calls if m == "get_quote"][0]
+    # input_decimals should be 9 (SOL) on buy side, not 6 (token)
+    assert quote_call[1]["input_decimals"] == 9
+    # input_mint should be SOL native mint to match buy_token execution path
+    assert quote_call[1]["input_mint"] == "So11111111111111111111111111111111111111112"
+
+
+@pytest.mark.asyncio
+async def test_sell_quote_passes_token_input_decimals() -> None:
+    """get_quote for a sell should pass input_decimals matching the token's decimals."""
+    trader = Mock6DecimalTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    await service.get_quote(
+        token_address="WifMint111111111111111111111111111111111111",
+        notional_usd=0.50,
+        side="sell",
+        input_price_usd=200.0,
+        token_decimals=6,
+    )
+    quote_call = [(m, a) for m, a in trader.calls if m == "get_quote"][0]
+    # input_decimals should be 6 (token) on sell side
+    assert quote_call[1]["input_decimals"] == 6
