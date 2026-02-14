@@ -127,7 +127,12 @@ class LagStrategyScheduler:
             lines.append("🔴 <b>Closed Positions</b>")
             for position in result.positions_closed:
                 pnl = position.realized_pnl_usd if position.realized_pnl_usd is not None else 0.0
-                lines.append(f"• {position.symbol}: PnL ${pnl:,.2f}")
+                pnl = pnl + 0.0  # avoid negative zero
+                sell_price = format_price(position.exit_price)
+                lines.append(
+                    f"• {position.symbol}: sell {sell_price} "
+                    f"PnL ${pnl:,.2f}"
+                )
             lines.append("")
 
         if result.errors:
