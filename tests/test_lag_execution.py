@@ -20,6 +20,23 @@ def test_extract_price_alternative_keys() -> None:
     assert extract({"unrelated": "data"}, side="buy") is None
 
 
+def test_extract_success_string_error() -> None:
+    """_extract_success returns False for string error responses from MCP."""
+    extract = TraderExecutionService._extract_success
+    assert extract("Error: Jupiter quote failed (400)") is False
+    assert extract("error: something went wrong") is False
+    assert extract({"status": "success"}) is True
+    assert extract("All good") is True
+
+
+def test_extract_error_string_payload() -> None:
+    """_extract_error captures error message from string payloads."""
+    extract = TraderExecutionService._extract_error
+    assert extract("Error: InsufficientFunds") == "Error: InsufficientFunds"
+    assert extract("All good") is None
+    assert extract({"error": "bad request"}) == "bad request"
+
+
 class MockTraderClient:
     """Minimal trader MCP client mock."""
 

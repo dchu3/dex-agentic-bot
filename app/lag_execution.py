@@ -518,6 +518,11 @@ class TraderExecutionService:
 
     @classmethod
     def _extract_success(cls, payload: Any) -> bool:
+        if isinstance(payload, str):
+            # MCP error responses are plain strings starting with "Error:"
+            if payload.strip().lower().startswith("error"):
+                return False
+            return True
         if isinstance(payload, dict):
             if "success" in payload:
                 return bool(payload["success"])
@@ -537,6 +542,10 @@ class TraderExecutionService:
 
     @classmethod
     def _extract_error(cls, payload: Any) -> Optional[str]:
+        if isinstance(payload, str):
+            if payload.strip().lower().startswith("error"):
+                return payload.strip()
+            return None
         if isinstance(payload, dict):
             err = payload.get("error")
             if isinstance(err, str):
