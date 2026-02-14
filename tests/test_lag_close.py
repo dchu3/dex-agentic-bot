@@ -159,3 +159,36 @@ async def test_lag_close_records_event(db) -> None:
     manual_events = [e for e in events if e.event_type == "manual_close"]
     assert len(manual_events) == 1
     assert "BONK" in manual_events[0].message
+
+
+@pytest.mark.asyncio
+async def test_lag_reset_pnl_zeros_today(db) -> None:
+    """reset-pnl zeros out realized PnL on today's closed positions."""
+    from app.cli import _cmd_lag
+
+    pos = await _add_open_position(db, symbol="BONK", token_address="BonkMint111")
+    await db.close_lag_position(
+        position_id=pos.id, exit_price=1.5, close_reason="take_profit",
+        realized_pnl_usd=426.16,
+    )
+    # Confirm PnL is inflated
+    pnl = await db.get_daily_lag_realized_pnl()
+    assert pnl == pytest.approx(426.16)
+
+    output = MockCLIOutput()
+    await _cmd_lag(["reset-pnl"], output, db, MockScheduler())
+
+    assert any("1 position" in m for _, m in output.messages)
+    pnl_after = await db.get_daily_lag_realized_pnl()
+    assert pnl_after == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_lag_reset_pnl_no_positions(db) -> None:
+    """reset-pnl with no closed positions today reports 0."""
+    from app.cli import _cmd_lag
+
+    output = MockCLIOutput()
+    await _cmd_lag(["reset-pnl"], output, db, MockScheduler())
+
+    assert any("0 position" in m for _, m in output.messages)

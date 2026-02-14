@@ -940,6 +940,23 @@ class WatchlistDB:
         row = await cursor.fetchone()
         return float(row["pnl"]) if row and row["pnl"] is not None else 0.0
 
+    async def reset_daily_lag_pnl(self, day: Optional[datetime] = None) -> int:
+        """Zero out realized_pnl_usd on positions closed today (UTC). Returns count."""
+        conn = await self._ensure_connected()
+        day = day or datetime.now(timezone.utc)
+        day_str = day.strftime("%Y-%m-%d")
+        cursor = await conn.execute(
+            """
+            UPDATE lag_positions
+            SET realized_pnl_usd = 0
+            WHERE status = 'closed' AND DATE(closed_at) = DATE(?)
+            AND realized_pnl_usd != 0
+            """,
+            (day_str,),
+        )
+        await conn.commit()
+        return cursor.rowcount
+
     async def record_lag_execution(
         self,
         position_id: Optional[int],
