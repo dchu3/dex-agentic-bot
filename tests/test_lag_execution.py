@@ -650,3 +650,42 @@ def test_extract_price_raw_amounts_without_native_price_falls_back() -> None:
     )
     # Fallback: raw ratio = 2500000 / 20000000000000
     assert price == pytest.approx(2500000 / 20000000000000, rel=1e-6)
+
+
+@pytest.mark.asyncio
+async def test_live_trade_without_tx_hash_is_failure() -> None:
+    """Live trade that returns no tx_hash should be marked as failed."""
+
+    class NoTxHashTrader(MockRealTraderClient):
+        async def call_tool(self, method: str, arguments: dict[str, Any]) -> Any:
+            self.calls.append((method, arguments))
+            if method == "get_quote":
+                return await super().call_tool(method, arguments)
+            # buy_token returns success but no transaction hash
+            return {"status": "success", "message": "Something went wrong silently"}
+
+    trader = NoTxHashTrader()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    quote = await service.get_quote(
+        token_address="BonkMint111111111111111111111111111111111111",
+        notional_usd=0.50,
+        side="buy",
+        input_price_usd=200.0,
+    )
+    result = await service.execute_trade(
+        token_address="BonkMint111111111111111111111111111111111111",
+        notional_usd=0.50,
+        side="buy",
+        quantity_token=None,
+        dry_run=False,
+        quote=quote,
+        input_price_usd=200.0,
+    )
+
+    assert result.success is False
+    assert result.error == "No transaction hash in trader response"
+    assert result.tx_hash is None

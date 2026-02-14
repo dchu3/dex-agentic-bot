@@ -255,3 +255,37 @@ async def test_lag_cycle_skips_token_after_error(db):
     r2 = await engine.run_cycle()
     assert len(r2.errors) == 0
     assert r2.samples_taken >= 1
+
+
+@pytest.mark.asyncio
+async def test_lag_cycle_excludes_native_and_quote_mints(db):
+    """Tokens matching native mint (SOL) or quote mint (USDC) are excluded."""
+    from app.lag_execution import SOL_NATIVE_MINT
+
+    usdc_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    await db.add_entry(
+        token_address=SOL_NATIVE_MINT,
+        symbol="SOL",
+        chain="solana",
+    )
+    await db.add_entry(
+        token_address=usdc_mint,
+        symbol="USDC",
+        chain="solana",
+    )
+    await db.add_entry(
+        token_address="JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+        symbol="JUP",
+        chain="solana",
+    )
+
+    manager = MockMCPManager(
+        dexscreener=MockDexScreenerClient(price_usd=1.20, liquidity_usd=50000),
+        trader=MockTraderClient(buy_price=1.00, sell_price=1.15),
+    )
+    engine = LagStrategyEngine(db=db, mcp_manager=manager, config=_config())
+
+    result = await engine.run_cycle()
+
+    # Only JUP should be sampled; SOL and USDC excluded
+    assert result.samples_taken == 1

@@ -127,6 +127,8 @@ The lag strategy runs in interactive mode and monitors **Solana tokens in your w
 
 By default this runs in **dry-run mode** (`LAG_STRATEGY_DRY_RUN=true`), so no real orders are sent.
 
+> **Note:** The lag strategy uses SOL as the payment currency for all trades via Jupiter. Native SOL and USDC are automatically excluded from the token monitoring list since they cannot be traded against themselves. Do not add SOL or USDC to your watchlist for lag trading.
+
 Useful `/lag` commands:
 - `/lag status` - Scheduler/risk status and cycle summary
 - `/lag run` - Run one cycle immediately
