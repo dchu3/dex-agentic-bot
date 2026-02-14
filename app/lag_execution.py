@@ -190,7 +190,9 @@ class TraderExecutionService:
                 result = json.loads(result)
             except (json.JSONDecodeError, TypeError):
                 pass
-        price = self._extract_price(result, side=side)
+        price = self._extract_price(
+            result, side=side, native_price_usd=input_price_usd,
+        )
         if price is None or price <= 0:
             logger.warning("Trader quote response has no valid price: %s", result)
             raise RuntimeError(f"Trader quote did not include a valid price (method: {method})")
@@ -245,7 +247,9 @@ class TraderExecutionService:
         success = self._extract_success(result)
         error = self._extract_error(result)
         tx_hash = self._extract_tx_hash(result)
-        executed_price = self._extract_price(result, side=side)
+        executed_price = self._extract_price(
+            result, side=side, native_price_usd=input_price_usd,
+        )
         executed_qty = self._extract_first_float(
             result,
             (
@@ -253,11 +257,18 @@ class TraderExecutionService:
                 "quantityToken",
                 "qty",
                 "filledAmount",
-                "outputAmount",
-                "outAmount",
-                "amountOut",
+                "tokenSold",
+                "token_sold",
             ),
         )
+        if executed_qty is None:
+            # tokenReceived from buy_token is raw smallest units — convert
+            raw_received = self._extract_first_float(
+                result,
+                ("tokenReceived", "token_received", "outputAmount", "outAmount", "amountOut"),
+            )
+            if raw_received is not None and raw_received > 0:
+                executed_qty = raw_received / (10 ** 9)  # SPL default decimals
 
         if success and executed_qty is None and executed_price and executed_price > 0:
             executed_qty = notional_usd / executed_price
@@ -426,12 +437,25 @@ class TraderExecutionService:
     def _extract_tx_hash(cls, payload: Any) -> Optional[str]:
         value = cls._extract_first_value(
             payload,
-            ("txHash", "tx_hash", "signature", "transactionHash", "txid", "hash"),
+            ("txHash", "tx_hash", "signature", "transactionHash", "transaction", "txid", "hash"),
         )
         return value if isinstance(value, str) and value else None
 
     @classmethod
-    def _extract_price(cls, payload: Any, side: str) -> Optional[float]:
+    def _extract_price(
+        cls,
+        payload: Any,
+        side: str,
+        native_price_usd: Optional[float] = None,
+        native_decimals: int = 9,
+        token_decimals: int = 9,
+    ) -> Optional[float]:
+        """Extract a USD-denominated token price from a trader response.
+
+        When the response only contains raw in/out amounts (lamports / smallest
+        token units), ``native_price_usd`` is used to convert to USD.
+        """
+        # 1. Direct USD price field
         direct_price = cls._extract_first_float(
             payload,
             (
@@ -454,6 +478,28 @@ class TraderExecutionService:
         if direct_price and direct_price > 0:
             return direct_price
 
+        # 2. Derive from SOL spent/received (human-readable) fields
+        sol_spent = cls._extract_first_float(payload, ("solSpent", "sol_spent"))
+        token_received = cls._extract_first_float(
+            payload, ("tokenReceived", "token_received"),
+        )
+        sol_received = cls._extract_first_float(
+            payload, ("solReceived", "sol_received"),
+        )
+        token_sold = cls._extract_first_float(payload, ("tokenSold", "token_sold"))
+
+        if native_price_usd and native_price_usd > 0:
+            if side == "buy" and sol_spent and token_received:
+                # token_received from buy_token is raw (smallest units)
+                token_human = token_received / (10 ** token_decimals)
+                if token_human > 0:
+                    return (sol_spent * native_price_usd) / token_human
+            if side == "sell" and sol_received and token_sold:
+                # token_sold is human-readable, sol_received is human-readable
+                if token_sold > 0:
+                    return (sol_received * native_price_usd) / token_sold
+
+        # 3. Derive from raw in/out amounts
         in_amount = cls._extract_first_float(
             payload,
             (
@@ -480,6 +526,23 @@ class TraderExecutionService:
             return None
         if in_amount <= 0 or out_amount <= 0:
             return None
+
+        if native_price_usd and native_price_usd > 0:
+            # Convert raw amounts to human-readable, then to USD per token
+            if side == "buy":
+                # in = native (SOL lamports), out = token smallest units
+                native_human = in_amount / (10 ** native_decimals)
+                token_human = out_amount / (10 ** token_decimals)
+                if token_human > 0:
+                    return (native_human * native_price_usd) / token_human
+            else:
+                # in = token smallest units, out = native (SOL lamports)
+                token_human = in_amount / (10 ** token_decimals)
+                native_human = out_amount / (10 ** native_decimals)
+                if token_human > 0:
+                    return (native_human * native_price_usd) / token_human
+
+        # Fallback: raw ratio (no USD context available)
         if side == "buy":
             return in_amount / out_amount
         return out_amount / in_amount

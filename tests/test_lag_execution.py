@@ -288,7 +288,10 @@ async def test_directional_tools_resolve_sell_token() -> None:
 
 
 class MockRealTraderClient:
-    """Mock matching the actual dex-trader-mcp tool schemas (sol_amount, token_amount)."""
+    """Mock matching the actual dex-trader-mcp tool schemas (sol_amount, token_amount).
+
+    Responses mirror the real trader MCP: raw amounts, no priceUsd field.
+    """
 
     def __init__(self) -> None:
         self.tools: list[dict[str, Any]] = [
@@ -343,15 +346,48 @@ class MockRealTraderClient:
             },
         ]
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        # Token price: $0.000025 USD, SOL price: $200 USD
+        # 1 token costs $0.000025, so 1 SOL ($200) buys 8_000_000 tokens
+        # For a $0.50 trade: 0.0025 SOL → 20_000 tokens
+        self.sol_price_usd = 200.0
+        self.token_price_usd = 0.000025
 
     async def call_tool(self, method: str, arguments: dict[str, Any]) -> Any:
         self.calls.append((method, arguments))
         if method == "get_quote":
-            return {"priceUsd": "0.000025", "liquidityUsd": 100000}
+            # Real trader returns raw lamport/smallest-unit amounts
+            sol_amount = arguments.get("amount", 0.0025)
+            sol_lamports = int(sol_amount * 1_000_000_000)
+            token_raw = int(sol_amount * self.sol_price_usd / self.token_price_usd * 1_000_000_000)
+            return {
+                "inputAmount": str(sol_lamports),
+                "outputAmount": str(token_raw),
+                "priceImpact": "0.01",
+                "slippageBps": 100,
+                "route": "Jupiter",
+            }
         if method == "buy_token":
-            return {"success": True, "txHash": "buy-tx", "executedPrice": "0.000025", "quantity": "1000000"}
+            sol_amount = arguments.get("sol_amount", 0.0025)
+            token_raw = int(sol_amount * self.sol_price_usd / self.token_price_usd * 1_000_000_000)
+            return {
+                "status": "success",
+                "transaction": "buy-tx-real",
+                "solSpent": sol_amount,
+                "tokenReceived": str(token_raw),
+                "tokenMint": arguments.get("token_address", ""),
+                "explorer": "https://solscan.io/tx/buy-tx-real",
+            }
         if method == "sell_token":
-            return {"success": True, "txHash": "sell-tx", "executedPrice": "0.000026", "quantity": "1000000"}
+            token_amount = arguments.get("token_amount", 20000.0)
+            sol_received = token_amount * self.token_price_usd / self.sol_price_usd
+            return {
+                "status": "success",
+                "transaction": "sell-tx-real",
+                "tokenSold": token_amount,
+                "tokenMint": arguments.get("token_address", ""),
+                "solReceived": sol_received,
+                "explorer": "https://solscan.io/tx/sell-tx-real",
+            }
         raise ValueError(f"Unknown method: {method}")
 
 
@@ -364,7 +400,7 @@ async def test_buy_converts_usd_to_sol_amount() -> None:
         chain="solana",
         max_slippage_bps=100,
     )
-    sol_price = 180.0
+    sol_price = 200.0
     notional_usd = 0.50
 
     quote = await service.get_quote(
@@ -373,6 +409,10 @@ async def test_buy_converts_usd_to_sol_amount() -> None:
         side="buy",
         input_price_usd=sol_price,
     )
+
+    # Quote price should be in USD per token, not raw ratio
+    assert quote.price == pytest.approx(0.000025, rel=1e-2)
+
     result = await service.execute_trade(
         token_address="BonkMint111111111111111111111111111111111111",
         notional_usd=notional_usd,
@@ -385,14 +425,21 @@ async def test_buy_converts_usd_to_sol_amount() -> None:
 
     assert result.success is True
     assert result.method == "buy_token"
+    assert result.tx_hash == "buy-tx-real"
 
     # Verify the buy_token call received SOL amount, not USD
     buy_call = [c for c in trader.calls if c[0] == "buy_token"][0]
     sol_amount = buy_call[1]["sol_amount"]
-    expected_sol = notional_usd / sol_price  # 0.50 / 180 ≈ 0.00278
+    expected_sol = notional_usd / sol_price  # 0.50 / 200 = 0.0025
     assert sol_amount == pytest.approx(expected_sol, rel=1e-6)
     # Must NOT be the raw USD value
     assert sol_amount != pytest.approx(notional_usd)
+
+    # Executed price should be in USD per token
+    assert result.executed_price == pytest.approx(0.000025, rel=1e-2)
+    # Quantity should be human-readable token count
+    assert result.quantity_token is not None
+    assert result.quantity_token == pytest.approx(notional_usd / 0.000025, rel=1e-2)
 
 
 @pytest.mark.asyncio
@@ -404,30 +451,34 @@ async def test_sell_passes_quantity_not_usd() -> None:
         chain="solana",
         max_slippage_bps=100,
     )
-    token_price = 0.000025
-    quantity = 1000000.0
+    sol_price = 200.0
+    quantity = 20000.0
 
     quote = await service.get_quote(
         token_address="BonkMint111111111111111111111111111111111111",
-        notional_usd=25,
+        notional_usd=0.50,
         side="sell",
-        input_price_usd=token_price,
+        input_price_usd=sol_price,
     )
     result = await service.execute_trade(
         token_address="BonkMint111111111111111111111111111111111111",
-        notional_usd=25,
+        notional_usd=0.50,
         side="sell",
         quantity_token=quantity,
         dry_run=False,
         quote=quote,
-        input_price_usd=token_price,
+        input_price_usd=sol_price,
     )
 
     assert result.success is True
     assert result.method == "sell_token"
+    assert result.tx_hash == "sell-tx-real"
     sell_call = [c for c in trader.calls if c[0] == "sell_token"][0]
     assert sell_call[1]["token_amount"] == pytest.approx(quantity)
     assert sell_call[1]["token_decimals"] == 9
+
+    # Executed price should be in USD per token
+    assert result.executed_price == pytest.approx(0.000025, rel=1e-2)
 
 
 @pytest.mark.asyncio
@@ -476,3 +527,126 @@ async def test_amount_without_price_falls_back_to_raw_usd() -> None:
 
     quote_call = trader.calls[0]
     assert quote_call[1]["amount"] == pytest.approx(notional_usd)
+
+
+@pytest.mark.asyncio
+async def test_quote_price_is_usd_from_raw_amounts() -> None:
+    """get_quote converts raw inputAmount/outputAmount to USD price per token."""
+    trader = MockRealTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    sol_price = 200.0
+    quote = await service.get_quote(
+        token_address="BonkMint111111111111111111111111111111111111",
+        notional_usd=0.50,
+        side="buy",
+        input_price_usd=sol_price,
+    )
+
+    # Price must be USD per token, not raw lamport ratio
+    assert quote.price == pytest.approx(0.000025, rel=1e-2)
+    # Sanity: price should NOT be a tiny raw ratio like 1e-10
+    assert quote.price > 1e-6
+
+
+@pytest.mark.asyncio
+async def test_pnl_calculation_is_sane_for_small_trade() -> None:
+    """End-to-end: $0.50 buy+sell should produce PnL near $0, not $400+."""
+    trader = MockRealTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    sol_price = 200.0
+    notional_usd = 0.50
+
+    # Simulate buy
+    buy_quote = await service.get_quote(
+        token_address="BonkMint111111111111111111111111111111111111",
+        notional_usd=notional_usd,
+        side="buy",
+        input_price_usd=sol_price,
+    )
+    buy_result = await service.execute_trade(
+        token_address="BonkMint111111111111111111111111111111111111",
+        notional_usd=notional_usd,
+        side="buy",
+        quantity_token=None,
+        dry_run=False,
+        quote=buy_quote,
+        input_price_usd=sol_price,
+    )
+    entry_price = buy_result.executed_price or buy_quote.price
+    quantity = buy_result.quantity_token
+
+    # Simulate sell at same price
+    sell_result = await service.execute_trade(
+        token_address="BonkMint111111111111111111111111111111111111",
+        notional_usd=notional_usd,
+        side="sell",
+        quantity_token=quantity,
+        dry_run=False,
+        quote=buy_quote,
+        input_price_usd=sol_price,
+    )
+    exit_price = sell_result.executed_price or buy_quote.price
+
+    # PnL for a round-trip at same price should be near $0
+    realized_pnl = (exit_price - entry_price) * quantity
+    assert abs(realized_pnl) < 1.0, (
+        f"PnL ${realized_pnl:.2f} is unreasonably large for a $0.50 trade"
+    )
+
+
+def test_extract_price_with_sol_spent_token_received() -> None:
+    """_extract_price computes USD price from solSpent/tokenReceived."""
+    extract = TraderExecutionService._extract_price
+    # solSpent=0.0025 SOL, tokenReceived=20000*1e9 raw, SOL=$200
+    # Price = (0.0025 * 200) / (20000e9 / 1e9) = 0.50 / 20000 = 0.000025
+    price = extract(
+        {"solSpent": 0.0025, "tokenReceived": str(20_000_000_000_000)},
+        side="buy",
+        native_price_usd=200.0,
+    )
+    assert price == pytest.approx(0.000025, rel=1e-2)
+
+
+def test_extract_price_with_sol_received_token_sold() -> None:
+    """_extract_price computes USD price from solReceived/tokenSold."""
+    extract = TraderExecutionService._extract_price
+    # tokenSold=20000, solReceived=0.0025, SOL=$200
+    # Price = (0.0025 * 200) / 20000 = 0.000025
+    price = extract(
+        {"solReceived": 0.0025, "tokenSold": 20000.0},
+        side="sell",
+        native_price_usd=200.0,
+    )
+    assert price == pytest.approx(0.000025, rel=1e-2)
+
+
+def test_extract_price_raw_amounts_converted_to_usd() -> None:
+    """_extract_price converts raw inputAmount/outputAmount to USD using native_price_usd."""
+    extract = TraderExecutionService._extract_price
+    # inputAmount = 2500000 lamports (0.0025 SOL), outputAmount = 20000e9 raw tokens
+    # USD price = (2500000/1e9 * 200) / (20000e9/1e9) = 0.50/20000 = 0.000025
+    price = extract(
+        {"inputAmount": "2500000", "outputAmount": "20000000000000"},
+        side="buy",
+        native_price_usd=200.0,
+    )
+    assert price == pytest.approx(0.000025, rel=1e-2)
+
+
+def test_extract_price_raw_amounts_without_native_price_falls_back() -> None:
+    """Without native_price_usd, _extract_price returns raw ratio as fallback."""
+    extract = TraderExecutionService._extract_price
+    price = extract(
+        {"inputAmount": "2500000", "outputAmount": "20000000000000"},
+        side="buy",
+    )
+    # Fallback: raw ratio = 2500000 / 20000000000000
+    assert price == pytest.approx(2500000 / 20000000000000, rel=1e-6)

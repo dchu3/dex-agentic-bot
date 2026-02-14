@@ -386,7 +386,7 @@ class LagStrategyEngine:
             token_address=position.token_address,
             notional_usd=position.notional_usd,
             side="sell",
-            input_price_usd=position.entry_price,
+            input_price_usd=self._native_price_usd,
         )
         current_price = quote.price
         close_reason = self._exit_reason(position, current_price, now)
@@ -401,7 +401,7 @@ class LagStrategyEngine:
             quantity_token=position.quantity_token,
             dry_run=self.config.dry_run,
             quote=quote,
-            input_price_usd=current_price,
+            input_price_usd=self._native_price_usd,
         )
         exit_price = execution.executed_price or current_price
 
