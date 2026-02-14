@@ -9,6 +9,9 @@ from typing import Any, Dict, Iterable, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
+# Native SOL mint address used by Jupiter / DexScreener
+SOL_NATIVE_MINT = "So11111111111111111111111111111111111111112"
+
 
 @dataclass
 class TraderMethodSet:
@@ -166,6 +169,7 @@ class TraderExecutionService:
         token_address: str,
         notional_usd: float,
         side: str = "buy",
+        input_price_usd: Optional[float] = None,
     ) -> TradeQuote:
         """Fetch executable quote from trader MCP."""
         trader = self._get_trader_client()
@@ -178,6 +182,7 @@ class TraderExecutionService:
             side=side,
             quantity_token=None,
             quote_payload=None,
+            input_price_usd=input_price_usd,
         )
         result = await trader.call_tool(method, args)
         if isinstance(result, str):
@@ -204,6 +209,7 @@ class TraderExecutionService:
         quantity_token: Optional[float],
         dry_run: bool,
         quote: Optional[TradeQuote],
+        input_price_usd: Optional[float] = None,
     ) -> TradeExecution:
         """Execute trade through trader MCP or simulate in dry-run mode."""
         if dry_run:
@@ -232,6 +238,7 @@ class TraderExecutionService:
             side=side,
             quantity_token=quantity_token,
             quote_payload=quote.raw if quote else None,
+            input_price_usd=input_price_usd,
         )
         result = await trader.call_tool(method, args)
 
@@ -276,6 +283,7 @@ class TraderExecutionService:
         side: str,
         quantity_token: Optional[float],
         quote_payload: Optional[Any],
+        input_price_usd: Optional[float] = None,
     ) -> Dict[str, Any]:
         input_schema = tool_schema.get("inputSchema", {})
         properties = input_schema.get("properties", {})
@@ -291,6 +299,7 @@ class TraderExecutionService:
                 side=side,
                 quantity_token=quantity_token,
                 quote_payload=quote_payload,
+                input_price_usd=input_price_usd,
             )
             if value is not None:
                 args[key] = value
@@ -305,6 +314,7 @@ class TraderExecutionService:
                 side=side,
                 quantity_token=quantity_token,
                 quote_payload=quote_payload,
+                input_price_usd=input_price_usd,
             )
             if value is None:
                 raise ValueError(f"Unable to infer required trader argument: {key}")
@@ -320,6 +330,7 @@ class TraderExecutionService:
         side: str,
         quantity_token: Optional[float],
         quote_payload: Optional[Any],
+        input_price_usd: Optional[float] = None,
     ) -> Any:
         key = param_name.lower()
 
@@ -335,7 +346,8 @@ class TraderExecutionService:
                 return quote_payload
 
         is_tokenish = any(token in key for token in ("mint", "token", "address"))
-        if is_tokenish:
+        is_amount_like = any(token in key for token in ("amount", "size", "qty", "quantity", "decimal"))
+        if is_tokenish and not is_amount_like:
             is_input = any(
                 token in key
                 for token in ("input", "from", "source", "sell", "inmint", "tokenin", "in_token")
@@ -359,12 +371,20 @@ class TraderExecutionService:
             return float(notional_usd)
 
         if "lamport" in key:
-            return int(notional_usd * 1_000_000)
+            if input_price_usd and input_price_usd > 0:
+                return int((notional_usd / input_price_usd) * 1_000_000_000)
+            logger.warning("No input_price_usd for lamport conversion; falling back to raw notional")
+            return int(notional_usd * 1_000_000_000)
 
         if "amount" in key or "size" in key or "qty" in key or "quantity" in key:
             if quantity_token is not None and side == "sell":
                 return float(quantity_token)
+            if input_price_usd and input_price_usd > 0:
+                return float(notional_usd / input_price_usd)
             return float(notional_usd)
+
+        if "decimal" in key:
+            return 9
 
         if "symbol" in key:
             return "USDC" if side == "buy" else "TOKEN"

@@ -83,6 +83,7 @@ class LagStrategyEngine:
             quote_mint=config.quote_mint,
         )
         self._skip_until: Dict[str, datetime] = {}
+        self._native_price_usd: Optional[float] = None
 
     def _log(self, level: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
         if self.verbose and self.log_callback:
@@ -96,6 +97,9 @@ class LagStrategyEngine:
         if not self.config.enabled:
             result.summary = "Lag strategy disabled"
             return result
+
+        # Fetch native token price for USD→token conversion
+        await self._refresh_native_price()
 
         # Exit checks first to reduce risk before opening new positions.
         await self._process_exits(result, now)
@@ -169,6 +173,7 @@ class LagStrategyEngine:
             token_address=entry.token_address,
             notional_usd=self.config.sample_notional_usd,
             side="buy",
+            input_price_usd=self._native_price_usd,
         )
         executable_price = executable_quote.price
         edge_bps = self._compute_edge_bps(reference_price, executable_price)
@@ -273,6 +278,7 @@ class LagStrategyEngine:
             quantity_token=None,
             dry_run=self.config.dry_run,
             quote=quote,
+            input_price_usd=self._native_price_usd,
         )
 
         quantity = execution.quantity_token
@@ -380,6 +386,7 @@ class LagStrategyEngine:
             token_address=position.token_address,
             notional_usd=position.notional_usd,
             side="sell",
+            input_price_usd=position.entry_price,
         )
         current_price = quote.price
         close_reason = self._exit_reason(position, current_price, now)
@@ -394,6 +401,7 @@ class LagStrategyEngine:
             quantity_token=position.quantity_token,
             dry_run=self.config.dry_run,
             quote=quote,
+            input_price_usd=current_price,
         )
         exit_price = execution.executed_price or current_price
 
@@ -467,6 +475,27 @@ class LagStrategyEngine:
         if age_seconds >= self.config.max_hold_seconds:
             return "max_hold_time"
         return None
+
+    async def _refresh_native_price(self) -> None:
+        """Fetch current native token (e.g. SOL) price in USD via DexScreener."""
+        from app.lag_execution import SOL_NATIVE_MINT
+
+        dexscreener = self.mcp_manager.get_client("dexscreener")
+        if dexscreener is None:
+            logger.warning("DexScreener not available; cannot fetch native price")
+            return
+
+        try:
+            result = await dexscreener.call_tool(
+                "get_token_pools",
+                {"chainId": self.config.chain, "tokenAddress": SOL_NATIVE_MINT},
+            )
+            price, _ = self._parse_reference_result(result)
+            if price and price > 0:
+                self._native_price_usd = price
+                logger.debug("Native token price: $%.4f", price)
+        except Exception as exc:
+            logger.warning("Failed to fetch native token price: %s", exc)
 
     async def _fetch_reference_price(self, token_address: str, chain: str) -> tuple[float, Optional[float]]:
         dexscreener = self.mcp_manager.get_client("dexscreener")

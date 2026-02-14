@@ -16,16 +16,22 @@ from app.watchlist import WatchlistDB
 class MockDexScreenerClient:
     """Mock DexScreener client for deterministic reference prices."""
 
-    def __init__(self, price_usd: float, liquidity_usd: float) -> None:
+    # Native SOL mint used by _refresh_native_price
+    _SOL_MINT = "So11111111111111111111111111111111111111112"
+
+    def __init__(self, price_usd: float, liquidity_usd: float, native_price_usd: float = 180.0) -> None:
         self.price_usd = price_usd
         self.liquidity_usd = liquidity_usd
+        self.native_price_usd = native_price_usd
 
     async def call_tool(self, method: str, arguments: Dict[str, Any]) -> Any:
         assert method == "get_token_pools"
+        token = arguments.get("tokenAddress", "")
+        price = self.native_price_usd if token == self._SOL_MINT else self.price_usd
         return {
             "pairs": [
                 {
-                    "priceUsd": str(self.price_usd),
+                    "priceUsd": str(price),
                     "liquidity": {"usd": self.liquidity_usd},
                 }
             ]
