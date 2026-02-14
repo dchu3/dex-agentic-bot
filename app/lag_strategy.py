@@ -43,6 +43,7 @@ class LagStrategyConfig:
     quote_method: str = ""
     execute_method: str = ""
     quote_mint: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    rpc_url: str = "https://api.mainnet-beta.solana.com"
 
 
 @dataclass
@@ -81,6 +82,7 @@ class LagStrategyEngine:
             quote_method_override=config.quote_method,
             execute_method_override=config.execute_method,
             quote_mint=config.quote_mint,
+            rpc_url=config.rpc_url,
         )
         self._skip_until: Dict[str, datetime] = {}
         self._native_price_usd: Optional[float] = None
@@ -393,6 +395,7 @@ class LagStrategyEngine:
             notional_usd=position.notional_usd,
             side="sell",
             input_price_usd=self._native_price_usd,
+            quantity_token=position.quantity_token,
         )
         current_price = quote.price
         close_reason = self._exit_reason(position, current_price, now)

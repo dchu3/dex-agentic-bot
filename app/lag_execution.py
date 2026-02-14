@@ -7,10 +7,66 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional, Sequence
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 # Native SOL mint address used by Jupiter / DexScreener
 SOL_NATIVE_MINT = "So11111111111111111111111111111111111111112"
+
+# Default Solana RPC endpoint
+_DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com"
+
+# In-memory cache: mint address → decimals (immutable on-chain, safe to cache forever)
+_decimals_cache: Dict[str, int] = {
+    SOL_NATIVE_MINT: 9,
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": 6,  # USDC
+}
+
+_SPL_DEFAULT_DECIMALS = 9
+
+
+async def get_token_decimals(
+    mint_address: str,
+    rpc_url: str = _DEFAULT_RPC_URL,
+) -> int:
+    """Fetch SPL token decimals from Solana RPC with in-memory caching.
+
+    Decimals are immutable after mint creation, so results are cached forever.
+    Falls back to 9 (the SPL default) on any failure.
+    """
+    if mint_address in _decimals_cache:
+        return _decimals_cache[mint_address]
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                rpc_url,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getAccountInfo",
+                    "params": [mint_address, {"encoding": "jsonParsed"}],
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            decimals = (
+                data.get("result", {})
+                .get("value", {})
+                .get("data", {})
+                .get("parsed", {})
+                .get("info", {})
+                .get("decimals")
+            )
+            if isinstance(decimals, int):
+                _decimals_cache[mint_address] = decimals
+                return decimals
+    except Exception:
+        logger.warning("Failed to fetch decimals for %s; defaulting to %d", mint_address, _SPL_DEFAULT_DECIMALS)
+
+    _decimals_cache[mint_address] = _SPL_DEFAULT_DECIMALS
+    return _SPL_DEFAULT_DECIMALS
 
 
 @dataclass
@@ -65,6 +121,7 @@ class TraderExecutionService:
         quote_method_override: str = "",
         execute_method_override: str = "",
         quote_mint: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        rpc_url: str = _DEFAULT_RPC_URL,
     ) -> None:
         self.mcp_manager = mcp_manager
         self.chain = chain.lower()
@@ -72,6 +129,7 @@ class TraderExecutionService:
         self.quote_method_override = quote_method_override.strip()
         self.execute_method_override = execute_method_override.strip()
         self.quote_mint = quote_mint
+        self.rpc_url = rpc_url
         self._method_cache: Optional[TraderMethodSet] = None
 
     def _get_trader_client(self) -> Any:
@@ -170,8 +228,12 @@ class TraderExecutionService:
         notional_usd: float,
         side: str = "buy",
         input_price_usd: Optional[float] = None,
+        token_decimals: Optional[int] = None,
+        quantity_token: Optional[float] = None,
     ) -> TradeQuote:
         """Fetch executable quote from trader MCP."""
+        if token_decimals is None:
+            token_decimals = await get_token_decimals(token_address, self.rpc_url)
         trader = self._get_trader_client()
         method = self._resolve_methods().quote_method
         tool_schema = self._get_tool_schema(method)
@@ -180,9 +242,10 @@ class TraderExecutionService:
             token_address=token_address,
             notional_usd=notional_usd,
             side=side,
-            quantity_token=None,
+            quantity_token=quantity_token,
             quote_payload=None,
             input_price_usd=input_price_usd,
+            token_decimals=token_decimals,
         )
         result = await trader.call_tool(method, args)
         if isinstance(result, str):
@@ -192,6 +255,7 @@ class TraderExecutionService:
                 pass
         price = self._extract_price(
             result, side=side, native_price_usd=input_price_usd,
+            token_decimals=token_decimals,
         )
         if price is None or price <= 0:
             logger.warning("Trader quote response has no valid price: %s", result)
@@ -212,8 +276,12 @@ class TraderExecutionService:
         dry_run: bool,
         quote: Optional[TradeQuote],
         input_price_usd: Optional[float] = None,
+        token_decimals: Optional[int] = None,
     ) -> TradeExecution:
         """Execute trade through trader MCP or simulate in dry-run mode."""
+        if token_decimals is None:
+            token_decimals = await get_token_decimals(token_address, self.rpc_url)
+
         if dry_run:
             executed_price = quote.price if quote else None
             quantity = quantity_token
@@ -241,6 +309,7 @@ class TraderExecutionService:
             quantity_token=quantity_token,
             quote_payload=quote.raw if quote else None,
             input_price_usd=input_price_usd,
+            token_decimals=token_decimals,
         )
         result = await trader.call_tool(method, args)
 
@@ -249,6 +318,7 @@ class TraderExecutionService:
         tx_hash = self._extract_tx_hash(result)
         executed_price = self._extract_price(
             result, side=side, native_price_usd=input_price_usd,
+            token_decimals=token_decimals,
         )
         executed_qty = self._extract_first_float(
             result,
@@ -268,7 +338,7 @@ class TraderExecutionService:
                 ("tokenReceived", "token_received", "outputAmount", "outAmount", "amountOut"),
             )
             if raw_received is not None and raw_received > 0:
-                executed_qty = raw_received / (10 ** 9)  # SPL default decimals
+                executed_qty = raw_received / (10 ** token_decimals)
 
         if success and executed_qty is None and executed_price and executed_price > 0:
             executed_qty = notional_usd / executed_price
@@ -301,6 +371,7 @@ class TraderExecutionService:
         quantity_token: Optional[float],
         quote_payload: Optional[Any],
         input_price_usd: Optional[float] = None,
+        token_decimals: int = _SPL_DEFAULT_DECIMALS,
     ) -> Dict[str, Any]:
         input_schema = tool_schema.get("inputSchema", {})
         properties = input_schema.get("properties", {})
@@ -317,6 +388,7 @@ class TraderExecutionService:
                 quantity_token=quantity_token,
                 quote_payload=quote_payload,
                 input_price_usd=input_price_usd,
+                token_decimals=token_decimals,
             )
             if value is not None:
                 args[key] = value
@@ -332,6 +404,7 @@ class TraderExecutionService:
                 quantity_token=quantity_token,
                 quote_payload=quote_payload,
                 input_price_usd=input_price_usd,
+                token_decimals=token_decimals,
             )
             if value is None:
                 raise ValueError(f"Unable to infer required trader argument: {key}")
@@ -348,6 +421,7 @@ class TraderExecutionService:
         quantity_token: Optional[float],
         quote_payload: Optional[Any],
         input_price_usd: Optional[float] = None,
+        token_decimals: int = _SPL_DEFAULT_DECIMALS,
     ) -> Any:
         key = param_name.lower()
 
@@ -374,9 +448,10 @@ class TraderExecutionService:
                 for token in ("output", "to", "destination", "buy", "outmint", "tokenout", "out_token")
             )
             if is_input:
-                return self.quote_mint if side == "buy" else token_address
+                # buy_token always uses SOL as input; match that for quotes
+                return SOL_NATIVE_MINT if side == "buy" else token_address
             if is_output:
-                return token_address if side == "buy" else self.quote_mint
+                return token_address if side == "buy" else SOL_NATIVE_MINT
             return token_address
 
         if "slippage" in key:
@@ -401,7 +476,11 @@ class TraderExecutionService:
             return float(notional_usd)
 
         if "decimal" in key:
-            return 9
+            is_input_dec = "input" in key or "in_" in key
+            if is_input_dec:
+                # input_decimals: buy → native (SOL=9), sell → token
+                return 9 if side == "buy" else token_decimals
+            return token_decimals
 
         if "symbol" in key:
             return "USDC" if side == "buy" else "TOKEN"
