@@ -150,12 +150,18 @@ class LagStrategyEngine:
         if not entries:
             entries = await self.db.list_entries()
 
+        from app.lag_execution import SOL_NATIVE_MINT
+
+        excluded = {SOL_NATIVE_MINT.lower(), self.config.quote_mint.lower()}
         chain = self.config.chain.lower()
         deduped: Dict[str, WatchlistEntry] = {}
         for entry in entries:
             if entry.chain != chain:
                 continue
-            deduped.setdefault(entry.token_address.lower(), entry)
+            addr_lower = entry.token_address.lower()
+            if addr_lower in excluded:
+                continue
+            deduped.setdefault(addr_lower, entry)
         return list(deduped.values())
 
     async def _process_entry_candidate(

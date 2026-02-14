@@ -273,6 +273,12 @@ class TraderExecutionService:
         if success and executed_qty is None and executed_price and executed_price > 0:
             executed_qty = notional_usd / executed_price
 
+        # Live trades must have a tx_hash to be considered successful
+        if success and tx_hash is None:
+            success = False
+            if error is None:
+                error = "No transaction hash in trader response"
+
         if not success and error is None:
             error = f"Trader execute method '{method}' returned unsuccessful response"
 
