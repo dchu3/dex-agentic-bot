@@ -399,20 +399,49 @@ class LagStrategyEngine:
         )
         current_price = quote.price
         close_reason = self._exit_reason(position, current_price, now)
+        logger.info(
+            "Exit check %s: price=%.10f stop=%.10f take=%.10f → %s",
+            position.symbol, current_price, position.stop_price,
+            position.take_price, close_reason or "hold",
+        )
         if close_reason is None:
             return
 
-        requested_notional = current_price * position.quantity_token
+        # Use actual wallet balance when available to avoid selling more
+        # tokens than the wallet holds (quote outAmount ≠ actual received).
+        sell_qty = position.quantity_token
+        if not self.config.dry_run:
+            actual_balance = await self.execution.get_wallet_token_balance(
+                position.token_address,
+            )
+            if actual_balance is not None and actual_balance > 0:
+                if actual_balance < sell_qty:
+                    logger.info(
+                        "Adjusting sell qty for %s: stored=%.6f wallet=%.6f",
+                        position.symbol, sell_qty, actual_balance,
+                    )
+                sell_qty = min(sell_qty, actual_balance)
+
+        requested_notional = current_price * sell_qty
+        logger.info(
+            "Exit triggered %s (%s): selling qty=%.6f notional=$%.4f",
+            position.symbol, close_reason, sell_qty, requested_notional,
+        )
         execution = await self.execution.execute_trade(
             token_address=position.token_address,
             notional_usd=requested_notional,
             side="sell",
-            quantity_token=position.quantity_token,
+            quantity_token=sell_qty,
             dry_run=self.config.dry_run,
             quote=quote,
             input_price_usd=self._native_price_usd,
         )
         exit_price = execution.executed_price or current_price
+        logger.info(
+            "Sell result %s: success=%s tx=%s price=%.10f error=%s",
+            position.symbol, execution.success, execution.tx_hash,
+            exit_price, execution.error,
+        )
 
         if execution.success:
             realized_pnl = (exit_price - position.entry_price) * position.quantity_token
@@ -447,6 +476,9 @@ class LagStrategyEngine:
                     data={"realized_pnl_usd": realized_pnl},
                 )
         else:
+            err_msg = f"Sell failed for {position.symbol}: {execution.error or 'unknown error'}"
+            cycle_result.errors.append(err_msg)
+            logger.warning(err_msg)
             await self.db.record_lag_execution(
                 position_id=position.id,
                 token_address=position.token_address,
@@ -463,7 +495,7 @@ class LagStrategyEngine:
             )
             await self.db.record_lag_event(
                 event_type="exit_failed",
-                message=f"Exit failed for {position.symbol}: {execution.error or 'unknown error'}",
+                message=err_msg,
                 token_address=position.token_address,
                 symbol=position.symbol,
                 chain=position.chain,

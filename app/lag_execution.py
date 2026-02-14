@@ -267,6 +267,35 @@ class TraderExecutionService:
         )
         return TradeQuote(price=price, method=method, raw=result, liquidity_usd=liquidity)
 
+    async def get_wallet_token_balance(self, token_address: str) -> Optional[float]:
+        """Query actual token balance from the trader wallet via get_balance.
+
+        Returns the human-readable ``uiAmount`` if available, or ``None``
+        when the MCP doesn't support ``get_balance`` or the call fails.
+        """
+        trader = self.mcp_manager.get_client("trader")
+        if trader is None:
+            return None
+        tool_names = [t.get("name", "") for t in (trader.tools or []) if t.get("name")]
+        if "get_balance" not in tool_names:
+            return None
+        try:
+            result = await trader.call_tool("get_balance", {"token_address": token_address})
+            if isinstance(result, str):
+                try:
+                    result = json.loads(result)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            if isinstance(result, dict):
+                tb = result.get("tokenBalance")
+                if isinstance(tb, dict):
+                    ui = tb.get("uiAmount")
+                    if ui is not None:
+                        return float(ui)
+        except Exception as exc:
+            logger.debug("get_balance failed for %s: %s", token_address, exc)
+        return None
+
     async def execute_trade(
         self,
         token_address: str,

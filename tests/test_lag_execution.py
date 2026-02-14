@@ -388,6 +388,17 @@ class MockRealTraderClient:
                 "solReceived": sol_received,
                 "explorer": "https://solscan.io/tx/sell-tx-real",
             }
+        if method == "get_balance":
+            return {
+                "wallet": "FakeWallet111111111111111111111111111111111",
+                "solBalance": 1.5,
+                "tokenBalance": {
+                    "mint": arguments.get("token_address", ""),
+                    "amount": "19800000000",
+                    "decimals": 9,
+                    "uiAmount": 19800.0,
+                },
+            }
         raise ValueError(f"Unknown method: {method}")
 
 
@@ -887,3 +898,30 @@ async def test_sell_quote_passes_token_input_decimals() -> None:
     quote_call = [(m, a) for m, a in trader.calls if m == "get_quote"][0]
     # input_decimals should be 6 (token) on sell side
     assert quote_call[1]["input_decimals"] == 6
+
+
+@pytest.mark.asyncio
+async def test_get_wallet_token_balance() -> None:
+    """get_wallet_token_balance returns uiAmount from get_balance response."""
+    trader = MockRealTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    balance = await service.get_wallet_token_balance("SomeMint111111111111111111111111111111111111")
+    assert balance == pytest.approx(19800.0)
+    assert any(m == "get_balance" for m, _ in trader.calls)
+
+
+@pytest.mark.asyncio
+async def test_get_wallet_token_balance_no_tool() -> None:
+    """Returns None when trader MCP has no get_balance tool."""
+    trader = MockTraderClient()  # simple mock without get_balance
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    balance = await service.get_wallet_token_balance("SomeMint111111111111111111111111111111111111")
+    assert balance is None
