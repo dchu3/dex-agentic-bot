@@ -466,6 +466,7 @@ class LagStrategyEngine:
                 metadata={"raw": execution.raw},
             )
             if closed:
+                position.realized_pnl_usd = realized_pnl
                 cycle_result.positions_closed.append(position)
                 await self.db.record_lag_event(
                     event_type="position_closed",
