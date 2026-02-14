@@ -821,6 +821,7 @@ async def _cmd_lag(
         output.info("  /lag stop       - Stop lag scheduler")
         output.info("  /lag positions  - List open lag positions")
         output.info("  /lag close <id|all> - Manually close position(s)")
+        output.info("  /lag reset-pnl  - Zero out today's realized PnL")
         output.info("  /lag events     - Show recent lag events")
         return
 
@@ -984,6 +985,11 @@ async def _cmd_lag(
             ts = event.created_at.isoformat() if event.created_at else "unknown-time"
             symbol = event.symbol or "?"
             output.info(f"  • [{ts}] {event.severity.upper()} {symbol}: {event.message}")
+        return
+
+    if subcmd == "reset-pnl":
+        count = await db.reset_daily_lag_pnl()
+        output.info(f"✅ Zeroed realized PnL on {count} position(s) closed today.")
         return
 
     output.warning(f"Unknown subcommand: {subcmd}. Use /lag for help.")
