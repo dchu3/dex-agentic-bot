@@ -285,3 +285,194 @@ async def test_directional_tools_resolve_sell_token() -> None:
     assert result.success is True
     assert result.method == "sell_token"
     assert result.tx_hash == "sell-tx-hash"
+
+
+class MockRealTraderClient:
+    """Mock matching the actual dex-trader-mcp tool schemas (sol_amount, token_amount)."""
+
+    def __init__(self) -> None:
+        self.tools: list[dict[str, Any]] = [
+            {
+                "name": "get_quote",
+                "inputSchema": {
+                    "type": "object",
+                    "required": ["input_mint", "output_mint", "amount"],
+                    "properties": {
+                        "input_mint": {"type": "string"},
+                        "output_mint": {"type": "string"},
+                        "amount": {"type": "number"},
+                        "input_decimals": {"type": "integer"},
+                        "slippage_bps": {"type": "integer"},
+                    },
+                },
+            },
+            {
+                "name": "buy_token",
+                "inputSchema": {
+                    "type": "object",
+                    "required": ["token_address", "sol_amount"],
+                    "properties": {
+                        "token_address": {"type": "string"},
+                        "sol_amount": {"type": "number"},
+                        "slippage_bps": {"type": "integer"},
+                    },
+                },
+            },
+            {
+                "name": "sell_token",
+                "inputSchema": {
+                    "type": "object",
+                    "required": ["token_address", "token_amount", "token_decimals"],
+                    "properties": {
+                        "token_address": {"type": "string"},
+                        "token_amount": {"type": "number"},
+                        "token_decimals": {"type": "integer"},
+                        "slippage_bps": {"type": "integer"},
+                    },
+                },
+            },
+            {
+                "name": "get_balance",
+                "inputSchema": {
+                    "type": "object",
+                    "required": [],
+                    "properties": {
+                        "token_address": {"type": "string"},
+                    },
+                },
+            },
+        ]
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def call_tool(self, method: str, arguments: dict[str, Any]) -> Any:
+        self.calls.append((method, arguments))
+        if method == "get_quote":
+            return {"priceUsd": "0.000025", "liquidityUsd": 100000}
+        if method == "buy_token":
+            return {"success": True, "txHash": "buy-tx", "executedPrice": "0.000025", "quantity": "1000000"}
+        if method == "sell_token":
+            return {"success": True, "txHash": "sell-tx", "executedPrice": "0.000026", "quantity": "1000000"}
+        raise ValueError(f"Unknown method: {method}")
+
+
+@pytest.mark.asyncio
+async def test_buy_converts_usd_to_sol_amount() -> None:
+    """buy_token with sol_amount param converts USD to SOL using input_price_usd."""
+    trader = MockRealTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    sol_price = 180.0
+    notional_usd = 0.50
+
+    quote = await service.get_quote(
+        token_address="BonkMint111111111111111111111111111111111111",
+        notional_usd=notional_usd,
+        side="buy",
+        input_price_usd=sol_price,
+    )
+    result = await service.execute_trade(
+        token_address="BonkMint111111111111111111111111111111111111",
+        notional_usd=notional_usd,
+        side="buy",
+        quantity_token=None,
+        dry_run=False,
+        quote=quote,
+        input_price_usd=sol_price,
+    )
+
+    assert result.success is True
+    assert result.method == "buy_token"
+
+    # Verify the buy_token call received SOL amount, not USD
+    buy_call = [c for c in trader.calls if c[0] == "buy_token"][0]
+    sol_amount = buy_call[1]["sol_amount"]
+    expected_sol = notional_usd / sol_price  # 0.50 / 180 ≈ 0.00278
+    assert sol_amount == pytest.approx(expected_sol, rel=1e-6)
+    # Must NOT be the raw USD value
+    assert sol_amount != pytest.approx(notional_usd)
+
+
+@pytest.mark.asyncio
+async def test_sell_passes_quantity_not_usd() -> None:
+    """sell_token with token_amount param uses quantity_token on sell side."""
+    trader = MockRealTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    token_price = 0.000025
+    quantity = 1000000.0
+
+    quote = await service.get_quote(
+        token_address="BonkMint111111111111111111111111111111111111",
+        notional_usd=25,
+        side="sell",
+        input_price_usd=token_price,
+    )
+    result = await service.execute_trade(
+        token_address="BonkMint111111111111111111111111111111111111",
+        notional_usd=25,
+        side="sell",
+        quantity_token=quantity,
+        dry_run=False,
+        quote=quote,
+        input_price_usd=token_price,
+    )
+
+    assert result.success is True
+    assert result.method == "sell_token"
+    sell_call = [c for c in trader.calls if c[0] == "sell_token"][0]
+    assert sell_call[1]["token_amount"] == pytest.approx(quantity)
+    assert sell_call[1]["token_decimals"] == 9
+
+
+@pytest.mark.asyncio
+async def test_quote_converts_usd_to_input_token_amount() -> None:
+    """get_quote with generic 'amount' param converts USD to input token units."""
+    trader = MockRealTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    sol_price = 200.0
+    notional_usd = 10.0
+
+    await service.get_quote(
+        token_address="BonkMint111111111111111111111111111111111111",
+        notional_usd=notional_usd,
+        side="buy",
+        input_price_usd=sol_price,
+    )
+
+    quote_call = trader.calls[0]
+    assert quote_call[0] == "get_quote"
+    amount = quote_call[1]["amount"]
+    expected = notional_usd / sol_price  # 10 / 200 = 0.05 SOL
+    assert amount == pytest.approx(expected, rel=1e-6)
+
+
+@pytest.mark.asyncio
+async def test_amount_without_price_falls_back_to_raw_usd() -> None:
+    """When input_price_usd is not provided, amount falls back to raw notional_usd."""
+    trader = MockRealTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    notional_usd = 0.50
+
+    await service.get_quote(
+        token_address="BonkMint111111111111111111111111111111111111",
+        notional_usd=notional_usd,
+        side="buy",
+        # No input_price_usd provided
+    )
+
+    quote_call = trader.calls[0]
+    assert quote_call[1]["amount"] == pytest.approx(notional_usd)
