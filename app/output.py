@@ -468,7 +468,13 @@ class CLIOutput:
                     "/alerts history": "Show alert history",
                     "/poller": "Show price monitor status",
                     "/fix-addresses": "Fix lowercase Solana addresses",
-                    "/lag [status|run|start|stop|positions|events]": "Manage lag strategy scheduler",
+                    "/lag status": "Show lag strategy status",
+                    "/lag run": "Run one lag cycle now",
+                    "/lag start": "Start lag scheduler",
+                    "/lag stop": "Stop lag scheduler",
+                    "/lag positions": "List open lag positions",
+                    "/lag close <id|all>": "Manually close position(s)",
+                    "/lag events": "Show recent lag events",
                     "/help": "Show this help",
                 },
             }
@@ -494,9 +500,14 @@ class CLIOutput:
             print("  /alerts history              Show alert history")
             print("  /poller                      Show price monitor status")
             print("  /fix-addresses               Fix lowercase Solana addresses")
+            print("\nLag Strategy:")
             print("  /lag status                  Show lag strategy status")
-            print("  /lag run                     Run one lag cycle")
-            print("  /lag positions               Show open lag positions")
+            print("  /lag run                     Run one lag cycle now")
+            print("  /lag start                   Start lag scheduler")
+            print("  /lag stop                    Stop lag scheduler")
+            print("  /lag positions               List open lag positions")
+            print("  /lag close <id|all>          Manually close position(s)")
+            print("  /lag events                  Show recent lag events")
             print("\n  /help             Show this help")
             print("\nExamples:")
             print("  > search for PEPE on ethereum")
@@ -536,9 +547,15 @@ class CLIOutput:
         cmd_table.add_row("  /alerts history", "Show alert history")
         cmd_table.add_row("  /poller", "Show price monitor status")
         cmd_table.add_row("  /fix-addresses", "Fix lowercase Solana addresses")
+        cmd_table.add_row("", "")
+        cmd_table.add_row("[bold]Lag Strategy[/bold]", "")
         cmd_table.add_row("  /lag status", "Show lag strategy status")
         cmd_table.add_row("  /lag run", "Run one lag cycle now")
+        cmd_table.add_row("  /lag start", "Start lag scheduler")
+        cmd_table.add_row("  /lag stop", "Stop lag scheduler")
         cmd_table.add_row("  /lag positions", "List open lag positions")
+        cmd_table.add_row("  /lag close <id|all>", "Manually close position(s)")
+        cmd_table.add_row("  /lag events", "Show recent lag events")
         cmd_table.add_row("", "")
         cmd_table.add_row("  /help", "Show this help")
 
