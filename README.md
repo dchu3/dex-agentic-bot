@@ -130,9 +130,10 @@ By default this runs in **dry-run mode** (`LAG_STRATEGY_DRY_RUN=true`), so no re
 Useful `/lag` commands:
 - `/lag status` - Scheduler/risk status and cycle summary
 - `/lag run` - Run one cycle immediately
-- `/lag positions` - Show open lag positions
-- `/lag events` - Show recent lag strategy events
 - `/lag start` / `/lag stop` - Start or stop scheduler
+- `/lag positions` - Show open lag positions
+- `/lag close <id|all>` - Manually close position(s)
+- `/lag events` - Show recent lag strategy events
 
 To enable live execution, either set `LAG_STRATEGY_DRY_RUN=false` in `.env` or start with:
 
