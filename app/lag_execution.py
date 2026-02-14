@@ -474,7 +474,7 @@ class TraderExecutionService:
             )
             is_output = any(
                 token in key
-                for token in ("output", "to", "destination", "buy", "outmint", "tokenout", "out_token")
+                for token in ("output", "destination", "buy", "outmint", "tokenout", "out_token", "to_mint", "tomint", "to_token", "totoken")
             )
             if is_input:
                 # buy_token always uses SOL as input; match that for quotes

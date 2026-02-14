@@ -942,3 +942,30 @@ async def test_get_wallet_token_balance_no_tool() -> None:
     )
     balance = await service.get_wallet_token_balance("SomeMint111111111111111111111111111111111111")
     assert balance is None
+
+
+@pytest.mark.asyncio
+async def test_sell_token_gets_token_address_not_sol() -> None:
+    """sell_token must receive actual token address, not SOL native mint."""
+    from app.lag_execution import SOL_NATIVE_MINT
+
+    trader = MockRealTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    token = "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN"
+    execution = await service.execute_trade(
+        token_address=token,
+        notional_usd=0.50,
+        side="sell",
+        quantity_token=3.1777,
+        dry_run=False,
+        quote=None,
+        input_price_usd=87.0,
+        token_decimals=6,
+    )
+    sell_call = [(m, a) for m, a in trader.calls if m == "sell_token"][0]
+    assert sell_call[1]["token_address"] == token
+    assert sell_call[1]["token_address"] != SOL_NATIVE_MINT
