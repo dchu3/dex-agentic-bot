@@ -820,6 +820,7 @@ async def _cmd_lag(
         output.info("  /lag start      - Start lag scheduler")
         output.info("  /lag stop       - Stop lag scheduler")
         output.info("  /lag positions  - List open lag positions")
+        output.info("  /lag close <id|all> - Manually close position(s)")
         output.info("  /lag events     - Show recent lag events")
         return
 
@@ -900,10 +901,77 @@ async def _cmd_lag(
         output.info(f"⚡ Open Lag Positions ({len(positions)}):")
         for pos in positions:
             output.info(
-                f"  • {pos.symbol} ({pos.chain}) entry ${pos.entry_price:.10f}, "
+                f"  • #{pos.id} {pos.symbol} ({pos.chain}) entry ${pos.entry_price:.10f}, "
                 f"stop ${pos.stop_price:.10f}, take ${pos.take_price:.10f}, "
                 f"qty {pos.quantity_token:.4f}"
             )
+        return
+
+    if subcmd == "close":
+        if len(args) < 2:
+            output.warning("Usage: /lag close <position_id|all>")
+            return
+
+        chain_filter = scheduler.engine.config.chain if scheduler else "solana"
+        target = args[1].lower()
+
+        if target == "all":
+            positions = await db.list_open_lag_positions(chain=chain_filter)
+            if not positions:
+                output.info("No open lag positions to close.")
+                return
+            closed = 0
+            for pos in positions:
+                ok = await db.close_lag_position(
+                    position_id=pos.id,
+                    exit_price=pos.entry_price,
+                    close_reason="manual",
+                    realized_pnl_usd=0.0,
+                )
+                if ok:
+                    closed += 1
+                    await db.record_lag_event(
+                        event_type="manual_close",
+                        message=f"Manually closed {pos.symbol} position #{pos.id}",
+                        token_address=pos.token_address,
+                        symbol=pos.symbol,
+                        chain=pos.chain,
+                    )
+            output.info(f"✅ Closed {closed}/{len(positions)} open lag positions.")
+            return
+
+        try:
+            position_id = int(target)
+        except ValueError:
+            output.warning(f"Invalid position ID: {target}. Use a number or 'all'.")
+            return
+
+        positions = await db.list_open_lag_positions(chain=chain_filter)
+        position = next((p for p in positions if p.id == position_id), None)
+        if position is None:
+            output.warning(f"No open position found with ID {position_id}.")
+            return
+
+        ok = await db.close_lag_position(
+            position_id=position.id,
+            exit_price=position.entry_price,
+            close_reason="manual",
+            realized_pnl_usd=0.0,
+        )
+        if ok:
+            await db.record_lag_event(
+                event_type="manual_close",
+                message=f"Manually closed {position.symbol} position #{position.id}",
+                token_address=position.token_address,
+                symbol=position.symbol,
+                chain=position.chain,
+            )
+            output.info(
+                f"✅ Closed position #{position.id} ({position.symbol}) "
+                f"entry ${position.entry_price:.10f}, qty {position.quantity_token:.4f}"
+            )
+        else:
+            output.warning(f"Failed to close position #{position_id}.")
         return
 
     if subcmd == "events":
