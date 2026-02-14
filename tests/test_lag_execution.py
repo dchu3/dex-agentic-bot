@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Tuple
 
 import pytest
 
-from app.lag_execution import TraderExecutionService, get_token_decimals, _decimals_cache
+from app.lag_execution import TraderExecutionService, get_token_decimals, _decimals_cache, verify_transaction_success
 
 
 def test_extract_price_alternative_keys() -> None:
@@ -969,3 +969,68 @@ async def test_sell_token_gets_token_address_not_sol() -> None:
     sell_call = [(m, a) for m, a in trader.calls if m == "sell_token"][0]
     assert sell_call[1]["token_address"] == token
     assert sell_call[1]["token_address"] != SOL_NATIVE_MINT
+
+
+@pytest.mark.asyncio
+async def test_verify_transaction_success_detects_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """verify_transaction_success returns False for on-chain failures."""
+    import httpx
+
+    class MockResponse:
+        status_code = 200
+        def raise_for_status(self) -> None:
+            pass
+        def json(self) -> dict:
+            return {
+                "jsonrpc": "2.0",
+                "result": {
+                    "meta": {"err": {"InstructionError": [3, {"Custom": 6001}]}},
+                },
+            }
+
+    async def mock_post(self, *args: Any, **kwargs: Any) -> MockResponse:
+        return MockResponse()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+    result = await verify_transaction_success("fake-tx")
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_verify_transaction_success_confirms_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """verify_transaction_success returns True for successful transactions."""
+    import httpx
+
+    class MockResponse:
+        status_code = 200
+        def raise_for_status(self) -> None:
+            pass
+        def json(self) -> dict:
+            return {"jsonrpc": "2.0", "result": {"meta": {"err": None}}}
+
+    async def mock_post(self, *args: Any, **kwargs: Any) -> MockResponse:
+        return MockResponse()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+    result = await verify_transaction_success("fake-tx")
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_verify_transaction_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    """verify_transaction_success returns None when tx not found."""
+    import httpx
+
+    class MockResponse:
+        status_code = 200
+        def raise_for_status(self) -> None:
+            pass
+        def json(self) -> dict:
+            return {"jsonrpc": "2.0", "result": None}
+
+    async def mock_post(self, *args: Any, **kwargs: Any) -> MockResponse:
+        return MockResponse()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+    result = await verify_transaction_success("fake-tx")
+    assert result is None

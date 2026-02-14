@@ -69,6 +69,43 @@ async def get_token_decimals(
     return _SPL_DEFAULT_DECIMALS
 
 
+async def verify_transaction_success(
+    tx_hash: str,
+    rpc_url: str = _DEFAULT_RPC_URL,
+) -> Optional[bool]:
+    """Check whether a Solana transaction succeeded on-chain.
+
+    Returns ``True`` if the transaction confirmed without error,
+    ``False`` if the transaction failed (e.g. slippage exceeded),
+    or ``None`` if the status could not be determined (RPC error,
+    transaction not yet found, etc.).
+    """
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                rpc_url,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getTransaction",
+                    "params": [
+                        tx_hash,
+                        {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0},
+                    ],
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            result = data.get("result")
+            if result is None:
+                return None
+            meta = result.get("meta", {})
+            return meta.get("err") is None
+    except Exception:
+        logger.warning("Failed to verify tx %s on-chain", tx_hash)
+        return None
+
+
 @dataclass
 class TraderMethodSet:
     """Resolved trader tool names for quote + execution."""
@@ -377,6 +414,14 @@ class TraderExecutionService:
             success = False
             if error is None:
                 error = "No transaction hash in trader response"
+
+        # Verify on-chain success (catches slippage failures, etc.)
+        if success and tx_hash:
+            on_chain_ok = await verify_transaction_success(tx_hash, self.rpc_url)
+            if on_chain_ok is False:
+                success = False
+                error = f"Transaction {tx_hash} failed on-chain (likely slippage)"
+                logger.warning(error)
 
         if not success and error is None:
             error = f"Trader execute method '{method}' returned unsuccessful response"
