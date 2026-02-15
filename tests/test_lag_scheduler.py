@@ -136,3 +136,16 @@ class TestFormatMessage:
         assert "🟢" in msg
         assert "entry $0.001000" in msg
         assert "qty 1000.0000" in msg
+
+    def test_atomic_close_shows_atomic_reason(self):
+        pos = _make_position(
+            exit_price=0.0011,
+            realized_pnl_usd=0.10,
+            close_reason="atomic",
+        )
+        result = _make_result(positions_closed=[pos])
+        msg = self._formatter()._format_message(result)
+        assert "[atomic]" in msg
+        assert "PnL $0.10" in msg
+        assert "$0.001000" in msg  # entry
+        assert "$0.001100" in msg  # exit

@@ -1034,3 +1034,183 @@ async def test_verify_transaction_not_found(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
     result = await verify_transaction_success("fake-tx")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Atomic trade execution tests
+# ---------------------------------------------------------------------------
+
+
+class AtomicMockTraderClient(MockTraderClient):
+    """Trader client that also supports buy_and_sell."""
+
+    def __init__(self, atomic_response: Dict[str, Any]) -> None:
+        super().__init__()
+        self.atomic_response = atomic_response
+        self.tools.append({
+            "name": "buy_and_sell",
+            "inputSchema": {
+                "type": "object",
+                "required": ["token_address", "sol_amount"],
+                "properties": {
+                    "token_address": {"type": "string"},
+                    "sol_amount": {"type": "number"},
+                    "slippage_bps": {"type": "integer"},
+                },
+            },
+        })
+
+    async def call_tool(self, method: str, arguments: Dict[str, Any]) -> Any:
+        self.calls.append((method, arguments))
+        if method == "buy_and_sell":
+            return self.atomic_response
+        return await super().call_tool(method, arguments)
+
+
+@pytest.mark.asyncio
+async def test_execute_atomic_trade_success() -> None:
+    """execute_atomic_trade returns correct fields on full success."""
+    response = {
+        "status": "success",
+        "buy_transaction": "buy_tx_1",
+        "sell_transaction": "sell_tx_2",
+        "sol_spent": 0.1,
+        "token_received": "1000000000",  # 1.0 token at 9 decimals
+        "token_sold": 1.0,
+        "sol_received": 0.105,
+        "token_mint": "TestMint123",
+        "profit_sol": 0.005,
+    }
+    trader = AtomicMockTraderClient(atomic_response=response)
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    result = await service.execute_atomic_trade(
+        token_address="TestMint123",
+        notional_usd=18.0,
+        dry_run=False,
+        input_price_usd=180.0,
+    )
+    assert result.success is True
+    assert result.partial is False
+    assert result.buy_tx_hash == "buy_tx_1"
+    assert result.sell_tx_hash == "sell_tx_2"
+    assert result.entry_price is not None
+    assert result.exit_price is not None
+    assert result.profit_usd is not None
+    assert result.profit_usd == pytest.approx(0.005 * 180.0, abs=0.01)
+
+
+@pytest.mark.asyncio
+async def test_execute_atomic_trade_partial_failure() -> None:
+    """execute_atomic_trade returns partial=True when sell fails."""
+    response = {
+        "status": "partial",
+        "buy_transaction": "buy_tx_1",
+        "sol_spent": 0.1,
+        "token_received": "1000000000",
+        "token_mint": "TestMint123",
+        "sell_error": "insufficient liquidity",
+    }
+    trader = AtomicMockTraderClient(atomic_response=response)
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    result = await service.execute_atomic_trade(
+        token_address="TestMint123",
+        notional_usd=18.0,
+        dry_run=False,
+        input_price_usd=180.0,
+    )
+    assert result.success is False
+    assert result.partial is True
+    assert result.buy_tx_hash == "buy_tx_1"
+    assert result.sell_tx_hash is None
+    assert "insufficient liquidity" in result.error
+
+
+@pytest.mark.asyncio
+async def test_execute_atomic_trade_buy_error() -> None:
+    """execute_atomic_trade returns error when buy fails."""
+    response = {"status": "error", "phase": "buy", "error": "not enough SOL"}
+    trader = AtomicMockTraderClient(atomic_response=response)
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    result = await service.execute_atomic_trade(
+        token_address="TestMint123",
+        notional_usd=18.0,
+        dry_run=False,
+        input_price_usd=180.0,
+    )
+    assert result.success is False
+    assert result.partial is False
+    assert "not enough SOL" in result.error
+
+
+@pytest.mark.asyncio
+async def test_execute_atomic_trade_dry_run() -> None:
+    """execute_atomic_trade in dry_run mode returns simulated result."""
+    trader = MockTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    result = await service.execute_atomic_trade(
+        token_address="TestMint123",
+        notional_usd=18.0,
+        dry_run=True,
+        input_price_usd=180.0,
+        buy_price=1.00,
+        sell_price=1.05,
+    )
+    assert result.success is True
+    assert result.entry_price == 1.00
+    assert result.exit_price == 1.05
+    assert result.profit_usd == pytest.approx(0.9, abs=0.01)  # (1.05-1.00)*18
+
+
+@pytest.mark.asyncio
+async def test_execute_atomic_trade_no_tool() -> None:
+    """execute_atomic_trade fails gracefully when buy_and_sell tool is missing."""
+    trader = MockTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    result = await service.execute_atomic_trade(
+        token_address="TestMint123",
+        notional_usd=18.0,
+        dry_run=False,
+        input_price_usd=180.0,
+    )
+    assert result.success is False
+    assert "buy_and_sell" in result.error
+
+
+@pytest.mark.asyncio
+async def test_get_profitability_quotes() -> None:
+    """get_profitability_quotes returns buy, sell prices and profit bps."""
+    trader = MockTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    # MockTraderClient always returns priceUsd=1.05 for quotes
+    buy_p, sell_p, profit_bps = await service.get_profitability_quotes(
+        token_address="TestMint123",
+        notional_usd=25.0,
+        input_price_usd=180.0,
+    )
+    assert buy_p == pytest.approx(1.05, abs=0.01)
+    assert sell_p == pytest.approx(1.05, abs=0.01)
+    assert profit_bps == pytest.approx(0.0, abs=1.0)  # same price = ~0 bps
