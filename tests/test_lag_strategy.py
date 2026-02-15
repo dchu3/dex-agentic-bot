@@ -431,6 +431,7 @@ async def test_sell_pnl_uses_actual_sold_quantity(db):
     # PnL = (exit_price - entry_price) * sell_qty
     expected_pnl = (1.20 - 1.00) * 5.0
     assert closed_pos.realized_pnl_usd == pytest.approx(expected_pnl, abs=0.01)
+    assert closed_pos.close_reason == "take_profit"
 
 
 @pytest.mark.asyncio

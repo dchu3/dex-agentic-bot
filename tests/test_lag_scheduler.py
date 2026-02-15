@@ -119,6 +119,16 @@ class TestFormatMessage:
         msg = self._formatter()._format_message(result)
         assert "[unknown]" in msg
 
+    def test_tiny_negative_pnl_shows_extra_decimals(self):
+        """A PnL like -0.003 should display as $-0.003, not $-0.00."""
+        pos = _make_position(
+            exit_price=0.001,
+            realized_pnl_usd=-0.003,
+        )
+        result = _make_result(positions_closed=[pos])
+        msg = self._formatter()._format_message(result)
+        assert "PnL $-0.003" in msg
+
     def test_opened_position_format_unchanged(self):
         pos = _make_position()
         result = _make_result(entries_opened=[pos])

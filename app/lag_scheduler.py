@@ -132,9 +132,14 @@ class LagStrategyScheduler:
                 sell_price = format_price(position.exit_price)
                 pct = (pnl / position.notional_usd * 100) if position.notional_usd else 0.0
                 reason = position.close_reason or "unknown"
+                # Show extra decimals when PnL is tiny but non-zero
+                if pnl != 0 and abs(pnl) < 0.005:
+                    pnl_str = f"${pnl:.3f}"
+                else:
+                    pnl_str = f"${pnl:,.2f}"
                 lines.append(
                     f"• {position.symbol}: {entry_price} → {sell_price} "
-                    f"PnL ${pnl:,.2f} ({pct:+.1f}%) [{reason}]"
+                    f"PnL {pnl_str} ({pct:+.1f}%) [{reason}]"
                 )
             lines.append("")
 
