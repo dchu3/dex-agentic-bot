@@ -474,3 +474,198 @@ async def test_sell_failure_tracks_retry_count(db):
     events = await db.list_recent_lag_events(limit=20)
     event_types = [e.event_type for e in events]
     assert "exit_stuck" in event_types
+
+
+# ---------------------------------------------------------------------------
+# Atomic execution mode tests
+# ---------------------------------------------------------------------------
+
+
+class AtomicMockTraderClient(MockTraderClient):
+    """Trader client that also exposes buy_and_sell tool."""
+
+    def __init__(
+        self,
+        buy_price: float,
+        sell_price: float,
+        atomic_status: str = "success",
+        sell_error: str = "",
+    ) -> None:
+        super().__init__(buy_price, sell_price)
+        self.atomic_status = atomic_status
+        self.sell_error = sell_error
+        self.tools.append({
+            "name": "buy_and_sell",
+            "inputSchema": {
+                "type": "object",
+                "required": ["token_address", "sol_amount"],
+                "properties": {
+                    "token_address": {"type": "string"},
+                    "sol_amount": {"type": "number"},
+                    "slippage_bps": {"type": "integer"},
+                },
+            },
+        })
+
+    async def call_tool(self, method: str, arguments: Dict[str, Any]) -> Any:
+        if method == "buy_and_sell":
+            sol_amount = arguments.get("sol_amount", 0.1)
+            if self.atomic_status == "error":
+                return {"status": "error", "phase": "buy", "error": "simulated buy error"}
+            # Simulate: buy at buy_price, sell at sell_price
+            token_qty = (sol_amount * 180.0) / self.buy_price  # 180 = mock SOL price
+            token_raw = int(token_qty * 10**9)
+            sol_received = (token_qty * self.sell_price) / 180.0
+            if self.atomic_status == "partial":
+                return {
+                    "status": "partial",
+                    "buy_transaction": "buy_tx_123",
+                    "sol_spent": sol_amount,
+                    "token_received": str(token_raw),
+                    "token_mint": arguments["token_address"],
+                    "sell_error": self.sell_error or "simulated sell error",
+                }
+            return {
+                "status": "success",
+                "buy_transaction": "buy_tx_123",
+                "sell_transaction": "sell_tx_456",
+                "sol_spent": sol_amount,
+                "token_received": str(token_raw),
+                "token_sold": token_qty,
+                "sol_received": sol_received,
+                "token_mint": arguments["token_address"],
+                "profit_sol": sol_received - sol_amount,
+            }
+        return await super().call_tool(method, arguments)
+
+
+@pytest.mark.asyncio
+async def test_atomic_mode_happy_path(db):
+    """Atomic mode: buy+sell succeeds, position recorded as closed."""
+    await db.add_entry(
+        token_address="So11111111111111111111111111111111111111111",
+        symbol="TEST",
+        chain="solana",
+    )
+    # Reference price is 1.20, executable buy is 1.00 → edge = 2000 bps (signal)
+    manager = MockMCPManager(
+        dexscreener=MockDexScreenerClient(price_usd=1.20, liquidity_usd=50000),
+        trader=AtomicMockTraderClient(buy_price=1.00, sell_price=1.05),
+    )
+    engine = LagStrategyEngine(
+        db=db,
+        mcp_manager=manager,
+        config=_config(execution_mode="atomic", min_profit_bps=0),
+    )
+    result = await engine.run_cycle()
+
+    assert result.signals_triggered == 1
+    assert len(result.positions_closed) == 1
+    assert len(result.entries_opened) == 0
+    closed = result.positions_closed[0]
+    assert closed.close_reason == "atomic"
+    assert closed.exit_price is not None
+    assert closed.realized_pnl_usd is not None
+
+
+@pytest.mark.asyncio
+async def test_atomic_mode_skips_unprofitable(db):
+    """Atomic mode: skips execution when estimated profit is below threshold."""
+    await db.add_entry(
+        token_address="So11111111111111111111111111111111111111111",
+        symbol="TEST",
+        chain="solana",
+    )
+    # Buy and sell at same price → 0 profit bps
+    manager = MockMCPManager(
+        dexscreener=MockDexScreenerClient(price_usd=1.20, liquidity_usd=50000),
+        trader=AtomicMockTraderClient(buy_price=1.00, sell_price=1.00),
+    )
+    engine = LagStrategyEngine(
+        db=db,
+        mcp_manager=manager,
+        config=_config(execution_mode="atomic", min_profit_bps=50.0),
+    )
+    result = await engine.run_cycle()
+
+    assert result.signals_triggered == 1
+    assert len(result.positions_closed) == 0
+    assert len(result.entries_opened) == 0
+
+
+@pytest.mark.asyncio
+async def test_atomic_mode_partial_failure_creates_open_position(db):
+    """Atomic mode: buy ok + sell fails → position opens for standard exit."""
+    await db.add_entry(
+        token_address="So11111111111111111111111111111111111111111",
+        symbol="TEST",
+        chain="solana",
+    )
+    manager = MockMCPManager(
+        dexscreener=MockDexScreenerClient(price_usd=1.20, liquidity_usd=50000),
+        trader=AtomicMockTraderClient(
+            buy_price=1.00, sell_price=1.05,
+            atomic_status="partial", sell_error="insufficient liquidity",
+        ),
+    )
+    engine = LagStrategyEngine(
+        db=db,
+        mcp_manager=manager,
+        config=_config(execution_mode="atomic", min_profit_bps=0, dry_run=False),
+    )
+    result = await engine.run_cycle()
+
+    assert len(result.entries_opened) == 1
+    assert len(result.positions_closed) == 0
+    assert len(result.errors) >= 1
+    assert "partial" in result.errors[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_atomic_mode_buy_failure(db):
+    """Atomic mode: buy fails entirely → error recorded, no position."""
+    await db.add_entry(
+        token_address="So11111111111111111111111111111111111111111",
+        symbol="TEST",
+        chain="solana",
+    )
+    manager = MockMCPManager(
+        dexscreener=MockDexScreenerClient(price_usd=1.20, liquidity_usd=50000),
+        trader=AtomicMockTraderClient(
+            buy_price=1.00, sell_price=1.05, atomic_status="error",
+        ),
+    )
+    engine = LagStrategyEngine(
+        db=db,
+        mcp_manager=manager,
+        config=_config(execution_mode="atomic", min_profit_bps=0, dry_run=False),
+    )
+    result = await engine.run_cycle()
+
+    assert len(result.entries_opened) == 0
+    assert len(result.positions_closed) == 0
+    assert len(result.errors) >= 1
+
+
+@pytest.mark.asyncio
+async def test_standard_mode_unaffected_by_atomic_config(db):
+    """Standard mode still works when atomic config fields are present."""
+    await db.add_entry(
+        token_address="So11111111111111111111111111111111111111111",
+        symbol="TEST",
+        chain="solana",
+    )
+    manager = MockMCPManager(
+        dexscreener=MockDexScreenerClient(price_usd=1.20, liquidity_usd=50000),
+        trader=MockTraderClient(buy_price=1.00, sell_price=1.20),
+    )
+    engine = LagStrategyEngine(
+        db=db,
+        mcp_manager=manager,
+        config=_config(execution_mode="standard", min_profit_bps=5.0),
+    )
+    result = await engine.run_cycle()
+
+    assert result.signals_triggered == 1
+    assert len(result.entries_opened) == 1
+    assert len(result.positions_closed) == 0

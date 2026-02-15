@@ -47,6 +47,8 @@ class LagStrategyConfig:
     execute_method: str = ""
     quote_mint: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
     rpc_url: str = "https://api.mainnet-beta.solana.com"
+    execution_mode: str = "standard"  # "standard" or "atomic"
+    min_profit_bps: float = 5.0  # minimum estimated profit for atomic mode
 
 
 @dataclass
@@ -314,7 +316,10 @@ class LagStrategyEngine:
             )
             return
 
-        await self._open_position(entry, executable_quote, cycle_result)
+        if self.config.execution_mode == "atomic":
+            await self._try_atomic_position(entry, executable_quote, cycle_result)
+        else:
+            await self._open_position(entry, executable_quote, cycle_result)
 
     async def _open_position(
         self,
@@ -406,6 +411,147 @@ class LagStrategyEngine:
             },
         )
         cycle_result.entries_opened.append(position)
+
+    async def _try_atomic_position(
+        self,
+        entry: WatchlistEntry,
+        buy_quote: "TradeQuote",
+        cycle_result: LagCycleResult,
+    ) -> None:
+        """Atomic buy+sell: validate profitability, execute, and record."""
+        from app.lag_execution import AtomicTradeExecution
+
+        notional = min(self.config.max_position_usd, self.config.sample_notional_usd)
+
+        # Pre-validate profitability with buy+sell quotes
+        buy_price, sell_price, profit_bps = await self.execution.get_profitability_quotes(
+            token_address=entry.token_address,
+            notional_usd=notional,
+            input_price_usd=self._native_price_usd,
+        )
+        logger.info(
+            "Atomic pre-check %s: buy=%.10f sell=%.10f profit=%.2f bps (min=%.2f)",
+            entry.symbol, buy_price, sell_price, profit_bps, self.config.min_profit_bps,
+        )
+
+        if profit_bps < self.config.min_profit_bps:
+            await self.db.record_lag_event(
+                event_type="atomic_skip_unprofitable",
+                message=f"Skipped {entry.symbol}: estimated profit {profit_bps:.2f} bps < {self.config.min_profit_bps:.2f}",
+                token_address=entry.token_address,
+                symbol=entry.symbol,
+                chain=entry.chain,
+                data={"buy_price": buy_price, "sell_price": sell_price, "profit_bps": profit_bps},
+            )
+            return
+
+        execution = await self.execution.execute_atomic_trade(
+            token_address=entry.token_address,
+            notional_usd=notional,
+            dry_run=self.config.dry_run,
+            input_price_usd=self._native_price_usd,
+            buy_price=buy_price,
+            sell_price=sell_price,
+        )
+
+        if execution.partial:
+            # Buy succeeded but sell failed — create open position for standard exit
+            logger.warning(
+                "Atomic partial failure for %s: buy ok, sell failed: %s",
+                entry.symbol, execution.error,
+            )
+            entry_price = execution.entry_price or buy_price
+            qty = execution.quantity_token or (notional / entry_price if entry_price > 0 else 0)
+            stop_price = entry_price * (1 - self.config.stop_loss_bps / 10_000)
+            take_price = entry_price * (1 + self.config.take_profit_bps / 10_000)
+            position = await self.db.add_lag_position(
+                token_address=entry.token_address,
+                symbol=entry.symbol,
+                chain=entry.chain,
+                entry_price=entry_price,
+                quantity_token=qty,
+                notional_usd=notional,
+                stop_price=stop_price,
+                take_price=take_price,
+                dry_run=self.config.dry_run,
+            )
+            cycle_result.entries_opened.append(position)
+            cycle_result.errors.append(
+                f"Atomic partial failure for {entry.symbol}: sell failed, position opened for standard exit"
+            )
+            await self.db.record_lag_event(
+                event_type="atomic_partial_failure",
+                message=f"Buy succeeded for {entry.symbol} but sell failed: {execution.error}",
+                token_address=entry.token_address,
+                symbol=entry.symbol,
+                chain=entry.chain,
+                severity="error",
+                data={"buy_tx": execution.buy_tx_hash, "error": execution.error},
+            )
+            return
+
+        if not execution.success:
+            cycle_result.errors.append(
+                f"Atomic trade failed for {entry.symbol}: {execution.error or 'unknown error'}"
+            )
+            await self.db.record_lag_event(
+                event_type="atomic_failed",
+                message=f"Atomic trade failed for {entry.symbol}: {execution.error}",
+                token_address=entry.token_address,
+                symbol=entry.symbol,
+                chain=entry.chain,
+                severity="error",
+            )
+            return
+
+        # Full success — record as opened+closed in one go
+        entry_price = execution.entry_price or buy_price
+        exit_price = execution.exit_price or sell_price
+        qty = execution.quantity_token or (notional / entry_price if entry_price > 0 else 0)
+        realized_pnl = execution.profit_usd if execution.profit_usd is not None else (exit_price - entry_price) * qty
+        stop_price = entry_price * (1 - self.config.stop_loss_bps / 10_000)
+        take_price = entry_price * (1 + self.config.take_profit_bps / 10_000)
+
+        position = await self.db.add_lag_position(
+            token_address=entry.token_address,
+            symbol=entry.symbol,
+            chain=entry.chain,
+            entry_price=entry_price,
+            quantity_token=qty,
+            notional_usd=notional,
+            stop_price=stop_price,
+            take_price=take_price,
+            dry_run=self.config.dry_run,
+        )
+        await self.db.close_lag_position(
+            position_id=position.id,
+            exit_price=exit_price,
+            close_reason="atomic",
+            realized_pnl_usd=realized_pnl,
+        )
+        position.exit_price = exit_price
+        position.realized_pnl_usd = realized_pnl
+        position.close_reason = "atomic"
+        cycle_result.positions_closed.append(position)
+
+        await self.db.record_lag_event(
+            event_type="atomic_success",
+            message=f"Atomic round-trip {entry.symbol}: PnL ${realized_pnl:.4f}",
+            token_address=entry.token_address,
+            symbol=entry.symbol,
+            chain=entry.chain,
+            data={
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "realized_pnl_usd": realized_pnl,
+                "buy_tx": execution.buy_tx_hash,
+                "sell_tx": execution.sell_tx_hash,
+            },
+        )
+        logger.info(
+            "Atomic success %s: entry=%.10f exit=%.10f PnL=$%.4f",
+            entry.symbol, entry_price, exit_price, realized_pnl,
+        )
 
     async def _process_exits(
         self,

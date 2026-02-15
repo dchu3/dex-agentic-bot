@@ -180,6 +180,12 @@ class Settings(BaseSettings):
         default="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         alias="LAG_STRATEGY_QUOTE_MINT",
     )
+    lag_strategy_execution_mode: str = Field(
+        default="standard", alias="LAG_STRATEGY_EXECUTION_MODE"
+    )
+    lag_strategy_min_profit_bps: float = Field(
+        default=5.0, alias="LAG_STRATEGY_MIN_PROFIT_BPS", ge=0
+    )
 
     # Solana RPC URL for on-chain lookups (e.g. token decimals)
     solana_rpc_url: str = Field(

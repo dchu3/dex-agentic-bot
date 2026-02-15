@@ -147,6 +147,25 @@ class TradeExecution:
     error: Optional[str] = None
 
 
+@dataclass
+class AtomicTradeExecution:
+    """Result from an atomic buy-and-sell round trip."""
+
+    success: bool
+    partial: bool = False  # buy succeeded, sell failed
+    buy_tx_hash: Optional[str] = None
+    sell_tx_hash: Optional[str] = None
+    entry_price: Optional[float] = None
+    exit_price: Optional[float] = None
+    quantity_token: Optional[float] = None
+    sol_spent: Optional[float] = None
+    sol_received: Optional[float] = None
+    profit_sol: Optional[float] = None
+    profit_usd: Optional[float] = None
+    error: Optional[str] = None
+    raw: Any = None
+
+
 class TraderExecutionService:
     """Handles trader tool discovery, quote retrieval, and trade execution."""
 
@@ -434,6 +453,141 @@ class TraderExecutionService:
             executed_price=executed_price,
             quantity_token=executed_qty,
             error=error,
+        )
+
+    async def get_profitability_quotes(
+        self,
+        token_address: str,
+        notional_usd: float,
+        input_price_usd: Optional[float] = None,
+    ) -> tuple[float, float, float]:
+        """Get buy and sell quotes and return estimated profit in bps.
+
+        Returns (buy_price, sell_price, estimated_profit_bps).
+        """
+        buy_quote = await self.get_quote(
+            token_address=token_address,
+            notional_usd=notional_usd,
+            side="buy",
+            input_price_usd=input_price_usd,
+        )
+        quantity = notional_usd / buy_quote.price if buy_quote.price > 0 else 0
+        sell_quote = await self.get_quote(
+            token_address=token_address,
+            notional_usd=notional_usd,
+            side="sell",
+            input_price_usd=input_price_usd,
+            quantity_token=quantity,
+        )
+        if buy_quote.price <= 0:
+            return buy_quote.price, sell_quote.price, 0.0
+        profit_bps = ((sell_quote.price - buy_quote.price) / buy_quote.price) * 10_000
+        return buy_quote.price, sell_quote.price, profit_bps
+
+    async def execute_atomic_trade(
+        self,
+        token_address: str,
+        notional_usd: float,
+        dry_run: bool,
+        input_price_usd: Optional[float] = None,
+        buy_price: Optional[float] = None,
+        sell_price: Optional[float] = None,
+    ) -> AtomicTradeExecution:
+        """Execute atomic buy+sell via trader MCP buy_and_sell tool."""
+        if dry_run:
+            profit = 0.0
+            if buy_price and sell_price and buy_price > 0:
+                qty = notional_usd / buy_price
+                profit = (sell_price - buy_price) * qty
+            return AtomicTradeExecution(
+                success=True,
+                entry_price=buy_price,
+                exit_price=sell_price,
+                quantity_token=(notional_usd / buy_price) if buy_price and buy_price > 0 else None,
+                profit_usd=profit,
+                raw={"dry_run": True},
+            )
+
+        trader = self._get_trader_client()
+        tool_names = [t.get("name", "") for t in (trader.tools or []) if t.get("name")]
+        if "buy_and_sell" not in tool_names:
+            return AtomicTradeExecution(
+                success=False,
+                error="Trader MCP does not expose buy_and_sell tool",
+            )
+
+        sol_amount = notional_usd / input_price_usd if input_price_usd and input_price_usd > 0 else notional_usd
+        result = await trader.call_tool("buy_and_sell", {
+            "token_address": token_address,
+            "sol_amount": float(sol_amount),
+            "slippage_bps": int(self.max_slippage_bps),
+        })
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        if not isinstance(result, dict):
+            return AtomicTradeExecution(
+                success=False, error="Unexpected response from buy_and_sell", raw=result,
+            )
+
+        status = result.get("status", "")
+        native_usd = input_price_usd or 1.0
+        sol_spent = self._extract_first_float(result, ("sol_spent", "solSpent"))
+        sol_received = self._extract_first_float(result, ("sol_received", "solReceived"))
+        token_received_raw = self._extract_first_float(result, ("token_received", "tokenReceived"))
+        token_sold = self._extract_first_float(result, ("token_sold", "tokenSold"))
+        profit_sol = self._extract_first_float(result, ("profit_sol", "profitSol", "net_sol", "netSol"))
+
+        # Derive prices from SOL amounts
+        token_decimals = await get_token_decimals(token_address, self.rpc_url)
+        qty = None
+        entry_p = None
+        exit_p = None
+        if token_received_raw and token_received_raw > 0:
+            qty = token_received_raw / (10 ** token_decimals)
+        if qty and qty > 0 and sol_spent and sol_spent > 0:
+            entry_p = (sol_spent * native_usd) / qty
+        if token_sold and token_sold > 0 and sol_received and sol_received > 0:
+            exit_p = (sol_received * native_usd) / token_sold
+
+        p_usd = (profit_sol * native_usd) if profit_sol is not None else None
+
+        if status == "partial":
+            buy_tx = self._extract_first_value(result, ("buy_transaction",))
+            return AtomicTradeExecution(
+                success=False,
+                partial=True,
+                buy_tx_hash=buy_tx if isinstance(buy_tx, str) else None,
+                entry_price=entry_p,
+                quantity_token=qty,
+                sol_spent=sol_spent,
+                error=result.get("sell_error", "Sell phase failed"),
+                raw=result,
+            )
+
+        if status == "error":
+            return AtomicTradeExecution(
+                success=False, error=result.get("error", "Buy phase failed"), raw=result,
+            )
+
+        buy_tx = self._extract_first_value(result, ("buy_transaction",))
+        sell_tx = self._extract_first_value(result, ("sell_transaction",))
+
+        return AtomicTradeExecution(
+            success=True,
+            buy_tx_hash=buy_tx if isinstance(buy_tx, str) else None,
+            sell_tx_hash=sell_tx if isinstance(sell_tx, str) else None,
+            entry_price=entry_p,
+            exit_price=exit_p,
+            quantity_token=qty,
+            sol_spent=sol_spent,
+            sol_received=sol_received,
+            profit_sol=profit_sol,
+            profit_usd=p_usd,
+            raw=result,
         )
 
     def _build_tool_args(
