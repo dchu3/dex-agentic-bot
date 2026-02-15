@@ -289,3 +289,187 @@ async def test_lag_cycle_excludes_native_and_quote_mints(db):
 
     # Only JUP should be sampled; SOL and USDC excluded
     assert result.samples_taken == 1
+
+
+@pytest.mark.asyncio
+async def test_lag_cycle_skips_when_native_price_unavailable(db):
+    """Cycle is skipped entirely when native token price cannot be fetched."""
+    await db.add_entry(
+        token_address="So11111111111111111111111111111111111111111",
+        symbol="TEST",
+        chain="solana",
+    )
+
+    class NoPriceDexScreener:
+        async def call_tool(self, method: str, arguments: Dict[str, Any]) -> Any:
+            raise RuntimeError("DexScreener unavailable")
+
+    manager = MockMCPManager(
+        dexscreener=NoPriceDexScreener(),  # type: ignore[arg-type]
+        trader=MockTraderClient(buy_price=1.00, sell_price=1.15),
+    )
+    engine = LagStrategyEngine(db=db, mcp_manager=manager, config=_config())
+
+    result = await engine.run_cycle()
+
+    assert "native token price unavailable" in result.summary.lower()
+    assert result.samples_taken == 0
+    assert len(result.errors) == 1
+
+    events = await db.list_recent_lag_events(limit=5)
+    event_types = {e.event_type for e in events}
+    assert "native_price_unavailable" in event_types
+
+
+@pytest.mark.asyncio
+async def test_compute_edge_bps_rejects_zero_reference_price():
+    """_compute_edge_bps raises ValueError for zero reference price."""
+    with pytest.raises(ValueError, match="Reference price"):
+        LagStrategyEngine._compute_edge_bps(0.0, 1.0)
+
+
+@pytest.mark.asyncio
+async def test_compute_edge_bps_rejects_negative_reference_price():
+    """_compute_edge_bps raises ValueError for negative reference price."""
+    with pytest.raises(ValueError, match="Reference price"):
+        LagStrategyEngine._compute_edge_bps(-1.0, 1.0)
+
+
+@pytest.mark.asyncio
+async def test_lag_cycle_blocks_on_total_exposure_limit(db):
+    """Entry is blocked when total exposure would exceed max_total_exposure_usd."""
+    await db.add_entry(
+        token_address="Token111111111111111111111111111111111111111",
+        symbol="TOK1",
+        chain="solana",
+    )
+    await db.add_entry(
+        token_address="Token222222222222222222222222222222222222222",
+        symbol="TOK2",
+        chain="solana",
+    )
+
+    manager = MockMCPManager(
+        dexscreener=MockDexScreenerClient(price_usd=1.20, liquidity_usd=50000),
+        trader=MockTraderClient(buy_price=1.00, sell_price=1.15),
+    )
+    engine = LagStrategyEngine(
+        db=db,
+        mcp_manager=manager,
+        config=_config(
+            max_total_exposure_usd=30.0,
+            max_position_usd=25.0,
+            cooldown_seconds=0,
+            # Wide TP/SL to prevent exit triggers interfering
+            take_profit_bps=5000.0,
+            stop_loss_bps=5000.0,
+        ),
+    )
+
+    # First cycle opens TOK1 ($25 notional)
+    r1 = await engine.run_cycle()
+    assert len(r1.entries_opened) >= 1
+
+    # Second cycle: TOK2 should be blocked ($25 + $25 = $50 > $30 limit)
+    r2 = await engine.run_cycle()
+    assert len(r2.entries_opened) == 0
+
+    events = await db.list_recent_lag_events(limit=20)
+    event_types = {e.event_type for e in events}
+    assert "risk_block_total_exposure" in event_types
+
+
+@pytest.mark.asyncio
+async def test_sell_pnl_uses_actual_sold_quantity(db):
+    """PnL calculation uses actual sell_qty, not stored position quantity."""
+    await db.add_entry(
+        token_address="So11111111111111111111111111111111111111111",
+        symbol="TEST",
+        chain="solana",
+    )
+
+    class AdjustedBalanceTraderClient(MockTraderClient):
+        """Trader that also exposes get_balance returning less than position qty."""
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.tools.append({
+                "name": "get_balance",
+                "inputSchema": {
+                    "type": "object",
+                    "required": ["token_address"],
+                    "properties": {"token_address": {"type": "string"}},
+                },
+            })
+
+        async def call_tool(self, method: str, arguments: Dict[str, Any]) -> Any:
+            if method == "get_balance":
+                # Return half the expected quantity
+                return {"tokenBalance": {"uiAmount": 5.0}}
+            return await super().call_tool(method, arguments)
+
+    manager = MockMCPManager(
+        dexscreener=MockDexScreenerClient(price_usd=1.20, liquidity_usd=50000),
+        trader=AdjustedBalanceTraderClient(buy_price=1.00, sell_price=1.20),
+    )
+    # Use dry_run=False so wallet balance is checked, but note that live
+    # execution requires tx_hash. The mock returns txHash so it works.
+    engine = LagStrategyEngine(
+        db=db,
+        mcp_manager=manager,
+        config=_config(take_profit_bps=50.0, dry_run=False),
+    )
+
+    first = await engine.run_cycle()
+    assert len(first.entries_opened) == 1
+    position = first.entries_opened[0]
+
+    second = await engine.run_cycle()
+    assert len(second.positions_closed) == 1
+    closed_pos = second.positions_closed[0]
+
+    # PnL should be based on sell_qty (5.0), not position.quantity_token (25.0)
+    # PnL = (exit_price - entry_price) * sell_qty
+    expected_pnl = (1.20 - 1.00) * 5.0
+    assert closed_pos.realized_pnl_usd == pytest.approx(expected_pnl, abs=0.01)
+
+
+@pytest.mark.asyncio
+async def test_sell_failure_tracks_retry_count(db):
+    """Consecutive sell failures increment the retry counter and escalate."""
+    # Directly insert an open position to avoid needing a real buy cycle
+    position = await db.add_lag_position(
+        token_address="So11111111111111111111111111111111111111111",
+        symbol="TEST",
+        chain="solana",
+        entry_price=1.00,
+        quantity_token=25.0,
+        notional_usd=25.0,
+        stop_price=0.99,
+        take_price=1.005,
+        dry_run=False,
+    )
+
+    class FailingSellTrader(MockTraderClient):
+        async def call_tool(self, method: str, arguments: Dict[str, Any]) -> Any:
+            if method == "swap" and arguments.get("side") == "sell":
+                return {"success": False, "error": "insufficient liquidity"}
+            return await super().call_tool(method, arguments)
+
+    manager = MockMCPManager(
+        dexscreener=MockDexScreenerClient(price_usd=1.20, liquidity_usd=50000),
+        trader=FailingSellTrader(buy_price=1.00, sell_price=1.20),
+    )
+    engine = LagStrategyEngine(
+        db=db,
+        mcp_manager=manager,
+        config=_config(take_profit_bps=50.0, dry_run=False),
+    )
+
+    # 3 failed sell attempts → should escalate to "exit_stuck"
+    for i in range(3):
+        r = await engine.run_cycle()
+        assert len(r.errors) >= 1, f"Cycle {i+1} should have sell errors"
+
+    events = await db.list_recent_lag_events(limit=20)
+    event_types = [e.event_type for e in events]
+    assert "exit_stuck" in event_types
