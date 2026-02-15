@@ -516,6 +516,7 @@ class LagStrategyEngine:
                 self._sell_fail_counts.pop(position.id, None)
                 position.exit_price = exit_price
                 position.realized_pnl_usd = realized_pnl
+                position.close_reason = close_reason
                 cycle_result.positions_closed.append(position)
                 await self.db.record_lag_event(
                     event_type="position_closed",
