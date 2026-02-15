@@ -128,10 +128,13 @@ class LagStrategyScheduler:
             for position in result.positions_closed:
                 pnl = position.realized_pnl_usd if position.realized_pnl_usd is not None else 0.0
                 pnl = pnl + 0.0  # avoid negative zero
+                entry_price = format_price(position.entry_price)
                 sell_price = format_price(position.exit_price)
+                pct = (pnl / position.notional_usd * 100) if position.notional_usd else 0.0
+                reason = position.close_reason or "unknown"
                 lines.append(
-                    f"• {position.symbol}: sell {sell_price} "
-                    f"PnL ${pnl:,.2f}"
+                    f"• {position.symbol}: {entry_price} → {sell_price} "
+                    f"PnL ${pnl:,.2f} ({pct:+.1f}%) [{reason}]"
                 )
             lines.append("")
 
