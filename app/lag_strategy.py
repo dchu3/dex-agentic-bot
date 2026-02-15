@@ -532,6 +532,7 @@ class LagStrategyEngine:
         position.exit_price = exit_price
         position.realized_pnl_usd = realized_pnl
         position.close_reason = "atomic"
+        cycle_result.entries_opened.append(position)
         cycle_result.positions_closed.append(position)
 
         await self.db.record_lag_event(

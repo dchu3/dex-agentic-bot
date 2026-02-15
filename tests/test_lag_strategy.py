@@ -561,7 +561,7 @@ async def test_atomic_mode_happy_path(db):
 
     assert result.signals_triggered == 1
     assert len(result.positions_closed) == 1
-    assert len(result.entries_opened) == 0
+    assert len(result.entries_opened) == 1
     closed = result.positions_closed[0]
     assert closed.close_reason == "atomic"
     assert closed.exit_price is not None
