@@ -51,6 +51,9 @@ class LagStrategyConfig:
     min_profit_bps: float = 5.0  # minimum estimated profit for atomic mode
     max_price_impact_pct: float = 1.0  # skip trades exceeding this price impact
     fee_buffer_lamports: int = 20000  # estimated SOL fees (base + priority) per atomic round trip
+    atomic_eval_window: int = 20  # number of recent atomic trades for rolling expectancy
+    atomic_min_samples: int = 10  # minimum observations before expectancy gate activates
+    atomic_pause_expectancy_bps: float = 0.0  # pause atomic when avg PnL bps <= this
 
 
 @dataclass
@@ -319,6 +322,8 @@ class LagStrategyEngine:
             return
 
         if self.config.execution_mode == "atomic":
+            if await self._atomic_expectancy_gate_blocks(cycle_result):
+                return
             await self._try_atomic_position(entry, executable_quote, cycle_result)
         else:
             await self._open_position(entry, executable_quote, cycle_result)
@@ -413,6 +418,44 @@ class LagStrategyEngine:
             },
         )
         cycle_result.entries_opened.append(position)
+
+    async def _atomic_expectancy_gate_blocks(
+        self,
+        cycle_result: LagCycleResult,
+    ) -> bool:
+        """Return True if atomic entries should be paused due to negative rolling expectancy."""
+        window = self.config.atomic_eval_window
+        min_samples = self.config.atomic_min_samples
+        threshold_bps = self.config.atomic_pause_expectancy_bps
+
+        recent_pnl = await self.db.list_recent_atomic_pnl(limit=window)
+        if len(recent_pnl) < min_samples:
+            return False
+
+        avg_pnl_usd = sum(recent_pnl) / len(recent_pnl)
+        notional = min(self.config.max_position_usd, self.config.sample_notional_usd)
+        avg_pnl_bps = (avg_pnl_usd / notional * 10_000) if notional > 0 else 0.0
+
+        if avg_pnl_bps <= threshold_bps:
+            logger.warning(
+                "Atomic expectancy gate: PAUSED (avg %.2f bps over %d trades, threshold %.2f bps)",
+                avg_pnl_bps, len(recent_pnl), threshold_bps,
+            )
+            await self.db.record_lag_event(
+                event_type="atomic_paused_negative_expectancy",
+                message=f"Atomic paused: rolling avg {avg_pnl_bps:.2f} bps over {len(recent_pnl)} trades",
+                severity="warning",
+                data={
+                    "avg_pnl_bps": round(avg_pnl_bps, 4),
+                    "avg_pnl_usd": round(avg_pnl_usd, 6),
+                    "sample_count": len(recent_pnl),
+                    "window": window,
+                    "threshold_bps": threshold_bps,
+                },
+            )
+            return True
+
+        return False
 
     async def _try_atomic_position(
         self,
@@ -549,6 +592,9 @@ class LagStrategyEngine:
                 "entry_price": entry_price,
                 "exit_price": exit_price,
                 "realized_pnl_usd": realized_pnl,
+                "sol_spent": execution.sol_spent,
+                "sol_received": execution.sol_received,
+                "profit_sol": execution.profit_sol,
                 "buy_tx": execution.buy_tx_hash,
                 "sell_tx": execution.sell_tx_hash,
             },
@@ -557,6 +603,17 @@ class LagStrategyEngine:
             "Atomic success %s: entry=%.10f exit=%.10f PnL=$%.4f",
             entry.symbol, entry_price, exit_price, realized_pnl,
         )
+
+        # Fee calibration: compare estimated fee buffer vs realized SOL cost
+        if execution.sol_spent is not None and execution.sol_received is not None:
+            implied_fee_sol = execution.sol_spent - execution.sol_received
+            estimated_fee_sol = self.config.fee_buffer_lamports / 1e9
+            if implied_fee_sol > estimated_fee_sol * 2:
+                logger.warning(
+                    "Fee calibration: realized SOL cost %.6f exceeds buffer estimate %.6f by %.0f%%",
+                    implied_fee_sol, estimated_fee_sol,
+                    ((implied_fee_sol / estimated_fee_sol) - 1) * 100 if estimated_fee_sol > 0 else 0,
+                )
 
     async def _process_exits(
         self,

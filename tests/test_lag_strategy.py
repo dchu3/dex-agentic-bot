@@ -704,3 +704,209 @@ async def test_atomic_mode_skips_high_price_impact(db):
     # Should be skipped due to price impact exceeding 1.0%
     assert len(result.positions_closed) == 0
     assert len(result.entries_opened) == 0
+
+
+# ---------------------------------------------------------------------------
+# Atomic expectancy gate tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_atomic_gate_pauses_on_negative_expectancy(db):
+    """Atomic entries paused when rolling avg PnL is below threshold."""
+    await db.add_entry(
+        token_address="So11111111111111111111111111111111111111111",
+        symbol="TEST",
+        chain="solana",
+    )
+
+    # Seed 10 closed atomic positions with negative PnL
+    for i in range(10):
+        pos = await db.add_lag_position(
+            token_address="0xprev",
+            symbol="PREV",
+            chain="solana",
+            entry_price=1.0,
+            quantity_token=1.0,
+            notional_usd=25.0,
+            stop_price=0.99,
+            take_price=1.01,
+            dry_run=True,
+        )
+        await db.close_lag_position(
+            position_id=pos.id,
+            exit_price=0.99,
+            close_reason="atomic",
+            realized_pnl_usd=-0.01,
+        )
+
+    manager = MockMCPManager(
+        dexscreener=MockDexScreenerClient(price_usd=1.20, liquidity_usd=50000),
+        trader=AtomicMockTraderClient(buy_price=1.00, sell_price=1.05),
+    )
+    engine = LagStrategyEngine(
+        db=db,
+        mcp_manager=manager,
+        config=_config(
+            execution_mode="atomic",
+            min_profit_bps=0,
+            atomic_eval_window=20,
+            atomic_min_samples=10,
+            atomic_pause_expectancy_bps=0.0,
+        ),
+    )
+    result = await engine.run_cycle()
+
+    # Signal detected but gate blocked execution
+    assert result.signals_triggered == 1
+    assert len(result.entries_opened) == 0
+    assert len(result.positions_closed) == 0
+
+
+@pytest.mark.asyncio
+async def test_atomic_gate_allows_with_positive_expectancy(db):
+    """Atomic entries continue when rolling expectancy is positive."""
+    await db.add_entry(
+        token_address="So11111111111111111111111111111111111111111",
+        symbol="TEST",
+        chain="solana",
+    )
+
+    # Seed 10 closed atomic positions with positive PnL
+    for i in range(10):
+        pos = await db.add_lag_position(
+            token_address="0xprev",
+            symbol="PREV",
+            chain="solana",
+            entry_price=1.0,
+            quantity_token=1.0,
+            notional_usd=25.0,
+            stop_price=0.99,
+            take_price=1.01,
+            dry_run=True,
+        )
+        await db.close_lag_position(
+            position_id=pos.id,
+            exit_price=1.01,
+            close_reason="atomic",
+            realized_pnl_usd=0.05,
+        )
+
+    manager = MockMCPManager(
+        dexscreener=MockDexScreenerClient(price_usd=1.20, liquidity_usd=50000),
+        trader=AtomicMockTraderClient(buy_price=1.00, sell_price=1.05),
+    )
+    engine = LagStrategyEngine(
+        db=db,
+        mcp_manager=manager,
+        config=_config(
+            execution_mode="atomic",
+            min_profit_bps=0,
+            atomic_eval_window=20,
+            atomic_min_samples=10,
+            atomic_pause_expectancy_bps=0.0,
+        ),
+    )
+    result = await engine.run_cycle()
+
+    # Positive expectancy — trade should proceed
+    assert result.signals_triggered == 1
+    assert len(result.entries_opened) == 1
+    assert len(result.positions_closed) == 1
+
+
+@pytest.mark.asyncio
+async def test_atomic_gate_skipped_with_insufficient_samples(db):
+    """Atomic gate does not block when sample count < min_samples."""
+    await db.add_entry(
+        token_address="So11111111111111111111111111111111111111111",
+        symbol="TEST",
+        chain="solana",
+    )
+
+    # Only 3 negative samples — below min_samples=10
+    for i in range(3):
+        pos = await db.add_lag_position(
+            token_address="0xprev",
+            symbol="PREV",
+            chain="solana",
+            entry_price=1.0,
+            quantity_token=1.0,
+            notional_usd=25.0,
+            stop_price=0.99,
+            take_price=1.01,
+            dry_run=True,
+        )
+        await db.close_lag_position(
+            position_id=pos.id,
+            exit_price=0.99,
+            close_reason="atomic",
+            realized_pnl_usd=-0.10,
+        )
+
+    manager = MockMCPManager(
+        dexscreener=MockDexScreenerClient(price_usd=1.20, liquidity_usd=50000),
+        trader=AtomicMockTraderClient(buy_price=1.00, sell_price=1.05),
+    )
+    engine = LagStrategyEngine(
+        db=db,
+        mcp_manager=manager,
+        config=_config(
+            execution_mode="atomic",
+            min_profit_bps=0,
+            atomic_eval_window=20,
+            atomic_min_samples=10,
+            atomic_pause_expectancy_bps=0.0,
+        ),
+    )
+    result = await engine.run_cycle()
+
+    # Insufficient samples — should not block
+    assert result.signals_triggered == 1
+    assert len(result.entries_opened) == 1
+    assert len(result.positions_closed) == 1
+
+
+@pytest.mark.asyncio
+async def test_standard_mode_unaffected_by_negative_atomic_history(db):
+    """Standard mode should never be blocked by atomic expectancy gate."""
+    await db.add_entry(
+        token_address="So11111111111111111111111111111111111111111",
+        symbol="TEST",
+        chain="solana",
+    )
+
+    # Seed 10 negative atomic positions
+    for i in range(10):
+        pos = await db.add_lag_position(
+            token_address="0xprev",
+            symbol="PREV",
+            chain="solana",
+            entry_price=1.0,
+            quantity_token=1.0,
+            notional_usd=25.0,
+            stop_price=0.99,
+            take_price=1.01,
+            dry_run=True,
+        )
+        await db.close_lag_position(
+            position_id=pos.id,
+            exit_price=0.99,
+            close_reason="atomic",
+            realized_pnl_usd=-0.01,
+        )
+
+    manager = MockMCPManager(
+        dexscreener=MockDexScreenerClient(price_usd=1.20, liquidity_usd=50000),
+        trader=MockTraderClient(buy_price=1.00, sell_price=1.15),
+    )
+    engine = LagStrategyEngine(
+        db=db,
+        mcp_manager=manager,
+        config=_config(execution_mode="standard"),
+    )
+    result = await engine.run_cycle()
+
+    # Standard mode — gate doesn't apply
+    assert result.signals_triggered == 1
+    assert len(result.entries_opened) == 1

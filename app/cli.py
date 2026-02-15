@@ -1347,6 +1347,9 @@ Examples:
                 min_profit_bps=settings.lag_strategy_min_profit_bps,
                 max_price_impact_pct=settings.lag_strategy_max_price_impact_pct,
                 fee_buffer_lamports=settings.lag_strategy_fee_buffer_lamports,
+                atomic_eval_window=settings.lag_strategy_atomic_eval_window,
+                atomic_min_samples=settings.lag_strategy_atomic_min_samples,
+                atomic_pause_expectancy_bps=settings.lag_strategy_atomic_pause_expectancy_bps,
             )
             lag_engine = LagStrategyEngine(
                 db=watchlist_db,
