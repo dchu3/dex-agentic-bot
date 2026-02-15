@@ -10,8 +10,10 @@ from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 logger = logging.getLogger(__name__)
 
 _ERROR_SKIP_SECONDS = 300  # 5 minutes
+_NATIVE_PRICE_STALE_SECONDS = 120  # consider price stale after 2 minutes
 
 from app.lag_execution import TradeQuote, TraderExecutionService
+from app.price_cache import PriceCache
 from app.watchlist import LagPosition, WatchlistEntry
 
 if TYPE_CHECKING:
@@ -40,6 +42,7 @@ class LagStrategyConfig:
     stop_loss_bps: float
     max_hold_seconds: int
     daily_loss_limit_usd: float
+    max_total_exposure_usd: float = 0.0  # 0 = unlimited
     quote_method: str = ""
     execute_method: str = ""
     quote_mint: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
@@ -86,6 +89,9 @@ class LagStrategyEngine:
         )
         self._skip_until: Dict[str, datetime] = {}
         self._native_price_usd: Optional[float] = None
+        self._native_price_updated_at: Optional[datetime] = None
+        self._sell_fail_counts: Dict[int, int] = {}  # position_id → consecutive failures
+        self._ref_price_cache: Optional["PriceCache"] = None
 
     def _log(self, level: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
         if self.verbose and self.log_callback:
@@ -102,6 +108,28 @@ class LagStrategyEngine:
 
         # Fetch native token price for USD→token conversion
         await self._refresh_native_price()
+
+        if self._native_price_usd is None:
+            result.summary = "Skipped: native token price unavailable"
+            result.errors.append("Native token price is None after refresh")
+            await self.db.record_lag_event(
+                event_type="native_price_unavailable",
+                message="Cycle skipped: unable to fetch native token price",
+                severity="error",
+            )
+            return result
+
+        stale = self._is_native_price_stale(now)
+        if stale:
+            logger.warning(
+                "Native price is stale (updated %s); proceeding with caution",
+                self._native_price_updated_at,
+            )
+            await self.db.record_lag_event(
+                event_type="native_price_stale",
+                message=f"Native price stale (last updated {self._native_price_updated_at})",
+                severity="warning",
+            )
 
         # Exit checks first to reduce risk before opening new positions.
         await self._process_exits(result, now)
@@ -245,6 +273,22 @@ class LagStrategyEngine:
             )
             return
 
+        if self.config.max_total_exposure_usd > 0:
+            open_positions = await self.db.list_open_lag_positions(chain=self.config.chain)
+            current_exposure = sum(p.notional_usd for p in open_positions)
+            new_notional = min(self.config.max_position_usd, self.config.sample_notional_usd)
+            if current_exposure + new_notional > self.config.max_total_exposure_usd:
+                await self.db.record_lag_event(
+                    event_type="risk_block_total_exposure",
+                    message=f"Blocked entry for {entry.symbol}: total exposure ${current_exposure + new_notional:.2f} > limit ${self.config.max_total_exposure_usd:.2f}",
+                    token_address=entry.token_address,
+                    symbol=entry.symbol,
+                    chain=entry.chain,
+                    severity="warning",
+                    data={"current_exposure_usd": current_exposure, "limit_usd": self.config.max_total_exposure_usd},
+                )
+                return
+
         daily_pnl = await self.db.get_daily_lag_realized_pnl(now)
         if daily_pnl <= -abs(self.config.daily_loss_limit_usd):
             await self.db.record_lag_event(
@@ -372,6 +416,9 @@ class LagStrategyEngine:
         for position in positions:
             try:
                 await self._evaluate_exit(position, cycle_result, now)
+            except (OSError, IOError) as exc:
+                # Fatal I/O errors (DB, network socket) — re-raise to fail cycle
+                raise
             except Exception as exc:
                 err = f"Exit check failed for {position.symbol}: {exc}"
                 cycle_result.errors.append(err)
@@ -444,7 +491,7 @@ class LagStrategyEngine:
         )
 
         if execution.success:
-            realized_pnl = (exit_price - position.entry_price) * position.quantity_token
+            realized_pnl = (exit_price - position.entry_price) * sell_qty
             closed = await self.db.close_lag_position(
                 position_id=position.id,
                 exit_price=exit_price,
@@ -459,13 +506,14 @@ class LagStrategyEngine:
                 action="sell",
                 requested_notional_usd=requested_notional,
                 executed_price=exit_price,
-                quantity_token=position.quantity_token,
+                quantity_token=sell_qty,
                 tx_hash=execution.tx_hash,
                 success=closed,
                 error=None if closed else "Position close update failed",
                 metadata={"raw": execution.raw},
             )
             if closed:
+                self._sell_fail_counts.pop(position.id, None)
                 position.exit_price = exit_price
                 position.realized_pnl_usd = realized_pnl
                 cycle_result.positions_closed.append(position)
@@ -478,7 +526,9 @@ class LagStrategyEngine:
                     data={"realized_pnl_usd": realized_pnl},
                 )
         else:
-            err_msg = f"Sell failed for {position.symbol}: {execution.error or 'unknown error'}"
+            fail_count = self._sell_fail_counts.get(position.id, 0) + 1
+            self._sell_fail_counts[position.id] = fail_count
+            err_msg = f"Sell failed for {position.symbol} (attempt {fail_count}): {execution.error or 'unknown error'}"
             cycle_result.errors.append(err_msg)
             logger.warning(err_msg)
             await self.db.record_lag_execution(
@@ -489,7 +539,7 @@ class LagStrategyEngine:
                 action="sell",
                 requested_notional_usd=requested_notional,
                 executed_price=exit_price,
-                quantity_token=position.quantity_token,
+                quantity_token=sell_qty,
                 tx_hash=execution.tx_hash,
                 success=False,
                 error=execution.error,
@@ -502,7 +552,18 @@ class LagStrategyEngine:
                 symbol=position.symbol,
                 chain=position.chain,
                 severity="error",
+                data={"fail_count": fail_count},
             )
+            if fail_count >= 3:
+                await self.db.record_lag_event(
+                    event_type="exit_stuck",
+                    message=f"⚠️ Position {position.symbol} stuck: {fail_count} consecutive sell failures",
+                    token_address=position.token_address,
+                    symbol=position.symbol,
+                    chain=position.chain,
+                    severity="critical",
+                    data={"fail_count": fail_count, "position_id": position.id},
+                )
 
     def _exit_reason(
         self,
@@ -518,6 +579,12 @@ class LagStrategyEngine:
         if age_seconds >= self.config.max_hold_seconds:
             return "max_hold_time"
         return None
+
+    def _is_native_price_stale(self, now: datetime) -> bool:
+        if self._native_price_updated_at is None:
+            return True
+        age = (now - self._native_price_updated_at).total_seconds()
+        return age > _NATIVE_PRICE_STALE_SECONDS
 
     async def _refresh_native_price(self) -> None:
         """Fetch current native token (e.g. SOL) price in USD via DexScreener."""
@@ -536,11 +603,19 @@ class LagStrategyEngine:
             price, _ = self._parse_reference_result(result)
             if price and price > 0:
                 self._native_price_usd = price
+                self._native_price_updated_at = datetime.now(timezone.utc)
                 logger.debug("Native token price: $%.4f", price)
         except Exception as exc:
             logger.warning("Failed to fetch native token price: %s", exc)
 
     async def _fetch_reference_price(self, token_address: str, chain: str) -> tuple[float, Optional[float]]:
+        # Check cache first
+        if self._ref_price_cache is None:
+            self._ref_price_cache = PriceCache(ttl_seconds=15)
+        cached = await self._ref_price_cache.get(chain, token_address)
+        if cached is not None:
+            return self._parse_reference_result(cached)
+
         dexscreener = self.mcp_manager.get_client("dexscreener")
         if dexscreener is None:
             raise RuntimeError("DexScreener MCP client is not configured")
@@ -549,6 +624,7 @@ class LagStrategyEngine:
             "get_token_pools",
             {"chainId": chain, "tokenAddress": token_address},
         )
+        await self._ref_price_cache.set(chain, token_address, result)
         return self._parse_reference_result(result)
 
     @staticmethod
@@ -588,6 +664,8 @@ class LagStrategyEngine:
 
     @staticmethod
     def _compute_edge_bps(reference_price: float, executable_price: float) -> float:
+        if reference_price <= 0:
+            raise ValueError("Reference price must be > 0")
         if executable_price <= 0:
             raise ValueError("Executable price must be > 0")
         return ((reference_price - executable_price) / executable_price) * 10_000

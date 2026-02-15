@@ -167,6 +167,9 @@ class Settings(BaseSettings):
     lag_strategy_daily_loss_limit_usd: float = Field(
         default=50.0, alias="LAG_STRATEGY_DAILY_LOSS_LIMIT_USD", ge=0
     )
+    lag_strategy_max_total_exposure_usd: float = Field(
+        default=0.0, alias="LAG_STRATEGY_MAX_TOTAL_EXPOSURE_USD", ge=0
+    )
     lag_strategy_quote_method: str = Field(
         default="", alias="LAG_STRATEGY_QUOTE_METHOD"
     )

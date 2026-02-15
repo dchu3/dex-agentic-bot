@@ -1338,6 +1338,7 @@ Examples:
                 stop_loss_bps=settings.lag_strategy_stop_loss_bps,
                 max_hold_seconds=settings.lag_strategy_max_hold_seconds,
                 daily_loss_limit_usd=settings.lag_strategy_daily_loss_limit_usd,
+                max_total_exposure_usd=settings.lag_strategy_max_total_exposure_usd,
                 quote_method=settings.lag_strategy_quote_method,
                 execute_method=settings.lag_strategy_execute_method,
                 quote_mint=settings.lag_strategy_quote_mint,
