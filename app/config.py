@@ -186,6 +186,12 @@ class Settings(BaseSettings):
     lag_strategy_min_profit_bps: float = Field(
         default=5.0, alias="LAG_STRATEGY_MIN_PROFIT_BPS", ge=0
     )
+    lag_strategy_max_price_impact_pct: float = Field(
+        default=1.0, alias="LAG_STRATEGY_MAX_PRICE_IMPACT_PCT", ge=0, le=100
+    )
+    lag_strategy_fee_buffer_lamports: int = Field(
+        default=20000, alias="LAG_STRATEGY_FEE_BUFFER_LAMPORTS", ge=0
+    )
 
     # Solana RPC URL for on-chain lookups (e.g. token decimals)
     solana_rpc_url: str = Field(

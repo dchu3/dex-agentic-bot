@@ -49,6 +49,8 @@ class LagStrategyConfig:
     rpc_url: str = "https://api.mainnet-beta.solana.com"
     execution_mode: str = "standard"  # "standard" or "atomic"
     min_profit_bps: float = 5.0  # minimum estimated profit for atomic mode
+    max_price_impact_pct: float = 1.0  # skip trades exceeding this price impact
+    fee_buffer_lamports: int = 20000  # estimated SOL fees (base + priority) per atomic round trip
 
 
 @dataclass
@@ -428,6 +430,8 @@ class LagStrategyEngine:
             token_address=entry.token_address,
             notional_usd=notional,
             input_price_usd=self._native_price_usd,
+            fee_buffer_lamports=self.config.fee_buffer_lamports,
+            max_price_impact_pct=self.config.max_price_impact_pct,
         )
         logger.info(
             "Atomic pre-check %s: buy=%.10f sell=%.10f profit=%.2f bps (min=%.2f)",
