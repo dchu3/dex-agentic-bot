@@ -132,6 +132,7 @@ class TradeQuote:
     method: str
     raw: Any
     liquidity_usd: Optional[float] = None
+    price_impact_pct: Optional[float] = None
 
 
 @dataclass
@@ -321,7 +322,25 @@ class TraderExecutionService:
             result,
             ("liquidityUsd", "liquidity_usd", "liquidity", "liquidityUSD"),
         )
-        return TradeQuote(price=price, method=method, raw=result, liquidity_usd=liquidity)
+        price_impact = self._extract_first_float(
+            result,
+            ("priceImpact", "price_impact", "priceImpactPct", "price_impact_pct"),
+        )
+        # Jupiter returns priceImpact as a string percentage like "0.12" — try parsing
+        if price_impact is None and isinstance(result, dict):
+            for k in ("priceImpact", "price_impact", "priceImpactPct", "price_impact_pct"):
+                v = result.get(k)
+                if isinstance(v, str):
+                    try:
+                        v_stripped = v.rstrip("%")
+                        price_impact = float(v_stripped)
+                        break
+                    except (ValueError, TypeError):
+                        pass
+        return TradeQuote(
+            price=price, method=method, raw=result,
+            liquidity_usd=liquidity, price_impact_pct=price_impact,
+        )
 
     async def get_wallet_token_balance(self, token_address: str) -> Optional[float]:
         """Query actual token balance from the trader wallet via get_balance.
@@ -460,8 +479,17 @@ class TraderExecutionService:
         token_address: str,
         notional_usd: float,
         input_price_usd: Optional[float] = None,
+        fee_buffer_lamports: int = 0,
+        max_price_impact_pct: float = 0.0,
     ) -> tuple[float, float, float]:
         """Get buy and sell quotes and return estimated profit in bps.
+
+        When *fee_buffer_lamports* > 0 the estimated SOL transaction fees
+        (base + priority for both legs) are subtracted from the sell price
+        before computing profit.
+
+        When *max_price_impact_pct* > 0 and either quote exceeds this
+        threshold, profit is forced to ``-inf`` so the caller skips.
 
         Returns (buy_price, sell_price, estimated_profit_bps).
         """
@@ -479,9 +507,35 @@ class TraderExecutionService:
             input_price_usd=input_price_usd,
             quantity_token=quantity,
         )
+
+        # Log price impact if available
+        for label, q in (("buy", buy_quote), ("sell", sell_quote)):
+            if q.price_impact_pct is not None:
+                logger.info(
+                    "Quote %s price impact: %.4f%%", label, q.price_impact_pct,
+                )
+
+        # Reject if price impact exceeds threshold
+        if max_price_impact_pct > 0:
+            for label, q in (("buy", buy_quote), ("sell", sell_quote)):
+                if q.price_impact_pct is not None and abs(q.price_impact_pct) > max_price_impact_pct:
+                    logger.warning(
+                        "Price impact %.4f%% on %s exceeds max %.4f%%",
+                        q.price_impact_pct, label, max_price_impact_pct,
+                    )
+                    return buy_quote.price, sell_quote.price, float("-inf")
+
         if buy_quote.price <= 0:
             return buy_quote.price, sell_quote.price, 0.0
-        profit_bps = ((sell_quote.price - buy_quote.price) / buy_quote.price) * 10_000
+
+        # Subtract estimated fees from profit
+        fee_usd = 0.0
+        if fee_buffer_lamports > 0 and input_price_usd and input_price_usd > 0:
+            fee_usd = (fee_buffer_lamports / 1_000_000_000) * input_price_usd
+
+        gross_profit_usd = (sell_quote.price - buy_quote.price) * quantity
+        net_profit_usd = gross_profit_usd - fee_usd
+        profit_bps = (net_profit_usd / notional_usd) * 10_000 if notional_usd > 0 else 0.0
         return buy_quote.price, sell_quote.price, profit_bps
 
     async def execute_atomic_trade(
@@ -554,6 +608,20 @@ class TraderExecutionService:
             exit_p = (sol_received * native_usd) / token_sold
 
         p_usd = (profit_sol * native_usd) if profit_sol is not None else None
+
+        # Log realized slippage vs pre-trade quotes
+        if buy_price and entry_p and buy_price > 0:
+            entry_slippage_bps = ((entry_p - buy_price) / buy_price) * 10_000
+            logger.info(
+                "Atomic entry slippage: quoted=%.10f actual=%.10f slippage=%.2f bps",
+                buy_price, entry_p, entry_slippage_bps,
+            )
+        if sell_price and exit_p and sell_price > 0:
+            exit_slippage_bps = ((sell_price - exit_p) / sell_price) * 10_000
+            logger.info(
+                "Atomic exit slippage: quoted=%.10f actual=%.10f slippage=%.2f bps",
+                sell_price, exit_p, exit_slippage_bps,
+            )
 
         if status == "partial":
             buy_tx = self._extract_first_value(result, ("buy_transaction",))

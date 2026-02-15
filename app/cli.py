@@ -1345,6 +1345,8 @@ Examples:
                 rpc_url=settings.solana_rpc_url,
                 execution_mode=settings.lag_strategy_execution_mode,
                 min_profit_bps=settings.lag_strategy_min_profit_bps,
+                max_price_impact_pct=settings.lag_strategy_max_price_impact_pct,
+                fee_buffer_lamports=settings.lag_strategy_fee_buffer_lamports,
             )
             lag_engine = LagStrategyEngine(
                 db=watchlist_db,

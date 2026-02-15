@@ -669,3 +669,38 @@ async def test_standard_mode_unaffected_by_atomic_config(db):
     assert result.signals_triggered == 1
     assert len(result.entries_opened) == 1
     assert len(result.positions_closed) == 0
+
+
+@pytest.mark.asyncio
+async def test_atomic_mode_skips_high_price_impact(db):
+    """Atomic mode: skips execution when price impact exceeds threshold."""
+    await db.add_entry(
+        token_address="So11111111111111111111111111111111111111111",
+        symbol="TEST",
+        chain="solana",
+    )
+
+    class HighImpactTrader(MockTraderClient):
+        """Trader mock that returns high priceImpact in quotes."""
+
+        async def call_tool(self, method: str, arguments: Dict[str, Any]) -> Any:
+            if method == "getQuote":
+                price = self.sell_price if arguments.get("side") == "sell" else self.buy_price
+                return {"priceUsd": str(price), "liquidityUsd": 250000, "priceImpact": "3.5"}
+            return await super().call_tool(method, arguments)
+
+    manager = MockMCPManager(
+        dexscreener=MockDexScreenerClient(price_usd=1.20, liquidity_usd=50000),
+        trader=HighImpactTrader(buy_price=1.00, sell_price=1.05),
+    )
+    engine = LagStrategyEngine(
+        db=db,
+        mcp_manager=manager,
+        config=_config(execution_mode="atomic", min_profit_bps=0, max_price_impact_pct=1.0),
+    )
+    result = await engine.run_cycle()
+
+    assert result.signals_triggered == 1
+    # Should be skipped due to price impact exceeding 1.0%
+    assert len(result.positions_closed) == 0
+    assert len(result.entries_opened) == 0

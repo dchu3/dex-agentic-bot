@@ -1214,3 +1214,223 @@ async def test_get_profitability_quotes() -> None:
     assert buy_p == pytest.approx(1.05, abs=0.01)
     assert sell_p == pytest.approx(1.05, abs=0.01)
     assert profit_bps == pytest.approx(0.0, abs=1.0)  # same price = ~0 bps
+
+
+# ---------------------------------------------------------------------------
+# Price impact extraction
+# ---------------------------------------------------------------------------
+
+
+class MockTraderClientWithPriceImpact:
+    """Trader mock that returns priceImpact in quote responses."""
+
+    def __init__(self, price_impact: str = "0.25") -> None:
+        self.price_impact = price_impact
+        self.tools: List[Dict[str, Any]] = [
+            {
+                "name": "getQuote",
+                "inputSchema": {
+                    "type": "object",
+                    "required": ["chain", "inputMint", "outputMint", "amountUsd", "slippageBps"],
+                    "properties": {
+                        "chain": {"type": "string"},
+                        "inputMint": {"type": "string"},
+                        "outputMint": {"type": "string"},
+                        "amountUsd": {"type": "number"},
+                        "slippageBps": {"type": "integer"},
+                        "side": {"type": "string"},
+                    },
+                },
+            },
+            {
+                "name": "swap",
+                "inputSchema": {
+                    "type": "object",
+                    "required": ["chain", "inputMint", "outputMint", "amountUsd", "slippageBps", "side"],
+                    "properties": {
+                        "chain": {"type": "string"},
+                        "inputMint": {"type": "string"},
+                        "outputMint": {"type": "string"},
+                        "amountUsd": {"type": "number"},
+                        "slippageBps": {"type": "integer"},
+                        "side": {"type": "string"},
+                    },
+                },
+            },
+        ]
+        self.calls: List[Tuple[str, Dict[str, Any]]] = []
+
+    async def call_tool(self, method: str, arguments: Dict[str, Any]) -> Any:
+        self.calls.append((method, arguments))
+        return {"priceUsd": "1.05", "liquidityUsd": 250000, "priceImpact": self.price_impact}
+
+
+@pytest.mark.asyncio
+async def test_get_quote_extracts_price_impact() -> None:
+    """get_quote populates price_impact_pct from trader response."""
+    trader = MockTraderClientWithPriceImpact(price_impact="0.35")
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    quote = await service.get_quote(
+        token_address="TokenMint111",
+        notional_usd=25,
+        side="buy",
+    )
+    assert quote.price_impact_pct == pytest.approx(0.35)
+
+
+@pytest.mark.asyncio
+async def test_get_quote_price_impact_none_when_absent() -> None:
+    """price_impact_pct is None when not in response."""
+    trader = MockTraderClient()
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    quote = await service.get_quote(
+        token_address="TokenMint111",
+        notional_usd=25,
+        side="buy",
+    )
+    assert quote.price_impact_pct is None
+
+
+# ---------------------------------------------------------------------------
+# Profitability quotes with fee buffer
+# ---------------------------------------------------------------------------
+
+
+class MockTraderClientDualPrice:
+    """Trader mock that returns different buy/sell prices for profitability tests."""
+
+    def __init__(self, buy_price: float = 1.00, sell_price: float = 1.05) -> None:
+        self._buy_price = buy_price
+        self._sell_price = sell_price
+        self._call_count = 0
+        self.tools: List[Dict[str, Any]] = [
+            {
+                "name": "getQuote",
+                "inputSchema": {
+                    "type": "object",
+                    "required": ["chain", "inputMint", "outputMint", "amountUsd", "slippageBps"],
+                    "properties": {
+                        "chain": {"type": "string"},
+                        "inputMint": {"type": "string"},
+                        "outputMint": {"type": "string"},
+                        "amountUsd": {"type": "number"},
+                        "slippageBps": {"type": "integer"},
+                        "side": {"type": "string"},
+                    },
+                },
+            },
+            {
+                "name": "swap",
+                "inputSchema": {
+                    "type": "object",
+                    "required": ["chain", "inputMint", "outputMint", "amountUsd", "slippageBps", "side"],
+                    "properties": {
+                        "chain": {"type": "string"},
+                        "inputMint": {"type": "string"},
+                        "outputMint": {"type": "string"},
+                        "amountUsd": {"type": "number"},
+                        "slippageBps": {"type": "integer"},
+                        "side": {"type": "string"},
+                    },
+                },
+            },
+        ]
+
+    async def call_tool(self, method: str, arguments: Dict[str, Any]) -> Any:
+        self._call_count += 1
+        # First call = buy quote, second call = sell quote
+        price = self._buy_price if self._call_count % 2 == 1 else self._sell_price
+        return {"priceUsd": str(price), "liquidityUsd": 50000}
+
+
+class MockTraderClientDualPriceWithImpact(MockTraderClientDualPrice):
+    """Dual price mock that also returns priceImpact."""
+
+    def __init__(self, buy_price: float, sell_price: float, price_impact: str = "0.1") -> None:
+        super().__init__(buy_price, sell_price)
+        self._price_impact = price_impact
+
+    async def call_tool(self, method: str, arguments: Dict[str, Any]) -> Any:
+        self._call_count += 1
+        price = self._buy_price if self._call_count % 2 == 1 else self._sell_price
+        return {"priceUsd": str(price), "liquidityUsd": 50000, "priceImpact": self._price_impact}
+
+
+@pytest.mark.asyncio
+async def test_profitability_quotes_fee_buffer_subtracts_fees() -> None:
+    """Fee buffer reduces reported profit bps."""
+    trader = MockTraderClientDualPrice(buy_price=1.00, sell_price=1.01)
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+
+    # Without fees
+    buy_p, sell_p, profit_no_fee = await service.get_profitability_quotes(
+        token_address="TestMint123",
+        notional_usd=25.0,
+        input_price_usd=180.0,
+        fee_buffer_lamports=0,
+    )
+    assert profit_no_fee > 0
+
+    # Reset call count for fresh dual-price cycle
+    trader._call_count = 0
+
+    # With fees — profit should be lower
+    buy_p2, sell_p2, profit_with_fee = await service.get_profitability_quotes(
+        token_address="TestMint123",
+        notional_usd=25.0,
+        input_price_usd=180.0,
+        fee_buffer_lamports=20000,
+    )
+    assert profit_with_fee < profit_no_fee
+
+
+@pytest.mark.asyncio
+async def test_profitability_quotes_price_impact_rejection() -> None:
+    """Trades exceeding max_price_impact_pct return -inf profit."""
+    trader = MockTraderClientDualPriceWithImpact(
+        buy_price=1.00, sell_price=1.05, price_impact="2.5",
+    )
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    _, _, profit_bps = await service.get_profitability_quotes(
+        token_address="TestMint123",
+        notional_usd=25.0,
+        input_price_usd=180.0,
+        max_price_impact_pct=1.0,  # 2.5% > 1.0% → reject
+    )
+    assert profit_bps == float("-inf")
+
+
+@pytest.mark.asyncio
+async def test_profitability_quotes_price_impact_allows_under_threshold() -> None:
+    """Trades under price impact threshold proceed normally."""
+    trader = MockTraderClientDualPriceWithImpact(
+        buy_price=1.00, sell_price=1.05, price_impact="0.3",
+    )
+    service = TraderExecutionService(
+        mcp_manager=MockMCPManager(trader),
+        chain="solana",
+        max_slippage_bps=100,
+    )
+    _, _, profit_bps = await service.get_profitability_quotes(
+        token_address="TestMint123",
+        notional_usd=25.0,
+        input_price_usd=180.0,
+        max_price_impact_pct=1.0,  # 0.3% < 1.0% → allow
+    )
+    assert profit_bps > 0
