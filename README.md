@@ -145,6 +145,18 @@ To enable live execution, either set `LAG_STRATEGY_DRY_RUN=false` in `.env` or s
 
 Recommended risk controls to tune first: `LAG_STRATEGY_MIN_EDGE_BPS`, `LAG_STRATEGY_MAX_POSITION_USD`, `LAG_STRATEGY_MAX_OPEN_POSITIONS`, `LAG_STRATEGY_DAILY_LOSS_LIMIT_USD`.
 
+#### Atomic Expectancy Gate
+
+When running in **atomic** execution mode, a rolling expectancy gate automatically pauses new entries if recent trades show persistently negative net PnL (after fees and slippage). This prevents the bot from continuing to bleed SOL on unprofitable atomic round-trips.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `LAG_STRATEGY_ATOMIC_EVAL_WINDOW` | 20 | Number of recent atomic trades to evaluate |
+| `LAG_STRATEGY_ATOMIC_MIN_SAMPLES` | 10 | Minimum closed atomic trades before gate activates |
+| `LAG_STRATEGY_ATOMIC_PAUSE_EXPECTANCY_BPS` | 0.0 | Pause when avg PnL bps ≤ this value |
+
+The gate emits `atomic_paused_negative_expectancy` events (visible via `/lag events`) when pausing. It automatically resumes once enough profitable trades shift the rolling average above the threshold. Standard mode is unaffected.
+
 ### Example Report
 
 ```

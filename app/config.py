@@ -192,6 +192,15 @@ class Settings(BaseSettings):
     lag_strategy_fee_buffer_lamports: int = Field(
         default=20000, alias="LAG_STRATEGY_FEE_BUFFER_LAMPORTS", ge=0
     )
+    lag_strategy_atomic_eval_window: int = Field(
+        default=20, alias="LAG_STRATEGY_ATOMIC_EVAL_WINDOW", ge=1
+    )
+    lag_strategy_atomic_min_samples: int = Field(
+        default=10, alias="LAG_STRATEGY_ATOMIC_MIN_SAMPLES", ge=1
+    )
+    lag_strategy_atomic_pause_expectancy_bps: float = Field(
+        default=0.0, alias="LAG_STRATEGY_ATOMIC_PAUSE_EXPECTANCY_BPS"
+    )
 
     # Solana RPC URL for on-chain lookups (e.g. token decimals)
     solana_rpc_url: str = Field(

@@ -924,6 +924,22 @@ class WatchlistDB:
         dt = datetime.fromisoformat(row["opened_at"])
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
+    async def list_recent_atomic_pnl(self, limit: int = 20) -> List[float]:
+        """Return realized_pnl_usd for the most recent *limit* closed atomic positions."""
+        conn = await self._ensure_connected()
+        cursor = await conn.execute(
+            """
+            SELECT realized_pnl_usd FROM lag_positions
+            WHERE status = 'closed' AND close_reason = 'atomic'
+              AND realized_pnl_usd IS NOT NULL
+            ORDER BY closed_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [float(r["realized_pnl_usd"]) for r in rows]
+
     async def get_daily_lag_realized_pnl(self, day: Optional[datetime] = None) -> float:
         """Get total realized PnL for the UTC calendar day."""
         conn = await self._ensure_connected()
