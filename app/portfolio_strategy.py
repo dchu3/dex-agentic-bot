@@ -159,6 +159,11 @@ class PortfolioStrategyEngine:
             result.errors.append(f"Daily PnL ${daily_pnl:.2f} exceeds limit")
             return result
 
+        # Sync tunable config to discovery engine
+        self.discovery.min_momentum_score = self.config.min_momentum_score
+        self.discovery.min_volume_usd = self.config.min_volume_usd
+        self.discovery.min_liquidity_usd = self.config.min_liquidity_usd
+
         # Discover candidates
         candidates = await self.discovery.discover(
             db=self.db,
