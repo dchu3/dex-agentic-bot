@@ -13,7 +13,7 @@ from google.genai import types
 
 if TYPE_CHECKING:
     from app.mcp_client import MCPManager
-    from app.watchlist import WatchlistDB
+    from app.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ class PortfolioDiscovery:
 
     async def discover(
         self,
-        db: "WatchlistDB",
+        db: "Database",
         max_candidates: int = 5,
     ) -> List[DiscoveryCandidate]:
         """Run full discovery pipeline: scan → filter → safety → AI score."""
@@ -253,7 +253,7 @@ class PortfolioDiscovery:
     async def _exclude_held_tokens(
         self,
         candidates: List[DiscoveryCandidate],
-        db: "WatchlistDB",
+        db: "Database",
     ) -> List[DiscoveryCandidate]:
         """Remove candidates that already have open portfolio positions."""
         result: List[DiscoveryCandidate] = []

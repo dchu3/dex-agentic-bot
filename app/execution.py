@@ -1,4 +1,4 @@
-"""Trader quote/execution helpers for lag strategy."""
+"""Trader quote/execution helpers for DEX trading strategies."""
 
 from __future__ import annotations
 

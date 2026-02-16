@@ -75,7 +75,7 @@ class TestBuildRecoveryMessage:
     
     def test_first_attempt_provides_step_guidance(self):
         """First recovery attempt should provide step-by-step guidance."""
-        query = "find solana tokens and add to watchlist"
+        query = "find trending solana tokens"
         msg = self.planner._build_recovery_message(query, attempt=1)
         
         assert "ONE tool call at a time" in msg

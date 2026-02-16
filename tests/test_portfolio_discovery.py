@@ -52,7 +52,7 @@ class MockMCPManager:
         return None
 
 
-class MockWatchlistDB:
+class MockDatabase:
     """Mock DB that reports no open positions by default."""
 
     def __init__(self, held_addresses: Optional[set] = None) -> None:
@@ -179,7 +179,7 @@ class TestExcludeHeldTokens:
                 price_usd=1.0, volume_24h=50000, liquidity_usd=20000,
             ),
         ]
-        db = MockWatchlistDB(held_addresses={held_addr})
+        db = MockDatabase(held_addresses={held_addr})
 
         result = await discovery._exclude_held_tokens(candidates, db)
 

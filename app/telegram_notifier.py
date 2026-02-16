@@ -1,20 +1,17 @@
-"""Telegram bot integration for sending price alerts."""
+"""Telegram bot integration for token analysis and portfolio notifications."""
 
 from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
 import httpx
 
 from app.formatting import format_price, format_large_number
 from app.telegram_subscribers import SubscriberDB
 from app.token_analyzer import TokenAnalyzer, is_valid_token_address, detect_chain
-
-if TYPE_CHECKING:
-    from app.watchlist_poller import TriggeredAlert
 
 TELEGRAM_API_BASE = "https://api.telegram.org/bot"
 
@@ -495,175 +492,3 @@ class TelegramNotifier:
             ):
                 success_count += 1
         return success_count
-
-    async def send_alert(self, alert: "TriggeredAlert") -> bool:
-        """Send a formatted price alert to all subscribers.
-        
-        Args:
-            alert: The triggered alert to send
-            
-        Returns:
-            True if alert was sent to at least one subscriber
-        """
-        message = self._format_alert(alert)
-        sent_count = await self.broadcast_message(message)
-        return sent_count > 0
-
-    def _format_alert(self, alert: "TriggeredAlert") -> str:
-        """Format a TriggeredAlert as a Telegram message."""
-        if alert.alert_type == "above":
-            emoji = "🔺"
-            direction = "Crossed above"
-        else:
-            emoji = "🔻"
-            direction = "Dropped below"
-
-        threshold = format_price(alert.threshold)
-        current = format_price(alert.current_price)
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-
-        # Build market cap line if available
-        market_cap_line = ""
-        if alert.market_cap is not None:
-            market_cap_line = f"<b>Market Cap:</b> {format_large_number(alert.market_cap)}\n"
-
-        # Build liquidity line if available
-        liquidity_line = ""
-        if alert.liquidity is not None:
-            liquidity_line = f"<b>Liquidity:</b> {format_large_number(alert.liquidity)}\n"
-
-        # Build auto-adjusted thresholds line if applicable
-        new_thresholds_line = ""
-        if alert.new_alert_above is not None and alert.new_alert_below is not None:
-            new_above_fmt = format_price(alert.new_alert_above)
-            new_below_fmt = format_price(alert.new_alert_below)
-            new_thresholds_line = (
-                f"\n🔄 <b>New Triggers Set:</b>\n"
-                f"  🎯 Take Profit: {new_above_fmt}\n"
-                f"  🛑 Stop Loss: {new_below_fmt}\n"
-            )
-
-        return (
-            f"🔔 <b>Price Alert</b>\n\n"
-            f"<b>Token:</b> {alert.symbol}\n"
-            f"<b>Chain:</b> {alert.chain}\n"
-            f"<b>Type:</b> {emoji} {direction} {threshold}\n"
-            f"<b>Current Price:</b> {current}\n"
-            f"{market_cap_line}"
-            f"{liquidity_line}"
-            f"<b>Contract:</b> <code>{alert.token_address}</code>\n"
-            f"{new_thresholds_line}\n"
-            f"⏰ {timestamp}"
-        )
-
-    # --- Autonomous Watchlist Notifications ---
-
-    async def send_token_added(
-        self,
-        symbol: str,
-        chain: str,
-        price: float,
-        momentum_score: float,
-        alert_above: float,
-        alert_below: float,
-        reasoning: str,
-    ) -> bool:
-        """Send notification when a token is added to autonomous watchlist."""
-        price_fmt = format_price(price)
-        above_fmt = format_price(alert_above)
-        below_fmt = format_price(alert_below)
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-        message = (
-            f"📈 <b>New Position Added</b>\n\n"
-            f"<b>Token:</b> {symbol}\n"
-            f"<b>Chain:</b> {chain}\n"
-            f"<b>Entry Price:</b> {price_fmt}\n"
-            f"<b>Momentum Score:</b> {momentum_score:.0f}/100\n\n"
-            f"<b>Triggers:</b>\n"
-            f"  🎯 Take Profit: {above_fmt}\n"
-            f"  🛑 Stop Loss: {below_fmt}\n\n"
-            f"<b>Reasoning:</b>\n{reasoning}\n\n"
-            f"⏰ {timestamp}"
-        )
-        return await self.broadcast_message(message) > 0
-
-    async def send_token_removed(
-        self,
-        symbol: str,
-        chain: str,
-        reasoning: str,
-    ) -> bool:
-        """Send notification when a token is removed from autonomous watchlist."""
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-        message = (
-            f"📉 <b>Position Closed</b>\n\n"
-            f"<b>Token:</b> {symbol}\n"
-            f"<b>Chain:</b> {chain}\n\n"
-            f"<b>Reason:</b>\n{reasoning}\n\n"
-            f"⏰ {timestamp}"
-        )
-        return await self.broadcast_message(message) > 0
-
-    async def send_trigger_updated(
-        self,
-        symbol: str,
-        chain: str,
-        old_above: Optional[float],
-        new_above: Optional[float],
-        old_below: Optional[float],
-        new_below: Optional[float],
-        reasoning: str,
-    ) -> bool:
-        """Send notification when price triggers are updated."""
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-        lines = [
-            f"🔄 <b>Triggers Updated</b>\n",
-            f"<b>Token:</b> {symbol}",
-            f"<b>Chain:</b> {chain}\n",
-        ]
-
-        if new_above is not None:
-            old_fmt = format_price(old_above) if old_above else "—"
-            new_fmt = format_price(new_above)
-            lines.append(f"<b>Take Profit:</b> {old_fmt} → {new_fmt}")
-
-        if new_below is not None:
-            old_fmt = format_price(old_below) if old_below else "—"
-            new_fmt = format_price(new_below)
-            lines.append(f"<b>Stop Loss:</b> {old_fmt} → {new_fmt}")
-
-        lines.extend([
-            f"\n<b>Reason:</b>\n{reasoning}",
-            f"\n⏰ {timestamp}",
-        ])
-
-        return await self.broadcast_message("\n".join(lines)) > 0
-
-    async def send_watchlist_summary(
-        self,
-        entries: list,
-        cycle_number: int,
-    ) -> bool:
-        """Send periodic watchlist summary."""
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-        lines = [
-            f"📊 <b>Watchlist Summary</b> (Cycle #{cycle_number})\n",
-            f"⏰ {timestamp}\n",
-        ]
-
-        if not entries:
-            lines.append("No tokens in autonomous watchlist.")
-        else:
-            lines.append(f"<b>{len(entries)} Active Positions:</b>\n")
-            for entry in entries:
-                price_fmt = format_price(entry.last_price) if entry.last_price else "—"
-                score = entry.momentum_score or 0
-                lines.append(
-                    f"• <b>{entry.symbol}</b> @ {price_fmt} (Score: {score:.0f})"
-                )
-
-        return await self.broadcast_message("\n".join(lines)) > 0
