@@ -22,6 +22,7 @@ A Telegram bot that provides comprehensive token safety checks and market analys
 - 🛡️ **Safety Checks** - Honeypot detection (EVM) and Rugcheck (Solana)
 - 📊 **Market Data** - Price, volume, liquidity, market cap via DexScreener
 - ⚡ **Lag-Edge Strategy (Solana)** - Optional auto-execution loop via trader MCP
+- 📈 **Portfolio Strategy (Solana)** - AI-driven token discovery, buy, hold, and auto-exit at TP/SL with trailing stops
 - 🤖 **AI Insights** - Gemini-powered analysis and risk assessment
 - ⚡ **Multi-Chain** - Supports Ethereum, BSC, Base, and Solana
 
@@ -212,6 +213,54 @@ When running in **atomic** execution mode, a rolling expectancy gate automatical
 
 The gate emits `atomic_paused_negative_expectancy` events (visible via `/lag events`) when pausing. It automatically resumes once enough profitable trades shift the rolling average above the threshold. Standard mode is unaffected.
 
+### Portfolio Strategy (Interactive CLI, Solana)
+
+The portfolio strategy autonomously discovers promising Solana tokens, buys small positions, holds them, and exits automatically when take-profit, stop-loss, or trailing stop conditions are met. It uses a **hybrid discovery pipeline**: deterministic pre-filters (volume, liquidity, chain) → rugcheck safety → Gemini AI momentum scoring.
+
+1. Configure trader MCP and wallet.
+2. Add portfolio settings to `.env`:
+
+```env
+PORTFOLIO_ENABLED=true
+PORTFOLIO_DRY_RUN=true
+PORTFOLIO_POSITION_SIZE_USD=5.0
+PORTFOLIO_TAKE_PROFIT_PCT=15.0
+PORTFOLIO_STOP_LOSS_PCT=8.0
+PORTFOLIO_TRAILING_STOP_PCT=5.0
+PORTFOLIO_MAX_POSITIONS=5
+PORTFOLIO_MAX_HOLD_HOURS=24
+PORTFOLIO_DAILY_LOSS_LIMIT_USD=50.0
+```
+
+3. Start interactive mode with portfolio scheduler enabled:
+
+```bash
+./scripts/start.sh --interactive --portfolio
+```
+
+By default this runs in **dry-run mode** (`PORTFOLIO_DRY_RUN=true`), so no real orders are sent.
+
+Useful `/portfolio` commands:
+- `/portfolio status` — Scheduler/risk status and config summary
+- `/portfolio run` — Run one discovery cycle immediately
+- `/portfolio check` — Run one exit check cycle immediately
+- `/portfolio start` / `/portfolio stop` — Start or stop scheduler
+- `/portfolio positions` — Show open positions with unrealized PnL
+- `/portfolio close <id|all>` — Manually close position(s)
+- `/portfolio set` — Show/change tunable runtime parameters
+- `/portfolio history` — Show recent closed positions with PnL
+
+To enable live execution, either set `PORTFOLIO_DRY_RUN=false` in `.env` or start with:
+
+```bash
+./scripts/start.sh --interactive --portfolio --portfolio-live
+```
+
+**How it works:**
+1. **Discovery** (every 30 min): Scans DexScreener trending → filters by volume/liquidity → rugcheck safety → Gemini AI scores momentum → buys top candidates
+2. **Exit monitoring** (every 60s): Checks all open positions against TP/SL thresholds, updates trailing stops as price makes new highs, closes expired positions
+3. **Risk guards**: Max positions cap, daily loss limit, cooldown after failures, duplicate position prevention
+
 ### Example Report
 
 ```
@@ -254,6 +303,8 @@ deep liquidity and no concerning tax mechanisms...
 | `--lag-strategy` | Enable lag-edge strategy scheduler |
 | `--lag-interval` | Lag strategy cycle interval in seconds |
 | `--lag-live` | Run lag strategy with live execution (disable dry-run) |
+| `--portfolio` | Enable portfolio strategy scheduler |
+| `--portfolio-live` | Run portfolio strategy with live execution (disable dry-run) |
 
 ## Architecture
 

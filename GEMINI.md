@@ -8,6 +8,7 @@ The DEX Agentic Bot is a command-line interface (CLI) tool designed to provide c
 - **Honeypot Detection:** Integrates with a honeypot detection service for safety checks on tokens (currently for Ethereum, BSC, and Base).
 - **Interactive CLI:** Offers a REPL mode with conversation memory and commands for context management.
 - **Flexible Output:** Results can be displayed in formatted tables, raw text, or JSON for scripting.
+- **Portfolio Strategy:** Autonomous token discovery, position management, and exit execution with trailing stops (Solana).
 
 ## Architecture:
 
@@ -38,6 +39,32 @@ The core of the application is a Python-based "Agentic Planner" that interacts w
 │ • get_token   │ │ • getNetworks │ │               │ │ • get_token   │
 │   _info       │
 └───────────────┘ └───────────────┘ └───────────────┘ └───────────────┘
+```
+
+The **Portfolio Strategy** runs as a separate subsystem alongside the agentic planner:
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                    PortfolioScheduler                          │
+│   (discovery loop every 30min + exit check loop every 60s)    │
+└─────────┬──────────────────────────────┬──────────────────────┘
+          │                              │
+          ▼                              ▼
+┌───────────────────┐        ┌─────────────────────────┐
+│ PortfolioDiscovery│        │ PortfolioStrategyEngine  │
+│ (hybrid pipeline) │        │ .run_exit_checks()       │
+│  DexScreener scan │        │  trailing stop updates   │
+│  → filter         │        │  TP / SL / timeout check │
+│  → rugcheck       │        │  sell execution + PnL    │
+│  → Gemini AI score│        └─────────────────────────┘
+│  → buy execution  │
+└───────────────────┘
+          │                              │
+          └──────────┬───────────────────┘
+                     ▼
+┌───────────────────────────────────────────────────────────────┐
+│            TraderExecutionService + WatchlistDB (SQLite)       │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 ## Technologies Used:
