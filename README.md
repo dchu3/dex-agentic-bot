@@ -1,5 +1,13 @@
 # Token Safety & Analysis Bot
 
+> [!CAUTION]
+> **⚠️ HIGH RISK – USE AT YOUR OWN RISK**
+>
+> This is experimental code. Trading bots can lose ALL your money very quickly.
+> The author provides NO WARRANTY and is NOT LIABLE for ANY financial losses, bugs, or bad decisions.
+> Do NOT use real money without extensive backtesting and forward testing on paper/demo accounts.
+> Past performance (if shown) does NOT indicate future results.
+
 A Telegram bot that provides comprehensive token safety checks and market analysis. Send any token address and get an AI-powered report with price data, liquidity info, safety checks, and investment insights.
 
 > [!WARNING]
