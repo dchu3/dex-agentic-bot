@@ -824,6 +824,12 @@ async def _cmd_lag(
         output.info("  /lag set [param] [value] - View/change runtime params")
         output.info("  /lag reset-pnl  - Zero out today's realized PnL")
         output.info("  /lag events     - Show recent lag events")
+        output.info("")
+        output.info("Runtime parameter tuning (changes reset on restart):")
+        output.info("  /lag set                     List all tunable params & values")
+        output.info("  /lag set <param> <value>     Update a param instantly")
+        output.info("  Example: /lag set max_position_usd 50")
+        output.info("  Example: /lag set max_open_positions 5")
         return
 
     subcmd = args[0].lower()
