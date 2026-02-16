@@ -143,6 +143,8 @@ Useful `/lag` commands:
 - `/lag start` / `/lag stop` - Start or stop scheduler
 - `/lag positions` - Show open lag positions
 - `/lag close <id|all>` - Manually close position(s)
+- `/lag set` - Show all tunable runtime parameters
+- `/lag set <param> <value>` - Change a parameter without restarting (e.g. `/lag set max_position_usd 50`)
 - `/lag events` - Show recent lag strategy events
 
 To enable live execution, either set `LAG_STRATEGY_DRY_RUN=false` in `.env` or start with:

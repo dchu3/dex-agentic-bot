@@ -821,8 +821,15 @@ async def _cmd_lag(
         output.info("  /lag stop       - Stop lag scheduler")
         output.info("  /lag positions  - List open lag positions")
         output.info("  /lag close <id|all> - Manually close position(s)")
+        output.info("  /lag set [param] [value] - View/change runtime params")
         output.info("  /lag reset-pnl  - Zero out today's realized PnL")
         output.info("  /lag events     - Show recent lag events")
+        output.info("")
+        output.info("Runtime parameter tuning (changes reset on restart):")
+        output.info("  /lag set                     List all tunable params & values")
+        output.info("  /lag set <param> <value>     Update a param instantly")
+        output.info("  Example: /lag set max_position_usd 50")
+        output.info("  Example: /lag set max_open_positions 5")
         return
 
     subcmd = args[0].lower()
@@ -990,6 +997,77 @@ async def _cmd_lag(
     if subcmd == "reset-pnl":
         count = await db.reset_daily_lag_pnl()
         output.info(f"✅ Zeroed realized PnL on {count} position(s) closed today.")
+        return
+
+    if subcmd == "set":
+        _TUNABLE_PARAMS: Dict[str, tuple] = {
+            "max_position_usd": (float, 0.01, None),
+            "max_open_positions": (int, 1, 20),
+            "max_total_exposure_usd": (float, 0.0, None),
+            "sample_notional_usd": (float, 0.01, None),
+            "daily_loss_limit_usd": (float, 0.0, None),
+            "take_profit_bps": (float, 0.0, None),
+            "stop_loss_bps": (float, 0.0, None),
+            "min_edge_bps": (float, 0.0, None),
+            "cooldown_seconds": (int, 0, None),
+            "max_hold_seconds": (int, 0, None),
+        }
+
+        if not scheduler:
+            output.warning("Lag strategy scheduler is not enabled.")
+            return
+
+        if len(args) < 2:
+            # Show current tunable values
+            config = scheduler.engine.config
+            output.info("⚡ Tunable Lag Parameters (use /lag set <param> <value>):")
+            for param, (typ, lo, hi) in _TUNABLE_PARAMS.items():
+                val = getattr(config, param)
+                constraint = f"≥{lo}"
+                if hi is not None:
+                    constraint += f", ≤{hi}"
+                if typ is float:
+                    output.info(f"  {param} = {val:,.2f}  ({constraint})")
+                else:
+                    output.info(f"  {param} = {val}  ({constraint})")
+            return
+
+        if len(args) < 3:
+            output.warning("Usage: /lag set <param> <value>")
+            return
+
+        param_name = args[1].lower()
+        raw_value = args[2]
+
+        if param_name not in _TUNABLE_PARAMS:
+            output.warning(
+                f"Unknown parameter: {param_name}. "
+                f"Tunable: {', '.join(_TUNABLE_PARAMS)}"
+            )
+            return
+
+        typ, lo, hi = _TUNABLE_PARAMS[param_name]
+        try:
+            parsed = typ(raw_value)
+        except (ValueError, TypeError):
+            output.warning(f"Invalid value '{raw_value}' for {param_name} (expected {typ.__name__}).")
+            return
+
+        if parsed < lo:
+            output.warning(f"Value {parsed} is below minimum {lo} for {param_name}.")
+            return
+        if hi is not None and parsed > hi:
+            output.warning(f"Value {parsed} is above maximum {hi} for {param_name}.")
+            return
+
+        config = scheduler.engine.config
+        old_value = getattr(config, param_name)
+        setattr(config, param_name, parsed)
+
+        if typ is float:
+            output.info(f"✅ {param_name}: {old_value:,.2f} → {parsed:,.2f}")
+        else:
+            output.info(f"✅ {param_name}: {old_value} → {parsed}")
         return
 
     output.warning(f"Unknown subcommand: {subcmd}. Use /lag for help.")

@@ -474,6 +474,7 @@ class CLIOutput:
                     "/lag stop": "Stop lag scheduler",
                     "/lag positions": "List open lag positions",
                     "/lag close <id|all>": "Manually close position(s)",
+                    "/lag set [param] [value]": "View/change runtime params",
                     "/lag reset-pnl": "Zero out today's realized PnL",
                     "/lag events": "Show recent lag events",
                     "/help": "Show this help",
@@ -508,6 +509,7 @@ class CLIOutput:
             print("  /lag stop                    Stop lag scheduler")
             print("  /lag positions               List open lag positions")
             print("  /lag close <id|all>          Manually close position(s)")
+            print("  /lag set [param] [value]     View/change runtime params")
             print("  /lag reset-pnl               Zero out today's realized PnL")
             print("  /lag events                  Show recent lag events")
             print("\n  /help             Show this help")
@@ -557,6 +559,7 @@ class CLIOutput:
         cmd_table.add_row("  /lag stop", "Stop lag scheduler")
         cmd_table.add_row("  /lag positions", "List open lag positions")
         cmd_table.add_row("  /lag close <id|all>", "Manually close position(s)")
+        cmd_table.add_row("  /lag set [param] [value]", "View/change runtime params")
         cmd_table.add_row("  /lag reset-pnl", "Zero out today's realized PnL")
         cmd_table.add_row("  /lag events", "Show recent lag events")
         cmd_table.add_row("", "")
