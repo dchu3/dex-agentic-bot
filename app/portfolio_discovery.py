@@ -137,21 +137,31 @@ class PortfolioDiscovery:
         return result[:max_candidates]
 
     async def _scan_trending(self) -> List[Dict[str, Any]]:
-        """Fetch trending tokens from DexScreener."""
+        """Fetch trending tokens from DexScreener using multiple queries."""
         client = self.mcp_manager.get_client("dexscreener")
         if not client:
             self._log("error", "DexScreener MCP client not available")
             return []
 
-        try:
-            result = await client.call_tool(
-                "search_pairs",
-                {"query": "trending"},
-            )
-            return self._extract_pairs(result)
-        except Exception as exc:
-            self._log("error", f"DexScreener scan failed: {exc}")
-            return []
+        queries = ["trending solana", "solana", "trending"]
+        all_pairs: List[Dict[str, Any]] = []
+        seen_pair_ids: set[str] = set()
+
+        for query in queries:
+            try:
+                result = await client.call_tool("search_pairs", {"query": query})
+                pairs = self._extract_pairs(result)
+                for pair in pairs:
+                    pair_id = pair.get("pairAddress", "") or pair.get("url", "")
+                    if pair_id and pair_id in seen_pair_ids:
+                        continue
+                    if pair_id:
+                        seen_pair_ids.add(pair_id)
+                    all_pairs.append(pair)
+            except Exception as exc:
+                self._log("warning", f"DexScreener query '{query}' failed: {exc}")
+
+        return all_pairs
 
     @staticmethod
     def _extract_pairs(result: Any) -> List[Dict[str, Any]]:
@@ -168,9 +178,13 @@ class PortfolioDiscovery:
         """Apply deterministic volume/liquidity/chain filters."""
         candidates: List[DiscoveryCandidate] = []
         seen_addresses: set[str] = set()
+        chain_counts: Dict[str, int] = {}
+        rejected_volume = 0
+        rejected_liquidity = 0
 
         for pair in pairs:
             chain_id = (pair.get("chainId") or "").lower()
+            chain_counts[chain_id] = chain_counts.get(chain_id, 0) + 1
             if chain_id != self.chain:
                 continue
 
@@ -195,8 +209,10 @@ class PortfolioDiscovery:
                 continue
 
             if volume_24h < self.min_volume_usd:
+                rejected_volume += 1
                 continue
             if liquidity < self.min_liquidity_usd:
+                rejected_liquidity += 1
                 continue
             if price <= 0:
                 continue
@@ -210,6 +226,13 @@ class PortfolioDiscovery:
                 liquidity_usd=liquidity,
                 price_change_24h=price_change,
             ))
+
+        self._log(
+            "info",
+            f"Filter breakdown: chains={chain_counts}, "
+            f"rejected_volume={rejected_volume}, rejected_liquidity={rejected_liquidity}, "
+            f"passed={len(candidates)}",
+        )
 
         return candidates
 
