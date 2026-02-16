@@ -219,6 +219,59 @@ class Settings(BaseSettings):
         default=5.0, alias="ALERT_STOP_LOSS_PERCENT", ge=0.1, le=100.0
     )
 
+    # Portfolio strategy settings (discover → hold → exit)
+    portfolio_enabled: bool = Field(
+        default=False, alias="PORTFOLIO_ENABLED"
+    )
+    portfolio_dry_run: bool = Field(
+        default=True, alias="PORTFOLIO_DRY_RUN"
+    )
+    portfolio_chain: str = Field(
+        default="solana", alias="PORTFOLIO_CHAIN"
+    )
+    portfolio_max_positions: int = Field(
+        default=5, alias="PORTFOLIO_MAX_POSITIONS", ge=1, le=50
+    )
+    portfolio_position_size_usd: float = Field(
+        default=5.0, alias="PORTFOLIO_POSITION_SIZE_USD", ge=0.01
+    )
+    portfolio_take_profit_pct: float = Field(
+        default=15.0, alias="PORTFOLIO_TAKE_PROFIT_PCT", ge=0.1, le=500.0
+    )
+    portfolio_stop_loss_pct: float = Field(
+        default=8.0, alias="PORTFOLIO_STOP_LOSS_PCT", ge=0.1, le=100.0
+    )
+    portfolio_trailing_stop_pct: float = Field(
+        default=5.0, alias="PORTFOLIO_TRAILING_STOP_PCT", ge=0.1, le=100.0
+    )
+    portfolio_max_hold_hours: int = Field(
+        default=24, alias="PORTFOLIO_MAX_HOLD_HOURS", ge=1, le=720
+    )
+    portfolio_discovery_interval_mins: int = Field(
+        default=30, alias="PORTFOLIO_DISCOVERY_INTERVAL_MINS", ge=5, le=1440
+    )
+    portfolio_price_check_seconds: int = Field(
+        default=60, alias="PORTFOLIO_PRICE_CHECK_SECONDS", ge=10, le=3600
+    )
+    portfolio_daily_loss_limit_usd: float = Field(
+        default=50.0, alias="PORTFOLIO_DAILY_LOSS_LIMIT_USD", ge=0
+    )
+    portfolio_min_volume_usd: float = Field(
+        default=10000.0, alias="PORTFOLIO_MIN_VOLUME_USD", ge=0
+    )
+    portfolio_min_liquidity_usd: float = Field(
+        default=5000.0, alias="PORTFOLIO_MIN_LIQUIDITY_USD", ge=0
+    )
+    portfolio_cooldown_seconds: int = Field(
+        default=300, alias="PORTFOLIO_COOLDOWN_SECONDS", ge=0, le=86400
+    )
+    portfolio_min_momentum_score: float = Field(
+        default=50.0, alias="PORTFOLIO_MIN_MOMENTUM_SCORE", ge=0, le=100
+    )
+    portfolio_max_slippage_bps: int = Field(
+        default=100, alias="PORTFOLIO_MAX_SLIPPAGE_BPS", ge=1, le=5000
+    )
+
 
 @lru_cache(maxsize=1)
 def load_settings() -> Settings:

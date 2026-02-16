@@ -477,6 +477,15 @@ class CLIOutput:
                     "/lag set [param] [value]": "View/change runtime params",
                     "/lag reset-pnl": "Zero out today's realized PnL",
                     "/lag events": "Show recent lag events",
+                    "/portfolio status": "Show portfolio strategy status",
+                    "/portfolio run": "Run one discovery cycle now",
+                    "/portfolio check": "Run one exit check cycle now",
+                    "/portfolio start": "Start portfolio scheduler",
+                    "/portfolio stop": "Stop portfolio scheduler",
+                    "/portfolio positions": "List open portfolio positions",
+                    "/portfolio close <id|all>": "Manually close position(s)",
+                    "/portfolio history": "Show closed positions with PnL",
+                    "/portfolio set [param] [value]": "View/change runtime params",
                     "/help": "Show this help",
                 },
             }
@@ -512,6 +521,16 @@ class CLIOutput:
             print("  /lag set [param] [value]     View/change runtime params")
             print("  /lag reset-pnl               Zero out today's realized PnL")
             print("  /lag events                  Show recent lag events")
+            print("\nPortfolio Strategy:")
+            print("  /portfolio status            Show portfolio strategy status")
+            print("  /portfolio run               Run one discovery cycle now")
+            print("  /portfolio check             Run one exit check cycle now")
+            print("  /portfolio start             Start portfolio scheduler")
+            print("  /portfolio stop              Stop portfolio scheduler")
+            print("  /portfolio positions         List open portfolio positions")
+            print("  /portfolio close <id|all>    Manually close position(s)")
+            print("  /portfolio history           Show closed positions with PnL")
+            print("  /portfolio set [param] [val] View/change runtime params")
             print("\n  /help             Show this help")
             print("\nExamples:")
             print("  > search for PEPE on ethereum")
@@ -562,6 +581,17 @@ class CLIOutput:
         cmd_table.add_row("  /lag set [param] [value]", "View/change runtime params")
         cmd_table.add_row("  /lag reset-pnl", "Zero out today's realized PnL")
         cmd_table.add_row("  /lag events", "Show recent lag events")
+        cmd_table.add_row("", "")
+        cmd_table.add_row("[bold]Portfolio Strategy[/bold]", "")
+        cmd_table.add_row("  /portfolio status", "Show portfolio strategy status")
+        cmd_table.add_row("  /portfolio run", "Run one discovery cycle now")
+        cmd_table.add_row("  /portfolio check", "Run one exit check cycle now")
+        cmd_table.add_row("  /portfolio start", "Start portfolio scheduler")
+        cmd_table.add_row("  /portfolio stop", "Stop portfolio scheduler")
+        cmd_table.add_row("  /portfolio positions", "List open portfolio positions")
+        cmd_table.add_row("  /portfolio close <id|all>", "Manually close position(s)")
+        cmd_table.add_row("  /portfolio history", "Show closed positions with PnL")
+        cmd_table.add_row("  /portfolio set [param] [value]", "View/change runtime params")
         cmd_table.add_row("", "")
         cmd_table.add_row("  /help", "Show this help")
 
