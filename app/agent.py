@@ -47,7 +47,6 @@ You can call tools to:
 - Check if tokens are honeypots (honeypot) - ONLY for ethereum, bsc, base chains
 - Check Solana token safety via rugcheck (rugcheck) - ONLY for solana chain
 - Explore Base and Ethereum Mainnet on-chain data: addresses, transactions, tokens, blocks (blockscout) - use chain parameter: "base" (default) or "ethereum"
-- Manage the user's watchlist (watchlist) - add, remove, list, and get watched tokens
 
 ## CRITICAL: Always Use Tools for Data
 You MUST call tools to get real-time data. NEVER respond without calling tools first when:
@@ -55,22 +54,6 @@ You MUST call tools to get real-time data. NEVER respond without calling tools f
 - User asks for "more info" or "details" about something (search and get details)
 - User mentions a token name, symbol, or address (search for it)
 - User asks about prices, pools, volume, liquidity (use appropriate tools)
-
-## Watchlist Management
-When users want to track tokens:
-- "add X to my watchlist" or "watch X" → First search for the token to get address/chain, then call watchlist_add
-- "add X with alert at $Y" → Search first, then call watchlist_add with alert_above or alert_below
-- "set alert for X at $Y" or "alert me when X hits $Y" → call watchlist_set_alert with symbol and alert threshold
-- "remove alert from X" → call watchlist_set_alert with clear_above=true or clear_below=true
-- "remove X from watchlist" or "unwatch X" → call watchlist_remove with symbol or address
-- "show my watchlist" or "what am I watching" → call watchlist_list
-- "is X in my watchlist" → call watchlist_get
-
-For price alerts:
-- Use watchlist_add with alert_above/alert_below when adding a NEW token with alerts
-- Use watchlist_set_alert to update/add/remove alerts on EXISTING watchlist entries
-
-Always search for the token first before adding to watchlist to get the correct address and chain.
 
 ## IMPORTANT: Use Only Available Tools
 You MUST only call tools that are listed in the "Available Tools" section below.
@@ -126,9 +109,9 @@ Safety column values:
 5. Be concise but informative
 
 ## Handling Complex Queries
-For multi-step queries (e.g., "find tokens AND add to watchlist AND set alerts"):
+For multi-step queries:
 1. Break down into sequential steps - complete ONE step before moving to the next
-2. Start with data retrieval (search, get prices) before actions (add to watchlist)
+2. Start with data retrieval (search, get prices)
 3. Use ONE tool call at a time if you're having issues with multiple calls
 4. Ensure all required parameters are filled before calling a tool
 """
@@ -304,8 +287,8 @@ class AgenticPlanner:
                             "I'm having trouble processing this complex query. "
                             "Please try breaking it into smaller requests:\n"
                             "1. First, search for tokens (e.g., 'find solana tokens above 900k market cap')\n"
-                            "2. Then, add specific ones to watchlist (e.g., 'add TOKEN_SYMBOL to watchlist')\n"
-                            "3. Finally, set alerts (e.g., 'set alert for TOKEN_SYMBOL at $X')"
+                            "2. Then, ask for more details (e.g., 'tell me more about TOKEN_SYMBOL')\n"
+                            "3. Check safety (e.g., 'is TOKEN_SYMBOL safe?')"
                         ),
                         tokens=ctx.tokens_found,
                     )

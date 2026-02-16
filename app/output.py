@@ -7,14 +7,10 @@ import re
 import sys
 from contextlib import contextmanager
 from enum import Enum
-from typing import Any, Dict, Generator, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Generator, List, Optional
 
 from app.formatting import format_price
 from app.types import PlannerResult
-
-if TYPE_CHECKING:
-    from app.watchlist import WatchlistEntry, AlertRecord
-    from app.watchlist_poller import TriggeredAlert
 
 
 class OutputFormat(Enum):
@@ -301,153 +297,6 @@ class CLIOutput:
 
         return result.strip()
 
-    # --- Watchlist Output Methods ---
-
-    def watchlist_table(self, entries: List["WatchlistEntry"]) -> None:
-        """Display watchlist entries in a table."""
-        if not entries:
-            self.info("Watchlist is empty")
-            return
-
-        if self.format == OutputFormat.JSON:
-            output = [
-                {
-                    "symbol": e.symbol,
-                    "address": e.token_address,
-                    "chain": e.chain,
-                    "last_price": e.last_price,
-                    "alert_above": e.alert_above,
-                    "alert_below": e.alert_below,
-                }
-                for e in entries
-            ]
-            print(json.dumps(output, indent=2), file=self.stream)
-            return
-
-        if not self._console:
-            # Plain text fallback
-            for e in entries:
-                price = f"${e.last_price:.8f}" if e.last_price else "-"
-                above = f"${e.alert_above:.8f}" if e.alert_above else "-"
-                below = f"${e.alert_below:.8f}" if e.alert_below else "-"
-                print(f"{e.symbol} ({e.chain}): {price} | Above: {above} | Below: {below}")
-            return
-
-        from rich.table import Table
-
-        table = Table(title="📋 Watchlist", show_header=True, header_style="bold cyan")
-        table.add_column("Symbol", style="cyan", no_wrap=True)
-        table.add_column("Address", style="dim", no_wrap=True)
-        table.add_column("Chain", style="magenta")
-        table.add_column("Last Price", style="green", justify="right")
-        table.add_column("Alert Above", justify="right")
-        table.add_column("Alert Below", justify="right")
-
-        for entry in entries:
-            addr_short = entry.token_address[:10] + "..." if len(entry.token_address) > 10 else entry.token_address
-            price = format_price(entry.last_price) if entry.last_price else "-"
-            above = format_price(entry.alert_above) if entry.alert_above else "-"
-            below = format_price(entry.alert_below) if entry.alert_below else "-"
-
-            table.add_row(
-                entry.symbol,
-                addr_short,
-                entry.chain,
-                price,
-                above,
-                below,
-            )
-
-        self._console.print(table)
-
-    def alert_notification(self, alert: "TriggeredAlert") -> None:
-        """Display a triggered alert notification."""
-        if alert.alert_type == "above":
-            emoji = "🔺"
-            direction = "crossed above"
-            color = "green"
-        else:
-            emoji = "🔻"
-            direction = "dropped below"
-            color = "red"
-
-        threshold = format_price(alert.threshold)
-        current = format_price(alert.current_price)
-
-        if self.format == OutputFormat.JSON:
-            output = {
-                "alert": True,
-                "symbol": alert.symbol,
-                "chain": alert.chain,
-                "type": alert.alert_type,
-                "threshold": alert.threshold,
-                "current_price": alert.current_price,
-            }
-            print(json.dumps(output), file=self.stream)
-            return
-
-        message = f"{emoji} ALERT: {alert.symbol} ({alert.chain}) {direction} {threshold} (current: {current})"
-
-        if self._console:
-            self._console.print(f"[bold {color}]{message}[/bold {color}]")
-        else:
-            print(f"🔔 {message}", file=self.stream)
-
-    def alerts_table(self, alerts: List["AlertRecord"]) -> None:
-        """Display alert history in a table."""
-        if not alerts:
-            self.info("No alerts")
-            return
-
-        if self.format == OutputFormat.JSON:
-            output = [
-                {
-                    "symbol": a.symbol,
-                    "chain": a.chain,
-                    "type": a.alert_type,
-                    "threshold": a.threshold,
-                    "triggered_price": a.triggered_price,
-                    "triggered_at": a.triggered_at.isoformat(),
-                    "acknowledged": a.acknowledged,
-                }
-                for a in alerts
-            ]
-            print(json.dumps(output, indent=2), file=self.stream)
-            return
-
-        if not self._console:
-            for a in alerts:
-                status = "✓" if a.acknowledged else "•"
-                print(f"{status} {a.symbol}: {a.alert_type} {a.threshold} @ {a.triggered_price}")
-            return
-
-        from rich.table import Table
-
-        table = Table(title="🔔 Alerts", show_header=True, header_style="bold cyan")
-        table.add_column("Symbol", style="cyan")
-        table.add_column("Chain", style="magenta")
-        table.add_column("Type")
-        table.add_column("Threshold", justify="right")
-        table.add_column("Triggered At", justify="right")
-        table.add_column("Time", style="dim")
-
-        for alert in alerts:
-            alert_type = "🔺 above" if alert.alert_type == "above" else "🔻 below"
-            threshold = format_price(alert.threshold)
-            triggered = format_price(alert.triggered_price)
-            time_str = alert.triggered_at.strftime("%Y-%m-%d %H:%M")
-
-            table.add_row(
-                alert.symbol or "?",
-                alert.chain or "?",
-                alert_type,
-                threshold,
-                triggered,
-                time_str,
-            )
-
-        self._console.print(table)
-
     def help_panel(self, version: str = "0.1.0") -> None:
         """Display help information panel."""
         if self.format == OutputFormat.JSON:
@@ -458,25 +307,6 @@ class CLIOutput:
                     "/quit, /q": "Exit the CLI",
                     "/clear": "Clear conversation context",
                     "/context": "Show recent tokens in context",
-                    "/watch <token> [chain]": "Add token to watchlist",
-                    "/unwatch <token>": "Remove token from watchlist",
-                    "/watchlist": "Show watched tokens with prices",
-                    "/clearwatchlist": "Remove all tokens from watchlist",
-                    "/alert <token> above|below <price>": "Set price alert",
-                    "/alerts": "Show triggered alerts",
-                    "/alerts clear": "Acknowledge all alerts",
-                    "/alerts history": "Show alert history",
-                    "/poller": "Show price monitor status",
-                    "/fix-addresses": "Fix lowercase Solana addresses",
-                    "/lag status": "Show lag strategy status",
-                    "/lag run": "Run one lag cycle now",
-                    "/lag start": "Start lag scheduler",
-                    "/lag stop": "Stop lag scheduler",
-                    "/lag positions": "List open lag positions",
-                    "/lag close <id|all>": "Manually close position(s)",
-                    "/lag set [param] [value]": "View/change runtime params",
-                    "/lag reset-pnl": "Zero out today's realized PnL",
-                    "/lag events": "Show recent lag events",
                     "/portfolio status": "Show portfolio strategy status",
                     "/portfolio run": "Run one discovery cycle now",
                     "/portfolio check": "Run one exit check cycle now",
@@ -500,27 +330,6 @@ class CLIOutput:
             print("  /quit, /q         Exit the CLI")
             print("  /clear            Clear conversation context")
             print("  /context          Show recent tokens in context")
-            print("\nWatchlist:")
-            print("  /watch <token> [chain]       Add token to watchlist")
-            print("  /unwatch <token>             Remove from watchlist")
-            print("  /watchlist                   Show watched tokens")
-            print("  /clearwatchlist              Clear entire watchlist")
-            print("  /alert <token> above|below <price>  Set price alert")
-            print("  /alerts                      Show triggered alerts")
-            print("  /alerts clear                Acknowledge alerts")
-            print("  /alerts history              Show alert history")
-            print("  /poller                      Show price monitor status")
-            print("  /fix-addresses               Fix lowercase Solana addresses")
-            print("\nLag Strategy:")
-            print("  /lag status                  Show lag strategy status")
-            print("  /lag run                     Run one lag cycle now")
-            print("  /lag start                   Start lag scheduler")
-            print("  /lag stop                    Stop lag scheduler")
-            print("  /lag positions               List open lag positions")
-            print("  /lag close <id|all>          Manually close position(s)")
-            print("  /lag set [param] [value]     View/change runtime params")
-            print("  /lag reset-pnl               Zero out today's realized PnL")
-            print("  /lag events                  Show recent lag events")
             print("\nPortfolio Strategy:")
             print("  /portfolio status            Show portfolio strategy status")
             print("  /portfolio run               Run one discovery cycle now")
@@ -534,8 +343,8 @@ class CLIOutput:
             print("\n  /help             Show this help")
             print("\nExamples:")
             print("  > search for PEPE on ethereum")
-            print("  > /watch PEPE ethereum")
-            print("  > /alert PEPE above 0.00002")
+            print("  > trending tokens on solana")
+            print("  > /portfolio run")
             return
 
         from rich.panel import Panel
@@ -559,29 +368,6 @@ class CLIOutput:
         cmd_table.add_row("  /clear", "Clear conversation context")
         cmd_table.add_row("  /context", "Show recent tokens in context")
         cmd_table.add_row("", "")
-        cmd_table.add_row("[bold]Watchlist[/bold]", "")
-        cmd_table.add_row("  /watch <token> [chain]", "Add token to watchlist")
-        cmd_table.add_row("  /unwatch <token>", "Remove from watchlist")
-        cmd_table.add_row("  /watchlist", "Show watched tokens with prices")
-        cmd_table.add_row("  /clearwatchlist", "Clear entire watchlist")
-        cmd_table.add_row("  /alert <token> above|below <price>", "Set price alert")
-        cmd_table.add_row("  /alerts", "Show triggered alerts")
-        cmd_table.add_row("  /alerts clear", "Acknowledge all alerts")
-        cmd_table.add_row("  /alerts history", "Show alert history")
-        cmd_table.add_row("  /poller", "Show price monitor status")
-        cmd_table.add_row("  /fix-addresses", "Fix lowercase Solana addresses")
-        cmd_table.add_row("", "")
-        cmd_table.add_row("[bold]Lag Strategy[/bold]", "")
-        cmd_table.add_row("  /lag status", "Show lag strategy status")
-        cmd_table.add_row("  /lag run", "Run one lag cycle now")
-        cmd_table.add_row("  /lag start", "Start lag scheduler")
-        cmd_table.add_row("  /lag stop", "Stop lag scheduler")
-        cmd_table.add_row("  /lag positions", "List open lag positions")
-        cmd_table.add_row("  /lag close <id|all>", "Manually close position(s)")
-        cmd_table.add_row("  /lag set [param] [value]", "View/change runtime params")
-        cmd_table.add_row("  /lag reset-pnl", "Zero out today's realized PnL")
-        cmd_table.add_row("  /lag events", "Show recent lag events")
-        cmd_table.add_row("", "")
         cmd_table.add_row("[bold]Portfolio Strategy[/bold]", "")
         cmd_table.add_row("  /portfolio status", "Show portfolio strategy status")
         cmd_table.add_row("  /portfolio run", "Run one discovery cycle now")
@@ -599,8 +385,8 @@ class CLIOutput:
         examples = Text()
         examples.append("\n📝 Examples:\n", style="bold")
         examples.append("  > search for PEPE on ethereum\n", style="dim italic")
-        examples.append("  > /watch PEPE ethereum\n", style="dim italic")
-        examples.append("  > /alert PEPE above 0.00002", style="dim italic")
+        examples.append("  > trending tokens on solana\n", style="dim italic")
+        examples.append("  > /portfolio run", style="dim italic")
 
         # Combine into panel
         content = Group(header, cmd_table, examples)

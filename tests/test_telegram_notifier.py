@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 from app.formatting import format_price, format_large_number
 from app.telegram_notifier import TelegramNotifier
-from app.watchlist_poller import TriggeredAlert
 
 
 @pytest.fixture
@@ -34,20 +33,6 @@ def unconfigured_notifier(temp_db_path):
         bot_token="",
         chat_id="",
         subscribers_db_path=temp_db_path,
-    )
-
-
-@pytest.fixture
-def sample_alert():
-    """Create a sample triggered alert."""
-    return TriggeredAlert(
-        symbol="PEPE",
-        chain="ethereum",
-        alert_type="above",
-        threshold=0.00002,
-        current_price=0.000021,
-        token_address="0x6982508145454ce325ddbe47a25d4ec3d2311933",
-        liquidity=500000.0,
     )
 
 
@@ -164,67 +149,6 @@ async def test_test_connection_unconfigured(unconfigured_notifier):
     """Test test_connection returns False when not configured."""
     result = await unconfigured_notifier.test_connection()
     assert result is False
-
-
-@pytest.mark.asyncio
-async def test_send_alert(notifier, sample_alert):
-    """Test send_alert formats and sends the alert to all subscribers."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = {"ok": True}
-
-    # Add a subscriber first
-    await notifier._subscribers_db.add_subscriber("111", "testuser")
-
-    with patch.object(notifier, "_get_client") as mock_get_client:
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_get_client.return_value = mock_client
-
-        result = await notifier.send_alert(sample_alert)
-
-        assert result is True
-        call_args = mock_client.post.call_args
-        message_text = call_args[1]["json"]["text"]
-        
-        assert "PEPE" in message_text
-        assert "ethereum" in message_text
-        assert "Crossed above" in message_text
-        assert "$0.00002" in message_text
-
-
-def test_format_alert_above(notifier, sample_alert):
-    """Test alert formatting for above threshold."""
-    message = notifier._format_alert(sample_alert)
-
-    assert "🔔" in message
-    assert "Price Alert" in message
-    assert "PEPE" in message
-    assert "ethereum" in message
-    assert "🔺" in message
-    assert "Crossed above" in message
-    assert "0x6982508145454ce325ddbe47a25d4ec3d2311933" in message
-    assert "<code>" in message  # Copyable format
-    assert "Liquidity" in message
-    assert "$500.00K" in message
-
-
-def test_format_alert_below(notifier):
-    """Test alert formatting for below threshold."""
-    alert = TriggeredAlert(
-        symbol="WIF",
-        chain="solana",
-        alert_type="below",
-        threshold=1.50,
-        current_price=1.45,
-        token_address="EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
-    )
-    message = notifier._format_alert(alert)
-
-    assert "WIF" in message
-    assert "solana" in message
-    assert "🔻" in message
-    assert "Dropped below" in message
-    assert "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm" in message
 
 
 def test_format_price():

@@ -17,7 +17,7 @@ from app.portfolio_strategy import (
     PortfolioStrategyEngine,
 )
 from app.portfolio_discovery import DiscoveryCandidate
-from app.watchlist import PortfolioPosition, WatchlistDB
+from app.database import Database, PortfolioPosition
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +143,7 @@ def temp_db_path():
 
 @pytest_asyncio.fixture
 async def db(temp_db_path):
-    database = WatchlistDB(db_path=temp_db_path)
+    database = Database(db_path=temp_db_path)
     await database.connect()
     yield database
     await database.close()
@@ -175,7 +175,7 @@ def _config(**overrides: Any) -> PortfolioStrategyConfig:
 
 
 def _make_engine(
-    db: WatchlistDB,
+    db: Database,
     dex_price: float = 0.01,
     trader_price: float = 0.01,
     trader_success: bool = True,
@@ -195,7 +195,7 @@ def _make_engine(
 
 
 async def _insert_position(
-    db: WatchlistDB,
+    db: Database,
     token_address: str = "TestToken111111111111111111111111111111111",
     symbol: str = "TEST",
     chain: str = "solana",

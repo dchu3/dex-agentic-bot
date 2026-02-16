@@ -8,49 +8,40 @@
 > Do NOT use real money without extensive backtesting and forward testing on paper/demo accounts.
 > Past performance (if shown) does NOT indicate future results.
 
-A Telegram bot that provides comprehensive token safety checks and market analysis. Send any token address and get an AI-powered report with price data, liquidity info, safety checks, and investment insights.
+An AI-powered CLI and Telegram bot for token safety checks, market analysis, and autonomous portfolio management. Uses Gemini AI with MCP servers for multi-chain data retrieval.
 
 > [!WARNING]
 > **API Cost & Security Notice**
-> This bot uses the Gemini API (or other LLM APIs) which **incur usage costs** with every request. Each token analysis triggers multiple API calls that count toward your billing. Set spending limits in your API provider's dashboard to avoid unexpected charges.
+> This bot uses the Gemini API which **incurs usage costs** with every request. Set spending limits in your API provider's dashboard to avoid unexpected charges.
 >
-> **Never commit API keys to source control.** If deploying publicly, be aware that anyone with access can trigger API calls at your expense. The bot defaults to **private mode** — configure your `TELEGRAM_CHAT_ID` before use. If you choose to disable private mode, do so with caution and monitor your API usage closely.
+> **Never commit API keys to source control.** The Telegram bot defaults to **private mode** — configure your `TELEGRAM_CHAT_ID` before use.
 
 ## Features
 
-- 🔍 **Instant Analysis** - Send a token address, get a detailed report
-- 🛡️ **Safety Checks** - Honeypot detection (EVM) and Rugcheck (Solana)
-- 📊 **Market Data** - Price, volume, liquidity, market cap via DexScreener
-- ⚡ **Lag-Edge Strategy (Solana)** - Optional auto-execution loop via trader MCP
-- 📈 **Portfolio Strategy (Solana)** - AI-driven token discovery, buy, hold, and auto-exit at TP/SL with trailing stops
-- 🤖 **AI Insights** - Gemini-powered analysis and risk assessment
-- ⚡ **Multi-Chain** - Supports Ethereum, BSC, Base, and Solana
+- 🔍 **AI Token Analysis** — Send a token address (CLI or Telegram), get a detailed safety & market report
+- 🛡️ **Safety Checks** — Honeypot detection (EVM) and Rugcheck (Solana)
+- 📊 **Market Data** — Price, volume, liquidity, market cap via DexScreener & DexPaprika
+- 📈 **Portfolio Strategy** — Autonomous token discovery → buy → hold → exit at TP/SL with trailing stops (Solana)
+- 🤖 **Gemini AI** — Natural language queries, intelligent tool selection, risk assessment
+- ⚡ **Multi-Chain** — Supports Ethereum, BSC, Base, and Solana
 
 ## Quick Start
 
 ### 1. Setup
 
 ```bash
-# Install dependencies
 ./scripts/install.sh
-
-# Configure environment
 cp .env.example .env
 # Edit .env with your API keys
 ```
 
 ### 2. Configuration
 
-Add to your `.env`:
+Key settings in `.env`:
 
 ```env
 # Required
 GEMINI_API_KEY=your-gemini-api-key
-TELEGRAM_BOT_TOKEN=your-telegram-bot-token
-
-# Optional: Restrict bot to specific chat (private mode)
-TELEGRAM_CHAT_ID=your-chat-id        # Your Telegram chat ID
-TELEGRAM_PRIVATE_MODE=true           # Private by default; set to false to allow public access
 
 # MCP Servers (token data sources)
 MCP_DEXSCREENER_CMD=node /path/to/dex-screener-mcp/dist/index.js
@@ -61,205 +52,95 @@ MCP_SOLANA_RPC_CMD=node /path/to/solana-rpc-mcp/dist/index.js
 MCP_BLOCKSCOUT_CMD=node /path/to/dex-blockscout-mcp/dist/index.js
 MCP_TRADER_CMD=node /path/to/dex-trader-mcp/dist/index.js
 
-# Optional: Lag strategy (Solana-first)
-LAG_STRATEGY_ENABLED=false
-LAG_STRATEGY_DRY_RUN=true
-LAG_STRATEGY_INTERVAL_SECONDS=20
-LAG_STRATEGY_MIN_EDGE_BPS=30
-LAG_STRATEGY_MAX_POSITION_USD=25
-LAG_STRATEGY_MAX_OPEN_POSITIONS=2
-LAG_STRATEGY_DAILY_LOSS_LIMIT_USD=50
+# Telegram (optional)
+TELEGRAM_BOT_TOKEN=your-telegram-bot-token
+TELEGRAM_CHAT_ID=your-chat-id
+TELEGRAM_PRIVATE_MODE=true
+
+# Portfolio strategy (optional)
+PORTFOLIO_ENABLED=false
+PORTFOLIO_DRY_RUN=true
+PORTFOLIO_POSITION_SIZE_USD=5.0
+PORTFOLIO_MAX_POSITIONS=5
+PORTFOLIO_TAKE_PROFIT_PCT=15.0
+PORTFOLIO_STOP_LOSS_PCT=8.0
+PORTFOLIO_TRAILING_STOP_PCT=5.0
 ```
 
-#### Private Mode
+See `.env.example` for the full list of settings.
 
-By default, the bot runs in **private mode** — only messages from your configured `TELEGRAM_CHAT_ID` are processed.
+#### Telegram Private Mode
 
-To set up private mode:
-1. Set `TELEGRAM_CHAT_ID` to your Telegram chat ID in `.env`
-2. Only messages from that chat ID will be processed
-
-To make the bot public (use with caution — see warning above):
-1. Set `TELEGRAM_PRIVATE_MODE=false` in `.env`
-2. Anyone will be able to send token addresses and trigger API calls at your expense
+By default, only messages from your configured `TELEGRAM_CHAT_ID` are processed. Set `TELEGRAM_PRIVATE_MODE=false` to allow public access (use with caution — anyone can trigger API calls at your expense).
 
 To find your chat ID, send a message to your bot and check the logs, or use [@userinfobot](https://t.me/userinfobot).
 
-### 3. Run the Bot
+### 3. Run
 
 ```bash
-# Run Telegram bot only (recommended for production)
+# Telegram bot only (recommended for production)
 ./scripts/start.sh --telegram-only
 
-# Or run with CLI interface
+# Interactive CLI
 ./scripts/start.sh --interactive
+
+# Single query
+./scripts/start.sh "search for PEPE on ethereum"
+
+# Portfolio strategy (dry-run)
+./scripts/start.sh --interactive --portfolio
+
+# Portfolio strategy (live)
+./scripts/start.sh --interactive --portfolio --portfolio-live
 ```
 
 ## Usage
 
 ### Telegram Bot
 
-1. Start a chat with your bot on Telegram
-2. Send any token address:
-   - EVM: `0x6982508145454Ce325dDbE47a25d4ec3d2311933`
-   - Solana: `DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263`
-3. Receive a comprehensive analysis report
-
-### Supported Address Formats
-
-| Chain | Format | Example |
-|-------|--------|---------|
-| Ethereum/BSC/Base | `0x` + 40 hex chars | `0x6982508145454Ce325dDbE47a25d4ec3d2311933` |
-| Solana | Base58, 32-44 chars | `DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263` |
-
-Chain is auto-detected from the address format.
-
-### Telegram Commands
+Send any token address to your bot:
+- EVM: `0x6982508145454Ce325dDbE47a25d4ec3d2311933`
+- Solana: `DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263`
 
 | Command | Description |
 |---------|-------------|
-| `/analyze <address>` | Analyze a token (same as sending address directly) |
+| `/analyze <address>` | Analyze a token |
 | `/help` | Show help message |
 | `/status` | Check bot status |
 
-### Price Alerts (Interactive CLI)
-
-Price alerts let you set above/below thresholds on watchlist tokens. The background poller checks prices and fires a notification when the price **crosses** your threshold.
-
-#### Setup
-
-1. Enable polling in your `.env`:
-   ```env
-   WATCHLIST_POLL_ENABLED=true
-   WATCHLIST_POLL_INTERVAL=60   # seconds between price checks (default: 60)
-   ```
-2. Start in interactive mode:
-   ```bash
-   ./scripts/start.sh --interactive
-   # or with a custom poll interval
-   ./scripts/start.sh --interactive --poll-interval 30
-   ```
-
-#### Setting Alerts
-
-```
-/alert PEPE above 0.000005      # triggers when price rises to/above target
-/alert PEPE below 0.000003      # triggers when price drops to/below target
-/alert 0x6b17...d71 below 1.50  # works with addresses too
-```
-
-You can set both an above and below alert on the same token.
-
-#### How They Trigger
-
-- The watchlist poller runs in the background and fetches current prices each cycle.
-- An alert fires only on the **crossing event** — when `last_price` was below the threshold and `current_price` reaches or exceeds it (or vice versa for below alerts).
-- After firing, the alert is **one-shot per crossing**. It won't re-fire until the price crosses back and crosses the threshold again.
-- Triggered alerts appear in the CLI and are sent via Telegram (if configured).
-
-#### Managing Alerts
+### Interactive CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `/alerts` | Show triggered (unacknowledged) alerts |
-| `/alerts clear` | Acknowledge all triggered alerts |
-| `/alerts history` | Show full alert history |
+| `/help` | Show available commands |
+| `/clear` | Clear conversation history |
+| `/context` | Show current conversation context |
+| `/quit` | Exit the CLI |
+| `/portfolio <subcommand>` | Portfolio strategy management |
 
-> **Note:** Alerts require `WATCHLIST_POLL_ENABLED=true` and `--interactive` mode. Without polling enabled, alerts are stored but never checked. You can disable polling for a session with `--no-polling`.
+#### Portfolio Subcommands
 
-### Lag Strategy (Interactive CLI, Solana)
+| Subcommand | Description |
+|------------|-------------|
+| `/portfolio status` | Scheduler/risk status and config summary |
+| `/portfolio run` | Run one discovery cycle immediately |
+| `/portfolio check` | Run one exit check cycle immediately |
+| `/portfolio start` / `stop` | Start or stop the scheduler |
+| `/portfolio positions` | Show open positions with unrealized PnL |
+| `/portfolio close <id\|all>` | Manually close position(s) |
+| `/portfolio set [param] [value]` | Show or change tunable runtime parameters |
+| `/portfolio history` | Show recent closed positions with PnL |
 
-The lag strategy runs in interactive mode and monitors **Solana tokens in your watchlist** (or autonomous watchlist), then opens/closes positions via trader MCP.
+### Portfolio Strategy
 
-1. Configure trader MCP and wallet (in the trader MCP project's `.env`, not this repo's `.env`).
-2. Add Solana tokens to watchlist (example: `/watch BONK solana`).
-3. Start interactive mode with lag scheduler enabled:
-
-```bash
-./scripts/start.sh --interactive --lag-strategy --lag-interval 20
-```
-
-By default this runs in **dry-run mode** (`LAG_STRATEGY_DRY_RUN=true`), so no real orders are sent.
-
-> **Note:** The lag strategy uses SOL as the payment currency for all trades via Jupiter. Native SOL and USDC are automatically excluded from the token monitoring list since they cannot be traded against themselves. Do not add SOL or USDC to your watchlist for lag trading.
-
-Useful `/lag` commands:
-- `/lag status` - Scheduler/risk status and cycle summary
-- `/lag run` - Run one cycle immediately
-- `/lag start` / `/lag stop` - Start or stop scheduler
-- `/lag positions` - Show open lag positions
-- `/lag close <id|all>` - Manually close position(s)
-- `/lag set` - Show all tunable runtime parameters
-- `/lag set <param> <value>` - Change a parameter without restarting (e.g. `/lag set max_position_usd 50`)
-- `/lag events` - Show recent lag strategy events
-
-To enable live execution, either set `LAG_STRATEGY_DRY_RUN=false` in `.env` or start with:
-
-```bash
-./scripts/start.sh --interactive --lag-strategy --lag-live
-```
-
-Recommended risk controls to tune first: `LAG_STRATEGY_MIN_EDGE_BPS`, `LAG_STRATEGY_MAX_POSITION_USD`, `LAG_STRATEGY_MAX_OPEN_POSITIONS`, `LAG_STRATEGY_DAILY_LOSS_LIMIT_USD`.
-
-#### Atomic Expectancy Gate
-
-When running in **atomic** execution mode, a rolling expectancy gate automatically pauses new entries if recent trades show persistently negative net PnL (after fees and slippage). This prevents the bot from continuing to bleed SOL on unprofitable atomic round-trips.
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `LAG_STRATEGY_ATOMIC_EVAL_WINDOW` | 20 | Number of recent atomic trades to evaluate |
-| `LAG_STRATEGY_ATOMIC_MIN_SAMPLES` | 10 | Minimum closed atomic trades before gate activates |
-| `LAG_STRATEGY_ATOMIC_PAUSE_EXPECTANCY_BPS` | 0.0 | Pause when avg PnL bps ≤ this value |
-
-The gate emits `atomic_paused_negative_expectancy` events (visible via `/lag events`) when pausing. It automatically resumes once enough profitable trades shift the rolling average above the threshold. Standard mode is unaffected.
-
-### Portfolio Strategy (Interactive CLI, Solana)
-
-The portfolio strategy autonomously discovers promising Solana tokens, buys small positions, holds them, and exits automatically when take-profit, stop-loss, or trailing stop conditions are met. It uses a **hybrid discovery pipeline**: deterministic pre-filters (volume, liquidity, chain) → rugcheck safety → Gemini AI momentum scoring.
-
-1. Configure trader MCP and wallet.
-2. Add portfolio settings to `.env`:
-
-```env
-PORTFOLIO_ENABLED=true
-PORTFOLIO_DRY_RUN=true
-PORTFOLIO_POSITION_SIZE_USD=5.0
-PORTFOLIO_TAKE_PROFIT_PCT=15.0
-PORTFOLIO_STOP_LOSS_PCT=8.0
-PORTFOLIO_TRAILING_STOP_PCT=5.0
-PORTFOLIO_MAX_POSITIONS=5
-PORTFOLIO_MAX_HOLD_HOURS=24
-PORTFOLIO_DAILY_LOSS_LIMIT_USD=50.0
-```
-
-3. Start interactive mode with portfolio scheduler enabled:
-
-```bash
-./scripts/start.sh --interactive --portfolio
-```
-
-By default this runs in **dry-run mode** (`PORTFOLIO_DRY_RUN=true`), so no real orders are sent.
-
-Useful `/portfolio` commands:
-- `/portfolio status` — Scheduler/risk status and config summary
-- `/portfolio run` — Run one discovery cycle immediately
-- `/portfolio check` — Run one exit check cycle immediately
-- `/portfolio start` / `/portfolio stop` — Start or stop scheduler
-- `/portfolio positions` — Show open positions with unrealized PnL
-- `/portfolio close <id|all>` — Manually close position(s)
-- `/portfolio set` — Show/change tunable runtime parameters
-- `/portfolio history` — Show recent closed positions with PnL
-
-To enable live execution, either set `PORTFOLIO_DRY_RUN=false` in `.env` or start with:
-
-```bash
-./scripts/start.sh --interactive --portfolio --portfolio-live
-```
+The portfolio strategy autonomously discovers promising Solana tokens, buys small positions, and exits when take-profit, stop-loss, or trailing stop conditions are met.
 
 **How it works:**
-1. **Discovery** (every 30 min): Scans DexScreener trending → filters by volume/liquidity → rugcheck safety → Gemini AI scores momentum → buys top candidates
-2. **Exit monitoring** (every 60s): Checks all open positions against TP/SL thresholds, updates trailing stops as price makes new highs, closes expired positions
-3. **Risk guards**: Max positions cap, daily loss limit, cooldown after failures, duplicate position prevention
+1. **Discovery** (every 30 min): DexScreener trending → volume/liquidity filter → rugcheck safety → Gemini AI momentum scoring → buy top candidates
+2. **Exit monitoring** (every 60s): Check TP/SL thresholds, update trailing stops, close expired positions
+3. **Risk guards**: Max positions cap, daily loss limit, cooldown after failures, duplicate prevention
+
+By default this runs in **dry-run mode** (`PORTFOLIO_DRY_RUN=true`).
 
 ### Example Report
 
@@ -296,72 +177,77 @@ deep liquidity and no concerning tax mechanisms...
 
 | Option | Description |
 |--------|-------------|
-| `--telegram-only` | Run only the Telegram bot (no CLI) |
 | `-i, --interactive` | Start interactive CLI mode |
 | `-v, --verbose` | Show debug information |
+| `-o, --output` | Output format (`text`, `json`) |
+| `--stdin` | Read query from stdin |
+| `--telegram-only` | Run only the Telegram bot (no CLI) |
 | `--no-telegram` | Disable Telegram in interactive mode |
-| `--lag-strategy` | Enable lag-edge strategy scheduler |
-| `--lag-interval` | Lag strategy cycle interval in seconds |
-| `--lag-live` | Run lag strategy with live execution (disable dry-run) |
+| `--no-honeypot` | Disable honeypot MCP server |
+| `--no-rugcheck` | Disable rugcheck MCP server |
+| `--no-blockscout` | Disable blockscout MCP server |
+| `--no-trader` | Disable trader MCP server |
 | `--portfolio` | Enable portfolio strategy scheduler |
-| `--portfolio-live` | Run portfolio strategy with live execution (disable dry-run) |
+| `--portfolio-live` | Run portfolio strategy with live execution |
 
 ## Architecture
 
 ```
-Telegram Message (token address)
-         │
-         ▼
-┌─────────────────────────┐
-│   TelegramNotifier      │
-│   - Address detection   │
-│   - Message routing     │
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│    TokenAnalyzer        │
-│   - Chain detection     │
-│   - Parallel MCP calls  │
-│   - AI synthesis        │
-└────────────┬────────────┘
-             │
-    ┌────────┼────────┬────────┬────────┐
-    ▼        ▼        ▼        ▼        ▼
-DexScreener DexPaprika Honeypot Rugcheck Blockscout
-   (price)   (pools)  (EVM)   (Solana)  (Base)
-             │
-             ▼
-       Gemini AI
-   (Report synthesis)
-             │
-             ▼
-   Telegram Report Message
+┌──────────────────────────────────────────────────┐
+│           User Query (CLI / Telegram)            │
+└──────────────────────┬───────────────────────────┘
+                       │
+          ┌────────────┴────────────┐
+          ▼                         ▼
+┌──────────────────┐     ┌──────────────────┐
+│  AgenticPlanner  │     │  TokenAnalyzer   │
+│  (interactive    │     │  (Telegram bot   │
+│   CLI queries)   │     │   token reports) │
+└────────┬─────────┘     └────────┬─────────┘
+         │                        │
+         └───────────┬────────────┘
+                     ▼
+         ┌───────────────────────┐
+         │    MCP Clients        │
+         │  (JSON-RPC / stdio)   │
+         └───────────┬───────────┘
+                     │
+    ┌────────┬───────┼───────┬────────┬────────┐
+    ▼        ▼       ▼       ▼        ▼        ▼
+DexScreener DexPap Honeypot Rugcheck Blockscout Trader
+  (price)  (pools)  (EVM)  (Solana)   (Base)  (Solana)
+```
+
+**Portfolio Strategy** runs as a separate subsystem:
+
+```
+PortfolioScheduler (discovery every 30min + exit checks every 60s)
+    │
+    ├── PortfolioDiscovery → DexScreener + Rugcheck + Gemini AI scoring
+    │
+    ├── PortfolioStrategy  → trailing stop updates, TP/SL/timeout checks
+    │
+    └── TraderExecution    → buy/sell via trader MCP
+    │
+    └── Database (SQLite)  → ~/.dex-bot/portfolio.db
 ```
 
 ## Prerequisites
 
 - **Python 3.10+**
 - **Node.js 18+** (for MCP servers)
-- **Telegram Bot Token** (from [@BotFather](https://t.me/BotFather))
 - **Gemini API Key** (from [Google AI Studio](https://makersuite.google.com/app/apikey))
+- **Telegram Bot Token** (optional, from [@BotFather](https://t.me/BotFather))
 
 ## Development
 
 ```bash
-# Activate virtual environment
 source .venv/bin/activate
-
-# Run tests
 pytest
-
-# Run CLI directly
-python -m app --telegram-only
+python -m app "your query"
 ```
 
 ## MCP Servers
-
-This bot uses MCP (Model Context Protocol) servers for data:
 
 | Server | Purpose | Chains |
 |--------|---------|--------|
@@ -373,7 +259,7 @@ This bot uses MCP (Model Context Protocol) servers for data:
 | [dex-blockscout-mcp](https://github.com/dchu3/dex-blockscout-mcp) | Block explorer data | Base, Ethereum |
 | [dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp) | Token trading via Jupiter | Solana |
 
-Each MCP server subprocess automatically runs with its project root as the working directory (detected via `package.json` or `pyproject.toml`). This means servers can load their own `.env` files independently — for example, `dex-trader-mcp` reads `SOLANA_PRIVATE_KEY` from its own `.env`, not from this bot's `.env`.
+Each MCP server runs with its project root as the working directory and loads its own `.env` independently.
 
 ## License
 

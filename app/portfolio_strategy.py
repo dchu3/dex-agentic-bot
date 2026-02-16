@@ -7,14 +7,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
-from app.lag_execution import TraderExecutionService
+from app.execution import TraderExecutionService
 from app.portfolio_discovery import DiscoveryCandidate, PortfolioDiscovery
 from app.price_cache import PriceCache
-from app.watchlist import PortfolioPosition
+from app.database import PortfolioPosition
 
 if TYPE_CHECKING:
     from app.mcp_client import MCPManager
-    from app.watchlist import WatchlistDB
+    from app.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ class PortfolioStrategyEngine:
 
     def __init__(
         self,
-        db: "WatchlistDB",
+        db: "Database",
         mcp_manager: "MCPManager",
         config: PortfolioStrategyConfig,
         api_key: str,
@@ -505,7 +505,7 @@ class PortfolioStrategyEngine:
             if age < _NATIVE_PRICE_STALE_SECONDS:
                 return
 
-        from app.lag_execution import SOL_NATIVE_MINT
+        from app.execution import SOL_NATIVE_MINT
 
         dexscreener = self.mcp_manager.get_client("dexscreener")
         if dexscreener is None:

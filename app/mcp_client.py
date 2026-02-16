@@ -323,7 +323,6 @@ class MCPManager:
         solana_rpc_cmd: str = "",
         blockscout_cmd: str = "",
         trader_cmd: str = "",
-        watchlist_provider: Optional[Any] = None,
     ) -> None:
         self.dexscreener = MCPClient("dexscreener", dexscreener_cmd)
         self.dexpaprika = MCPClient("dexpaprika", dexpaprika_cmd)
@@ -332,7 +331,6 @@ class MCPManager:
         self.solana = MCPClient("solana", solana_rpc_cmd) if solana_rpc_cmd else None
         self.blockscout = MCPClient("blockscout", blockscout_cmd) if blockscout_cmd else None
         self.trader = MCPClient("trader", trader_cmd) if trader_cmd else None
-        self.watchlist_provider = watchlist_provider
         self._gemini_functions_cache: Optional[List["types.FunctionDeclaration"]] = None
 
     async def start(self) -> None:
@@ -390,9 +388,6 @@ class MCPManager:
             clients.append(self.trader)
         for client in clients:
             all_functions.extend(client.to_gemini_functions())
-        # Add watchlist tools if provider is configured
-        if self.watchlist_provider:
-            all_functions.extend(self.watchlist_provider.to_gemini_functions())
         self._gemini_functions_cache = all_functions
         return all_functions
 
@@ -434,28 +429,6 @@ class MCPManager:
                     
                     lines.append(f"- {client.name}_{name}: {desc}{param_info}")
         
-        # Add watchlist tools if provider is configured
-        if self.watchlist_provider and self.watchlist_provider.tools:
-            lines.append(f"\n### {self.watchlist_provider.name} tools:")
-            for tool in self.watchlist_provider.tools:
-                name = tool.get("name", "unknown")
-                desc = tool.get("description", "No description")
-                desc = self._truncate_description(desc, max_length=100)
-                
-                input_schema = tool.get("inputSchema", {})
-                required_params = input_schema.get("required", [])
-                properties = input_schema.get("properties", {})
-                
-                param_info = ""
-                if required_params:
-                    param_details = []
-                    for param in required_params:
-                        param_type = properties.get(param, {}).get("type", "string")
-                        param_details.append(f"{param}:{param_type}")
-                    param_info = f" [REQUIRED: {', '.join(param_details)}]"
-                
-                lines.append(f"- {self.watchlist_provider.name}_{name}: {desc}{param_info}")
-        
         return "\n".join(lines)
 
     @staticmethod
@@ -480,6 +453,5 @@ class MCPManager:
             "solana": self.solana,
             "blockscout": self.blockscout,
             "trader": self.trader,
-            "watchlist": self.watchlist_provider,
         }
         return clients.get(name)

@@ -66,18 +66,6 @@ class Settings(BaseSettings):
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
-    # Watchlist settings
-    watchlist_db_path: Path = Field(
-        default=Path.home() / ".dex-bot" / "watchlist.db",
-        alias="WATCHLIST_DB_PATH",
-    )
-    watchlist_poll_interval: int = Field(
-        default=60, alias="WATCHLIST_POLL_INTERVAL", ge=10, le=3600
-    )
-    watchlist_poll_enabled: bool = Field(
-        default=False, alias="WATCHLIST_POLL_ENABLED"
-    )
-
     # Price cache settings
     price_cache_ttl_seconds: int = Field(
         default=30, alias="PRICE_CACHE_TTL_SECONDS", ge=5, le=300
@@ -101,122 +89,10 @@ class Settings(BaseSettings):
         alias="TELEGRAM_SUBSCRIBERS_DB_PATH",
     )
 
-    # Autonomous agent settings
-    autonomous_enabled: bool = Field(
-        default=False, alias="AUTONOMOUS_ENABLED"
-    )
-    autonomous_interval_mins: int = Field(
-        default=60, alias="AUTONOMOUS_INTERVAL_MINS", ge=5, le=1440
-    )
-    autonomous_max_tokens: int = Field(
-        default=5, alias="AUTONOMOUS_MAX_TOKENS", ge=1, le=20
-    )
-    autonomous_chain: str = Field(
-        default="solana", alias="AUTONOMOUS_CHAIN"
-    )
-    autonomous_min_volume_usd: float = Field(
-        default=10000.0, alias="AUTONOMOUS_MIN_VOLUME_USD", ge=0
-    )
-    autonomous_min_liquidity_usd: float = Field(
-        default=5000.0, alias="AUTONOMOUS_MIN_LIQUIDITY_USD", ge=0
-    )
-
-    # Lag strategy settings (Solana-first)
-    lag_strategy_enabled: bool = Field(
-        default=False, alias="LAG_STRATEGY_ENABLED"
-    )
-    lag_strategy_dry_run: bool = Field(
-        default=True, alias="LAG_STRATEGY_DRY_RUN"
-    )
-    lag_strategy_interval_seconds: int = Field(
-        default=20, alias="LAG_STRATEGY_INTERVAL_SECONDS", ge=5, le=3600
-    )
-    lag_strategy_chain: str = Field(
-        default="solana", alias="LAG_STRATEGY_CHAIN"
-    )
-    lag_strategy_sample_notional_usd: float = Field(
-        default=25.0, alias="LAG_STRATEGY_SAMPLE_NOTIONAL_USD", ge=0.01
-    )
-    lag_strategy_min_edge_bps: float = Field(
-        default=30.0, alias="LAG_STRATEGY_MIN_EDGE_BPS", ge=0.1
-    )
-    lag_strategy_min_liquidity_usd: float = Field(
-        default=10000.0, alias="LAG_STRATEGY_MIN_LIQUIDITY_USD", ge=0
-    )
-    lag_strategy_max_slippage_bps: int = Field(
-        default=100, alias="LAG_STRATEGY_MAX_SLIPPAGE_BPS", ge=1, le=5000
-    )
-    lag_strategy_max_position_usd: float = Field(
-        default=25.0, alias="LAG_STRATEGY_MAX_POSITION_USD", ge=0.01
-    )
-    lag_strategy_max_open_positions: int = Field(
-        default=2, alias="LAG_STRATEGY_MAX_OPEN_POSITIONS", ge=1, le=20
-    )
-    lag_strategy_cooldown_seconds: int = Field(
-        default=180, alias="LAG_STRATEGY_COOLDOWN_SECONDS", ge=0, le=86400
-    )
-    lag_strategy_take_profit_bps: float = Field(
-        default=150.0, alias="LAG_STRATEGY_TAKE_PROFIT_BPS", ge=1
-    )
-    lag_strategy_stop_loss_bps: float = Field(
-        default=80.0, alias="LAG_STRATEGY_STOP_LOSS_BPS", ge=1
-    )
-    lag_strategy_max_hold_seconds: int = Field(
-        default=1800, alias="LAG_STRATEGY_MAX_HOLD_SECONDS", ge=30, le=86400
-    )
-    lag_strategy_daily_loss_limit_usd: float = Field(
-        default=50.0, alias="LAG_STRATEGY_DAILY_LOSS_LIMIT_USD", ge=0
-    )
-    lag_strategy_max_total_exposure_usd: float = Field(
-        default=0.0, alias="LAG_STRATEGY_MAX_TOTAL_EXPOSURE_USD", ge=0
-    )
-    lag_strategy_quote_method: str = Field(
-        default="", alias="LAG_STRATEGY_QUOTE_METHOD"
-    )
-    lag_strategy_execute_method: str = Field(
-        default="", alias="LAG_STRATEGY_EXECUTE_METHOD"
-    )
-    lag_strategy_quote_mint: str = Field(
-        default="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-        alias="LAG_STRATEGY_QUOTE_MINT",
-    )
-    lag_strategy_execution_mode: str = Field(
-        default="standard", alias="LAG_STRATEGY_EXECUTION_MODE"
-    )
-    lag_strategy_min_profit_bps: float = Field(
-        default=5.0, alias="LAG_STRATEGY_MIN_PROFIT_BPS", ge=0
-    )
-    lag_strategy_max_price_impact_pct: float = Field(
-        default=1.0, alias="LAG_STRATEGY_MAX_PRICE_IMPACT_PCT", ge=0, le=100
-    )
-    lag_strategy_fee_buffer_lamports: int = Field(
-        default=20000, alias="LAG_STRATEGY_FEE_BUFFER_LAMPORTS", ge=0
-    )
-    lag_strategy_atomic_eval_window: int = Field(
-        default=20, alias="LAG_STRATEGY_ATOMIC_EVAL_WINDOW", ge=1
-    )
-    lag_strategy_atomic_min_samples: int = Field(
-        default=10, alias="LAG_STRATEGY_ATOMIC_MIN_SAMPLES", ge=1
-    )
-    lag_strategy_atomic_pause_expectancy_bps: float = Field(
-        default=0.0, alias="LAG_STRATEGY_ATOMIC_PAUSE_EXPECTANCY_BPS"
-    )
-
     # Solana RPC URL for on-chain lookups (e.g. token decimals)
     solana_rpc_url: str = Field(
         default="https://api.mainnet-beta.solana.com",
         alias="SOLANA_RPC_URL",
-    )
-
-    # Alert auto-adjustment settings
-    alert_auto_adjust_enabled: bool = Field(
-        default=True, alias="ALERT_AUTO_ADJUST_ENABLED"
-    )
-    alert_take_profit_percent: float = Field(
-        default=10.0, alias="ALERT_TAKE_PROFIT_PERCENT", ge=0.1, le=100.0
-    )
-    alert_stop_loss_percent: float = Field(
-        default=5.0, alias="ALERT_STOP_LOSS_PERCENT", ge=0.1, le=100.0
     )
 
     # Portfolio strategy settings (discover → hold → exit)
@@ -270,6 +146,16 @@ class Settings(BaseSettings):
     )
     portfolio_max_slippage_bps: int = Field(
         default=100, alias="PORTFOLIO_MAX_SLIPPAGE_BPS", ge=1, le=5000
+    )
+    portfolio_quote_mint: str = Field(
+        default="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        alias="PORTFOLIO_QUOTE_MINT",
+    )
+    portfolio_quote_method: str = Field(
+        default="", alias="PORTFOLIO_QUOTE_METHOD"
+    )
+    portfolio_execute_method: str = Field(
+        default="", alias="PORTFOLIO_EXECUTE_METHOD"
     )
 
 

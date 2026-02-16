@@ -12,19 +12,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.config import load_settings
+from app.database import Database
 from app.mcp_client import MCPManager
 from app.output import CLIOutput, OutputFormat
-from app.price_cache import PriceCache
 from app.telegram_notifier import TelegramNotifier
 from app.token_analyzer import TokenAnalyzer
 from app.types import PlannerResult
-from app.watchlist import WatchlistDB
-from app.watchlist_poller import WatchlistPoller, TriggeredAlert
-from app.watchlist_tools import WatchlistToolProvider
-from app.autonomous_agent import AutonomousWatchlistAgent
-from app.autonomous_scheduler import AutonomousScheduler
-from app.lag_scheduler import LagStrategyScheduler
-from app.lag_strategy import LagStrategyConfig, LagStrategyEngine
 from app.portfolio_scheduler import PortfolioScheduler
 from app.portfolio_strategy import PortfolioStrategyConfig, PortfolioStrategyEngine
 
@@ -108,12 +101,9 @@ async def run_single_query(
 async def run_interactive(
     planner: Any,
     output: CLIOutput,
-    watchlist_db: WatchlistDB,
+    db: Database,
     mcp_manager: MCPManager,
-    poller: Optional[WatchlistPoller] = None,
     telegram: Optional[TelegramNotifier] = None,
-    autonomous_scheduler: Optional[AutonomousScheduler] = None,
-    lag_scheduler: Optional[LagStrategyScheduler] = None,
     portfolio_scheduler: Optional[PortfolioScheduler] = None,
 ) -> None:
     """Run interactive REPL session."""
@@ -125,51 +115,10 @@ async def run_interactive(
     conversation_history: List[Dict[str, str]] = []
     recent_tokens: List[Dict[str, str]] = []
 
-    # Alert queue for background notifications
-    alert_queue: asyncio.Queue[TriggeredAlert] = asyncio.Queue()
-
-    def alert_callback(alert: TriggeredAlert) -> None:
-        """Queue alerts for display and send to Telegram."""
-        alert_queue.put_nowait(alert)
-        # Send to Telegram in background (fire and forget)
-        if telegram and telegram.is_configured:
-            asyncio.create_task(_send_telegram_alert(telegram, alert, output))
-
-    # Background task to display alerts immediately
-    async def alert_display_loop() -> None:
-        """Monitor queue and display alerts in real-time."""
-        while True:
-            try:
-                alert = await alert_queue.get()
-                output.alert_notification(alert)
-            except asyncio.CancelledError:
-                break
-
-    alert_display_task: Optional[asyncio.Task] = None
-
-    # Start poller if enabled
-    if poller:
-        poller.alert_callback = alert_callback
-        await poller.start()
-        output.info("📡 Background price monitoring started")
-        # Start alert display task
-        alert_display_task = asyncio.create_task(alert_display_loop())
-
     # Start Telegram polling if enabled
     if telegram and telegram.is_configured:
         await telegram.start_polling()
         output.info("📱 Telegram notifications enabled (send /help to bot)")
-
-    # Start autonomous scheduler if enabled
-    if autonomous_scheduler:
-        await autonomous_scheduler.start()
-        interval_mins = autonomous_scheduler.interval_seconds // 60
-        output.info(f"🤖 Autonomous watchlist manager started (every {interval_mins} mins)")
-
-    # Start lag strategy scheduler if enabled
-    if lag_scheduler:
-        await lag_scheduler.start()
-        output.info(f"⚡ Lag strategy scheduler started (every {lag_scheduler.interval_seconds}s)")
 
     # Start portfolio strategy scheduler if enabled
     if portfolio_scheduler:
@@ -195,9 +144,9 @@ async def run_interactive(
             # Handle commands
             if query.startswith("/"):
                 handled = await _handle_command(
-                    query, output, watchlist_db, poller, mcp_manager,
-                    conversation_history, recent_tokens, autonomous_scheduler,
-                    lag_scheduler, portfolio_scheduler
+                    query, output, db, mcp_manager,
+                    conversation_history, recent_tokens,
+                    portfolio_scheduler
                 )
                 if handled == "quit":
                     break
@@ -231,48 +180,19 @@ async def run_interactive(
                 output.error(f"Error: {exc}")
 
     finally:
-        if alert_display_task:
-            alert_display_task.cancel()
-            try:
-                await alert_display_task
-            except asyncio.CancelledError:
-                pass
-        if autonomous_scheduler:
-            await autonomous_scheduler.stop()
-        if lag_scheduler:
-            await lag_scheduler.stop()
         if portfolio_scheduler:
             await portfolio_scheduler.stop()
-        if poller:
-            await poller.stop()
         if telegram:
             await telegram.close()
-
-
-async def _send_telegram_alert(
-    telegram: TelegramNotifier,
-    alert: TriggeredAlert,
-    output: CLIOutput,
-) -> None:
-    """Send alert to Telegram in background."""
-    try:
-        success = await telegram.send_alert(alert)
-        if not success:
-            output.debug("Failed to send Telegram alert")
-    except Exception as e:
-        output.debug(f"Telegram error: {e}")
 
 
 async def _handle_command(
     query: str,
     output: CLIOutput,
-    db: WatchlistDB,
-    poller: Optional[WatchlistPoller],
+    db: Database,
     mcp_manager: MCPManager,
     conversation_history: List[Dict[str, str]],
     recent_tokens: List[Dict[str, str]],
-    autonomous_scheduler: Optional[AutonomousScheduler] = None,
-    lag_scheduler: Optional[LagStrategyScheduler] = None,
     portfolio_scheduler: Optional[PortfolioScheduler] = None,
 ) -> Optional[str]:
     """Handle slash commands. Returns 'quit' to exit, True if handled, None otherwise."""
@@ -313,49 +233,6 @@ async def _handle_command(
     # Help
     if cmd in ("/help", "/h"):
         output.help_panel()
-        return True
-
-    # Watchlist commands
-    if cmd == "/watch":
-        await _cmd_watch(parts[1:], output, db, mcp_manager, recent_tokens)
-        return True
-
-    if cmd == "/unwatch":
-        await _cmd_unwatch(parts[1:], output, db)
-        return True
-
-    if cmd == "/watchlist":
-        await _cmd_watchlist(output, db, poller)
-        return True
-
-    if cmd == "/clearwatchlist":
-        await _cmd_clearwatchlist(parts[1:], output, db)
-        return True
-
-    if cmd == "/alert":
-        await _cmd_alert(parts[1:], output, db)
-        return True
-
-    if cmd == "/alerts":
-        await _cmd_alerts(parts[1:], output, db)
-        return True
-
-    if cmd == "/poller":
-        await _cmd_poller_status(output, poller)
-        return True
-
-    if cmd == "/fix-addresses":
-        await _cmd_fix_addresses(output, db, mcp_manager)
-        return True
-
-    # Autonomous agent commands
-    if cmd == "/autonomous":
-        await _cmd_autonomous(parts[1:], output, db, autonomous_scheduler)
-        return True
-
-    # Lag strategy commands
-    if cmd == "/lag":
-        await _cmd_lag(parts[1:], output, db, lag_scheduler)
         return True
 
     # Portfolio strategy commands
@@ -431,673 +308,10 @@ async def _search_token(
     return None
 
 
-async def _cmd_watch(
-    args: List[str],
-    output: CLIOutput,
-    db: WatchlistDB,
-    mcp_manager: MCPManager,
-    recent_tokens: List[Dict[str, str]],
-) -> None:
-    """Handle /watch command."""
-    if not args:
-        output.error("Usage: /watch <token_address_or_symbol> [chain]")
-        return
-
-    token_input, chain = _parse_token_and_chain(args)
-
-    # Check if it's an address (starts with 0x or is long alphanumeric)
-    is_address = token_input.startswith("0x") or len(token_input) > 20
-
-    if is_address:
-        # Direct address - need chain
-        if not chain:
-            output.error("Chain required when using address. Usage: /watch <address> <chain>")
-            return
-
-        entry = await db.add_entry(
-            token_address=token_input,
-            symbol=token_input[:8].upper(),  # Placeholder symbol
-            chain=chain,
-        )
-        output.info(f"✅ Added {token_input[:10]}... on {chain} to watchlist")
-    else:
-        # Symbol - look in recent tokens first
-        symbol = token_input.upper()
-        found = None
-
-        for t in recent_tokens:
-            if t.get("symbol", "").upper() == symbol:
-                if chain is None or t.get("chainId", "").lower() == chain:
-                    found = t
-                    break
-
-        if found:
-            entry = await db.add_entry(
-                token_address=found.get("address", ""),
-                symbol=symbol,
-                chain=found.get("chainId", chain or "unknown"),
-            )
-            addr_short = entry.token_address[:10] + "..."
-            output.info(f"✅ Added {symbol} ({addr_short}) on {entry.chain} to watchlist")
-        else:
-            # No match in context - auto-search for the token
-            output.status(f"Searching for {symbol}...")
-            
-            search_result = await _search_token(symbol, chain, mcp_manager)
-            
-            if search_result and search_result.get("address"):
-                entry = await db.add_entry(
-                    token_address=search_result["address"],
-                    symbol=search_result.get("symbol", symbol),
-                    chain=search_result.get("chain", chain or "unknown"),
-                )
-                addr_short = entry.token_address[:10] + "..."
-                output.info(f"✅ Added {entry.symbol} ({addr_short}) on {entry.chain} to watchlist")
-            else:
-                output.error(f"Could not find token {symbol}. Try: /watch <address> <chain>")
-
-
-async def _cmd_unwatch(args: List[str], output: CLIOutput, db: WatchlistDB) -> None:
-    """Handle /unwatch command."""
-    if not args:
-        output.error("Usage: /unwatch <token_address_or_symbol> [chain]")
-        return
-
-    token_input, chain = _parse_token_and_chain(args)
-
-    is_address = token_input.startswith("0x") or len(token_input) > 20
-
-    if is_address:
-        removed = await db.remove_entry(token_input, chain)
-    else:
-        removed = await db.remove_entry_by_symbol(token_input.upper(), chain)
-
-    if removed:
-        output.info(f"✅ Removed {token_input} from watchlist")
-    else:
-        output.warning(f"Token {token_input} not found in watchlist")
-
-
-async def _cmd_watchlist(
-    output: CLIOutput,
-    db: WatchlistDB,
-    poller: Optional[WatchlistPoller],
-) -> None:
-    """Handle /watchlist command."""
-    entries = await db.list_entries()
-
-    # Optionally trigger a price refresh
-    if poller and entries:
-        output.status("Refreshing prices...")
-        await poller.check_now()
-        entries = await db.list_entries()  # Reload with updated prices
-
-    output.watchlist_table(entries)
-
-
-async def _cmd_poller_status(
-    output: CLIOutput,
-    poller: Optional[WatchlistPoller],
-) -> None:
-    """Handle /poller command to show poller status."""
-    if not poller:
-        output.warning("Poller is not configured")
-        return
-
-    status = poller.get_status()
-    
-    output.info("📡 Poller Status")
-    output.info(f"  Running: {'✅ Yes' if status['running'] else '❌ No'}")
-    output.info(f"  Poll interval: {status['poll_interval']}s")
-    
-    if status['last_successful_check']:
-        output.info(f"  Last successful check: {status['last_successful_check']}")
-    else:
-        output.warning("  Last successful check: Never")
-    
-    if status['consecutive_failures'] > 0:
-        output.warning(f"  Consecutive failures: {status['consecutive_failures']}")
-    else:
-        output.info("  Consecutive failures: 0")
-    
-    if status['last_error']:
-        output.error(f"  Last error: {status['last_error']}")
-
-
-async def _cmd_clearwatchlist(args: List[str], output: CLIOutput, db: WatchlistDB) -> None:
-    """Handle /clearwatchlist command."""
-    # Require confirmation
-    if not args or args[0].lower() not in ("--confirm", "yes"):
-        entries = await db.list_entries()
-        count = len(entries)
-        output.warning(f"⚠️  This will remove ALL {count} entries from the watchlist.")
-        output.info("To confirm, run: /clearwatchlist --confirm")
-        return
-
-    removed = await db.clear_watchlist()
-    output.info(f"✅ Cleared watchlist ({removed} entries removed)")
-
-
-async def _cmd_alert(args: List[str], output: CLIOutput, db: WatchlistDB) -> None:
-    """Handle /alert command."""
-    # Parse: /alert <token> above|below <price>
-    # Token can be multi-word, so find where above/below appears
-    if len(args) < 3:
-        output.error("Usage: /alert <token> above|below <price>")
-        return
-
-    # Find the direction keyword to split token from rest
-    direction_idx = None
-    for i, arg in enumerate(args):
-        if arg.lower() in ("above", "below"):
-            direction_idx = i
-            break
-
-    if direction_idx is None or direction_idx == 0:
-        output.error("Usage: /alert <token> above|below <price>")
-        return
-
-    if direction_idx + 1 >= len(args):
-        output.error("Usage: /alert <token> above|below <price>")
-        return
-
-    token_input = " ".join(args[:direction_idx])
-    direction = args[direction_idx].lower()
-    price_str = args[direction_idx + 1]
-
-    try:
-        price = float(price_str.replace("$", "").replace(",", ""))
-    except ValueError:
-        output.error(f"Invalid price: {price_str}")
-        return
-
-    # Find the entry
-    is_address = token_input.startswith("0x") or len(token_input) > 20
-    if is_address:
-        entry = await db.get_entry(token_address=token_input)
-    else:
-        entry = await db.get_entry(symbol=token_input.upper())
-
-    if not entry:
-        output.error(f"Token {token_input} not in watchlist. Add it first with /watch")
-        return
-
-    # Update alert
-    if direction == "above":
-        await db.update_alert(entry.id, alert_above=price)
-    else:
-        await db.update_alert(entry.id, alert_below=price)
-
-    output.info(f"✅ Alert set: {entry.symbol} {direction} ${price}")
-
-
-async def _cmd_alerts(args: List[str], output: CLIOutput, db: WatchlistDB) -> None:
-    """Handle /alerts command."""
-    if args and args[0].lower() == "clear":
-        count = await db.acknowledge_alerts()
-        output.info(f"✅ Cleared {count} alert(s)")
-        return
-
-    if args and args[0].lower() == "history":
-        history = await db.get_alert_history(limit=20)
-        output.alerts_table(history)
-        return
-
-    # Default: show unacknowledged alerts
-    alerts = await db.get_unacknowledged_alerts()
-    if not alerts:
-        output.info("No pending alerts")
-        return
-
-    output.alerts_table(alerts)
-
-
-async def _cmd_fix_addresses(
-    output: CLIOutput,
-    db: WatchlistDB,
-    mcp_manager: "MCPManager",
-) -> None:
-    """Handle /fix-addresses command - fix lowercase Solana addresses."""
-    entries = await db.list_entries()
-    
-    if not entries:
-        output.info("No watchlist entries to fix")
-        return
-    
-    # Find entries that need fixing (lowercase Solana addresses)
-    to_fix = []
-    for entry in entries:
-        if entry.chain == "solana" and entry.token_address != entry.token_address.lower():
-            continue  # Already has mixed case, probably fine
-        if entry.chain == "solana" and entry.token_address == entry.token_address.lower():
-            to_fix.append(entry)
-    
-    if not to_fix:
-        output.info("✅ All addresses look correct (no lowercase Solana addresses found)")
-        return
-    
-    output.info(f"Found {len(to_fix)} address(es) that may need fixing...")
-    
-    dexscreener = mcp_manager.get_client("dexscreener")
-    if not dexscreener:
-        output.error("DexScreener MCP not available - cannot look up correct addresses")
-        return
-    
-    fixed = 0
-    for entry in to_fix:
-        try:
-            # Search by symbol to find correct address
-            output.status(f"Looking up {entry.symbol}...")
-            result = await dexscreener.call_tool(
-                "search_pairs",
-                {"query": entry.symbol},
-            )
-            
-            # Find matching pair on solana
-            pairs = result if isinstance(result, list) else result.get("pairs", [])
-            correct_address = None
-            
-            for pair in pairs:
-                if pair.get("chainId") == "solana":
-                    # Check base token
-                    base = pair.get("baseToken", {})
-                    if base.get("symbol", "").upper() == entry.symbol.upper():
-                        correct_address = base.get("address")
-                        break
-                    # Check quote token
-                    quote = pair.get("quoteToken", {})
-                    if quote.get("symbol", "").upper() == entry.symbol.upper():
-                        correct_address = quote.get("address")
-                        break
-            
-            if correct_address and correct_address.lower() == entry.token_address.lower():
-                # Found correct case
-                await db.update_token_address(entry.id, correct_address)
-                output.info(f"✅ Fixed {entry.symbol}: {correct_address[:15]}...")
-                fixed += 1
-            elif correct_address:
-                output.warning(f"⚠️  {entry.symbol}: Found different address, skipping")
-            else:
-                output.warning(f"⚠️  {entry.symbol}: Could not find on DexScreener")
-                
-        except Exception as e:
-            output.warning(f"⚠️  {entry.symbol}: Error - {str(e)}")
-    
-    output.info(f"\n✅ Fixed {fixed}/{len(to_fix)} address(es)")
-    if fixed > 0:
-        output.info("Run /watchlist to see updated addresses")
-
-
-async def _cmd_autonomous(
-    args: List[str],
-    output: CLIOutput,
-    db: WatchlistDB,
-    scheduler: Optional[AutonomousScheduler],
-) -> None:
-    """Handle /autonomous command."""
-    if not args:
-        # Show help
-        output.info("Autonomous Watchlist Manager Commands:")
-        output.info("  /autonomous status  - Show current status")
-        output.info("  /autonomous run     - Trigger immediate cycle")
-        output.info("  /autonomous start   - Start the scheduler")
-        output.info("  /autonomous stop    - Stop the scheduler")
-        output.info("  /autonomous list    - List autonomous tokens")
-        output.info("  /autonomous clear   - Remove all autonomous tokens")
-        return
-
-    subcmd = args[0].lower()
-
-    if subcmd == "status":
-        if not scheduler:
-            output.warning("Autonomous mode is not enabled. Use --autonomous flag.")
-            return
-        status = scheduler.get_status()
-        output.info("🤖 Autonomous Watchlist Status:")
-        output.info(f"  Running: {'✅ Yes' if status['running'] else '❌ No'}")
-        output.info(f"  Interval: {status['interval_seconds'] // 60} minutes")
-        output.info(f"  Max tokens: {status['max_tokens']}")
-        output.info(f"  Cycles completed: {status['cycle_count']}")
-        if status['last_cycle']:
-            output.info(f"  Last cycle: {status['last_cycle']}")
-        if status['last_summary']:
-            output.info(f"  Last result: {status['last_summary']}")
-        return
-
-    if subcmd == "run":
-        if not scheduler:
-            output.warning("Autonomous mode is not enabled. Use --autonomous flag.")
-            return
-        output.status("Running autonomous cycle...")
-        try:
-            result = await scheduler.run_cycle_now()
-            output.info(f"✅ Cycle complete: {result.summary}")
-            if result.errors:
-                for err in result.errors:
-                    output.warning(f"  Error: {err}")
-        except Exception as e:
-            output.error(f"Cycle failed: {e}")
-        return
-
-    if subcmd == "start":
-        if not scheduler:
-            output.warning("Autonomous mode is not enabled. Use --autonomous flag.")
-            return
-        if scheduler.is_running:
-            output.info("Scheduler is already running.")
-            return
-        await scheduler.start()
-        output.info("✅ Autonomous scheduler started")
-        return
-
-    if subcmd == "stop":
-        if not scheduler:
-            output.warning("Autonomous mode is not enabled. Use --autonomous flag.")
-            return
-        if not scheduler.is_running:
-            output.info("Scheduler is not running.")
-            return
-        await scheduler.stop()
-        output.info("✅ Autonomous scheduler stopped")
-        return
-
-    if subcmd == "list":
-        entries = await db.list_autonomous_entries()
-        if not entries:
-            output.info("No tokens in autonomous watchlist.")
-            return
-        output.info(f"🤖 Autonomous Watchlist ({len(entries)} tokens):")
-        for entry in entries:
-            price_fmt = f"${entry.last_price:.8f}" if entry.last_price else "—"
-            score = entry.momentum_score or 0
-            output.info(
-                f"  • {entry.symbol} @ {price_fmt} (Score: {score:.0f})"
-            )
-            if entry.alert_above or entry.alert_below:
-                above = f"${entry.alert_above:.8f}" if entry.alert_above else "—"
-                below = f"${entry.alert_below:.8f}" if entry.alert_below else "—"
-                output.info(f"    Triggers: ↑{above} ↓{below}")
-        return
-
-    if subcmd == "clear":
-        count = await db.clear_autonomous_watchlist()
-        output.info(f"✅ Cleared {count} autonomous token(s)")
-        return
-
-    output.warning(f"Unknown subcommand: {subcmd}. Use /autonomous for help.")
-
-
-async def _cmd_lag(
-    args: List[str],
-    output: CLIOutput,
-    db: WatchlistDB,
-    scheduler: Optional[LagStrategyScheduler],
-) -> None:
-    """Handle /lag command for lag strategy operations."""
-    if not args:
-        output.info("Lag Strategy Commands:")
-        output.info("  /lag status     - Show lag strategy status")
-        output.info("  /lag run        - Run one lag cycle now")
-        output.info("  /lag start      - Start lag scheduler")
-        output.info("  /lag stop       - Stop lag scheduler")
-        output.info("  /lag positions  - List open lag positions")
-        output.info("  /lag close <id|all> - Manually close position(s)")
-        output.info("  /lag set [param] [value] - View/change runtime params")
-        output.info("  /lag reset-pnl  - Zero out today's realized PnL")
-        output.info("  /lag events     - Show recent lag events")
-        output.info("")
-        output.info("Runtime parameter tuning (changes reset on restart):")
-        output.info("  /lag set                     List all tunable params & values")
-        output.info("  /lag set <param> <value>     Update a param instantly")
-        output.info("  Example: /lag set max_position_usd 50")
-        output.info("  Example: /lag set max_open_positions 5")
-        return
-
-    subcmd = args[0].lower()
-
-    if subcmd == "status":
-        if not scheduler:
-            output.warning("Lag strategy scheduler is not enabled.")
-            return
-        status = scheduler.get_status()
-        config = scheduler.engine.config
-        open_positions = await db.count_open_lag_positions(chain=config.chain)
-        daily_pnl = await db.get_daily_lag_realized_pnl()
-
-        output.info("⚡ Lag Strategy Status:")
-        output.info(f"  Running: {'✅ Yes' if status['running'] else '❌ No'}")
-        output.info(f"  Interval: {status['interval_seconds']} seconds")
-        output.info(f"  Chain: {config.chain}")
-        output.info(f"  Dry run: {'✅ Yes' if config.dry_run else '❌ No (LIVE)'}")
-        output.info(f"  Min edge: {config.min_edge_bps:.1f} bps")
-        output.info(f"  Max position: ${config.max_position_usd:,.2f}")
-        output.info(f"  Open positions: {open_positions}/{config.max_open_positions}")
-        output.info(f"  Daily realized PnL: ${daily_pnl:,.2f}")
-        output.info(f"  Cycles completed: {status['cycle_count']}")
-        if status["last_cycle"]:
-            output.info(f"  Last cycle: {status['last_cycle']}")
-        if status["last_summary"]:
-            output.info(f"  Last result: {status['last_summary']}")
-        return
-
-    if subcmd == "run":
-        if not scheduler:
-            output.warning("Lag strategy scheduler is not enabled.")
-            return
-        output.status("Running lag strategy cycle...")
-        result = await scheduler.run_cycle_now()
-        output.info(f"✅ Lag cycle complete: {result.summary}")
-        for position in result.entries_opened:
-            output.info(
-                f"  Opened: {position.symbol} @ ${position.entry_price:.10f} "
-                f"(qty: {position.quantity_token:.4f})"
-            )
-        for position in result.positions_closed:
-            pnl = position.realized_pnl_usd if position.realized_pnl_usd is not None else 0.0
-            output.info(f"  Closed: {position.symbol} (PnL: ${pnl:,.2f})")
-        for err in result.errors:
-            output.warning(f"  Error: {err}")
-        return
-
-    if subcmd == "start":
-        if not scheduler:
-            output.warning("Lag strategy scheduler is not enabled.")
-            return
-        if scheduler.is_running:
-            output.info("Lag strategy scheduler is already running.")
-            return
-        await scheduler.start()
-        output.info("✅ Lag strategy scheduler started")
-        return
-
-    if subcmd == "stop":
-        if not scheduler:
-            output.warning("Lag strategy scheduler is not enabled.")
-            return
-        if not scheduler.is_running:
-            output.info("Lag strategy scheduler is not running.")
-            return
-        await scheduler.stop()
-        output.info("✅ Lag strategy scheduler stopped")
-        return
-
-    if subcmd == "positions":
-        chain_filter = scheduler.engine.config.chain if scheduler else "solana"
-        positions = await db.list_open_lag_positions(chain=chain_filter)
-        if not positions:
-            output.info("No open lag positions.")
-            return
-        output.info(f"⚡ Open Lag Positions ({len(positions)}):")
-        for pos in positions:
-            output.info(
-                f"  • #{pos.id} {pos.symbol} ({pos.chain}) entry ${pos.entry_price:.10f}, "
-                f"stop ${pos.stop_price:.10f}, take ${pos.take_price:.10f}, "
-                f"qty {pos.quantity_token:.4f}"
-            )
-        return
-
-    if subcmd == "close":
-        if len(args) < 2:
-            output.warning("Usage: /lag close <position_id|all>")
-            return
-
-        chain_filter = scheduler.engine.config.chain if scheduler else "solana"
-        target = args[1].lower()
-
-        if target == "all":
-            positions = await db.list_open_lag_positions(chain=chain_filter)
-            if not positions:
-                output.info("No open lag positions to close.")
-                return
-            closed = 0
-            for pos in positions:
-                ok = await db.close_lag_position(
-                    position_id=pos.id,
-                    exit_price=pos.entry_price,
-                    close_reason="manual",
-                    realized_pnl_usd=0.0,
-                )
-                if ok:
-                    closed += 1
-                    await db.record_lag_event(
-                        event_type="manual_close",
-                        message=f"Manually closed {pos.symbol} position #{pos.id}",
-                        token_address=pos.token_address,
-                        symbol=pos.symbol,
-                        chain=pos.chain,
-                    )
-            output.info(f"✅ Closed {closed}/{len(positions)} open lag positions.")
-            return
-
-        try:
-            position_id = int(target)
-        except ValueError:
-            output.warning(f"Invalid position ID: {target}. Use a number or 'all'.")
-            return
-
-        positions = await db.list_open_lag_positions(chain=chain_filter)
-        position = next((p for p in positions if p.id == position_id), None)
-        if position is None:
-            output.warning(f"No open position found with ID {position_id}.")
-            return
-
-        ok = await db.close_lag_position(
-            position_id=position.id,
-            exit_price=position.entry_price,
-            close_reason="manual",
-            realized_pnl_usd=0.0,
-        )
-        if ok:
-            await db.record_lag_event(
-                event_type="manual_close",
-                message=f"Manually closed {position.symbol} position #{position.id}",
-                token_address=position.token_address,
-                symbol=position.symbol,
-                chain=position.chain,
-            )
-            output.info(
-                f"✅ Closed position #{position.id} ({position.symbol}) "
-                f"entry ${position.entry_price:.10f}, qty {position.quantity_token:.4f}"
-            )
-        else:
-            output.warning(f"Failed to close position #{position_id}.")
-        return
-
-    if subcmd == "events":
-        events = await db.list_recent_lag_events(limit=20)
-        if not events:
-            output.info("No lag events yet.")
-            return
-        output.info("⚡ Recent Lag Events:")
-        for event in events:
-            ts = event.created_at.isoformat() if event.created_at else "unknown-time"
-            symbol = event.symbol or "?"
-            output.info(f"  • [{ts}] {event.severity.upper()} {symbol}: {event.message}")
-        return
-
-    if subcmd == "reset-pnl":
-        count = await db.reset_daily_lag_pnl()
-        output.info(f"✅ Zeroed realized PnL on {count} position(s) closed today.")
-        return
-
-    if subcmd == "set":
-        _TUNABLE_PARAMS: Dict[str, tuple] = {
-            "max_position_usd": (float, 0.01, None),
-            "max_open_positions": (int, 1, 20),
-            "max_total_exposure_usd": (float, 0.0, None),
-            "sample_notional_usd": (float, 0.01, None),
-            "daily_loss_limit_usd": (float, 0.0, None),
-            "take_profit_bps": (float, 0.0, None),
-            "stop_loss_bps": (float, 0.0, None),
-            "min_edge_bps": (float, 0.0, None),
-            "cooldown_seconds": (int, 0, None),
-            "max_hold_seconds": (int, 0, None),
-        }
-
-        if not scheduler:
-            output.warning("Lag strategy scheduler is not enabled.")
-            return
-
-        if len(args) < 2:
-            # Show current tunable values
-            config = scheduler.engine.config
-            output.info("⚡ Tunable Lag Parameters (use /lag set <param> <value>):")
-            for param, (typ, lo, hi) in _TUNABLE_PARAMS.items():
-                val = getattr(config, param)
-                constraint = f"≥{lo}"
-                if hi is not None:
-                    constraint += f", ≤{hi}"
-                if typ is float:
-                    output.info(f"  {param} = {val:,.2f}  ({constraint})")
-                else:
-                    output.info(f"  {param} = {val}  ({constraint})")
-            return
-
-        if len(args) < 3:
-            output.warning("Usage: /lag set <param> <value>")
-            return
-
-        param_name = args[1].lower()
-        raw_value = args[2]
-
-        if param_name not in _TUNABLE_PARAMS:
-            output.warning(
-                f"Unknown parameter: {param_name}. "
-                f"Tunable: {', '.join(_TUNABLE_PARAMS)}"
-            )
-            return
-
-        typ, lo, hi = _TUNABLE_PARAMS[param_name]
-        try:
-            parsed = typ(raw_value)
-        except (ValueError, TypeError):
-            output.warning(f"Invalid value '{raw_value}' for {param_name} (expected {typ.__name__}).")
-            return
-
-        if parsed < lo:
-            output.warning(f"Value {parsed} is below minimum {lo} for {param_name}.")
-            return
-        if hi is not None and parsed > hi:
-            output.warning(f"Value {parsed} is above maximum {hi} for {param_name}.")
-            return
-
-        config = scheduler.engine.config
-        old_value = getattr(config, param_name)
-        setattr(config, param_name, parsed)
-
-        if typ is float:
-            output.info(f"✅ {param_name}: {old_value:,.2f} → {parsed:,.2f}")
-        else:
-            output.info(f"✅ {param_name}: {old_value} → {parsed}")
-        return
-
-    output.warning(f"Unknown subcommand: {subcmd}. Use /lag for help.")
-
-
 async def _cmd_portfolio(
     args: List[str],
     output: CLIOutput,
-    db: WatchlistDB,
+    db: Database,
     scheduler: Optional[PortfolioScheduler],
 ) -> None:
     """Handle /portfolio command for portfolio strategy operations."""
@@ -1436,17 +650,6 @@ Examples:
         help="Disable trader MCP server (faster startup)",
     )
     parser.add_argument(
-        "--no-polling",
-        action="store_true",
-        help="Disable background price polling for watchlist alerts",
-    )
-    parser.add_argument(
-        "--poll-interval",
-        type=int,
-        default=None,
-        help="Watchlist polling interval in seconds (default: 60, min: 10, max: 3600)",
-    )
-    parser.add_argument(
         "--no-telegram",
         action="store_true",
         help="Disable Telegram notifications",
@@ -1455,33 +658,6 @@ Examples:
         "--telegram-only",
         action="store_true",
         help="Run only the Telegram bot (no CLI interaction)",
-    )
-    parser.add_argument(
-        "--autonomous",
-        action="store_true",
-        help="Enable autonomous watchlist management",
-    )
-    parser.add_argument(
-        "--autonomous-interval",
-        type=int,
-        default=None,
-        help="Autonomous cycle interval in minutes (default: 60)",
-    )
-    parser.add_argument(
-        "--lag-strategy",
-        action="store_true",
-        help="Enable lag-edge strategy scheduler",
-    )
-    parser.add_argument(
-        "--lag-interval",
-        type=int,
-        default=None,
-        help="Lag strategy cycle interval in seconds (default: settings value, min: 5, max: 3600)",
-    )
-    parser.add_argument(
-        "--lag-live",
-        action="store_true",
-        help="Run lag strategy in live mode (overrides dry-run setting)",
     )
     parser.add_argument(
         "--portfolio",
@@ -1572,40 +748,14 @@ Examples:
         output.error(f"Failed to start MCP servers: {exc}")
         sys.exit(1)
 
-    # Initialize watchlist database
-    watchlist_db = WatchlistDB(db_path=settings.watchlist_db_path)
+    # Initialize database
+    db = Database()
     try:
-        await watchlist_db.connect()
+        await db.connect()
     except Exception as exc:
-        output.error(f"Failed to initialize watchlist database: {exc}")
+        output.error(f"Failed to initialize database: {exc}")
         await mcp_manager.shutdown()
         sys.exit(1)
-
-    # Create watchlist tool provider and attach to MCP manager
-    watchlist_provider = WatchlistToolProvider(watchlist_db)
-    mcp_manager.watchlist_provider = watchlist_provider
-
-    # Initialize price cache for reducing API calls
-    price_cache = PriceCache(ttl_seconds=settings.price_cache_ttl_seconds)
-
-    # Initialize poller if enabled
-    poller: Optional[WatchlistPoller] = None
-    if args.interactive and settings.watchlist_poll_enabled and not args.no_polling:
-        # Use CLI arg if provided, otherwise use settings
-        poll_interval = args.poll_interval if args.poll_interval is not None else settings.watchlist_poll_interval
-        # Validate range
-        if not (10 <= poll_interval <= 3600):
-            output.error("Poll interval must be between 10 and 3600 seconds")
-            sys.exit(1)
-        poller = WatchlistPoller(
-            db=watchlist_db,
-            mcp_manager=mcp_manager,
-            poll_interval=poll_interval,
-            price_cache=price_cache,
-            auto_adjust_enabled=settings.alert_auto_adjust_enabled,
-            take_profit_percent=settings.alert_take_profit_percent,
-            stop_loss_percent=settings.alert_stop_loss_percent,
-        )
 
     # Initialize Telegram notifier if enabled
     telegram: Optional[TelegramNotifier] = None
@@ -1647,96 +797,6 @@ Examples:
         else:
             output.debug(message, data)
 
-    # Initialize autonomous scheduler if enabled
-    autonomous_scheduler: Optional[AutonomousScheduler] = None
-    autonomous_enabled = args.autonomous or settings.autonomous_enabled
-    if args.interactive and autonomous_enabled:
-        # Create autonomous agent
-        autonomous_agent = AutonomousWatchlistAgent(
-            api_key=settings.gemini_api_key,
-            mcp_manager=mcp_manager,
-            model_name=settings.gemini_model,
-            max_tokens=settings.autonomous_max_tokens,
-            min_volume_usd=settings.autonomous_min_volume_usd,
-            min_liquidity_usd=settings.autonomous_min_liquidity_usd,
-            verbose=args.verbose,
-            log_callback=log_callback if args.verbose else None,
-        )
-
-        # Calculate interval in seconds
-        interval_mins = args.autonomous_interval or settings.autonomous_interval_mins
-        interval_seconds = interval_mins * 60
-
-        autonomous_scheduler = AutonomousScheduler(
-            agent=autonomous_agent,
-            db=watchlist_db,
-            telegram=telegram,
-            interval_seconds=interval_seconds,
-            max_tokens=settings.autonomous_max_tokens,
-            verbose=args.verbose,
-            log_callback=log_callback if args.verbose else None,
-        )
-
-    # Initialize lag strategy scheduler if enabled
-    lag_scheduler: Optional[LagStrategyScheduler] = None
-    lag_enabled = args.lag_strategy or settings.lag_strategy_enabled
-    if args.interactive and lag_enabled:
-        if args.no_trader or not mcp_manager.get_client("trader"):
-            output.warning("Lag strategy requires trader MCP client. Disable --no-trader or configure MCP_TRADER_CMD.")
-        else:
-            lag_interval = (
-                args.lag_interval
-                if args.lag_interval is not None
-                else settings.lag_strategy_interval_seconds
-            )
-            if not (5 <= lag_interval <= 3600):
-                output.error("Lag interval must be between 5 and 3600 seconds")
-                sys.exit(1)
-
-            lag_config = LagStrategyConfig(
-                enabled=True,
-                dry_run=False if args.lag_live else settings.lag_strategy_dry_run,
-                interval_seconds=lag_interval,
-                chain=settings.lag_strategy_chain.lower(),
-                sample_notional_usd=settings.lag_strategy_sample_notional_usd,
-                min_edge_bps=settings.lag_strategy_min_edge_bps,
-                min_liquidity_usd=settings.lag_strategy_min_liquidity_usd,
-                max_slippage_bps=settings.lag_strategy_max_slippage_bps,
-                max_position_usd=settings.lag_strategy_max_position_usd,
-                max_open_positions=settings.lag_strategy_max_open_positions,
-                cooldown_seconds=settings.lag_strategy_cooldown_seconds,
-                take_profit_bps=settings.lag_strategy_take_profit_bps,
-                stop_loss_bps=settings.lag_strategy_stop_loss_bps,
-                max_hold_seconds=settings.lag_strategy_max_hold_seconds,
-                daily_loss_limit_usd=settings.lag_strategy_daily_loss_limit_usd,
-                max_total_exposure_usd=settings.lag_strategy_max_total_exposure_usd,
-                quote_method=settings.lag_strategy_quote_method,
-                execute_method=settings.lag_strategy_execute_method,
-                quote_mint=settings.lag_strategy_quote_mint,
-                rpc_url=settings.solana_rpc_url,
-                execution_mode=settings.lag_strategy_execution_mode,
-                min_profit_bps=settings.lag_strategy_min_profit_bps,
-                max_price_impact_pct=settings.lag_strategy_max_price_impact_pct,
-                fee_buffer_lamports=settings.lag_strategy_fee_buffer_lamports,
-                atomic_eval_window=settings.lag_strategy_atomic_eval_window,
-                atomic_min_samples=settings.lag_strategy_atomic_min_samples,
-                atomic_pause_expectancy_bps=settings.lag_strategy_atomic_pause_expectancy_bps,
-            )
-            lag_engine = LagStrategyEngine(
-                db=watchlist_db,
-                mcp_manager=mcp_manager,
-                config=lag_config,
-                verbose=args.verbose,
-                log_callback=log_callback if args.verbose else None,
-            )
-            lag_scheduler = LagStrategyScheduler(
-                engine=lag_engine,
-                interval_seconds=lag_interval,
-                telegram=telegram,
-                verbose=args.verbose,
-                log_callback=log_callback if args.verbose else None,
-            )
-
     # Initialize portfolio strategy scheduler if enabled
     portfolio_scheduler: Optional[PortfolioScheduler] = None
     portfolio_enabled = args.portfolio or settings.portfolio_enabled
@@ -1759,13 +819,13 @@ Examples:
             cooldown_seconds=settings.portfolio_cooldown_seconds,
             min_momentum_score=settings.portfolio_min_momentum_score,
             max_slippage_bps=settings.portfolio_max_slippage_bps,
-            quote_mint=settings.lag_strategy_quote_mint,
+            quote_mint=settings.portfolio_quote_mint,
             rpc_url=settings.solana_rpc_url,
-            quote_method=settings.lag_strategy_quote_method,
-            execute_method=settings.lag_strategy_execute_method,
+            quote_method=settings.portfolio_quote_method,
+            execute_method=settings.portfolio_execute_method,
         )
         portfolio_engine = PortfolioStrategyEngine(
-            db=watchlist_db,
+            db=db,
             mcp_manager=mcp_manager,
             config=portfolio_config,
             api_key=settings.gemini_api_key,
@@ -1801,9 +861,8 @@ Examples:
             await run_telegram_only(telegram, output)
         elif args.interactive:
             await run_interactive(
-                planner, output, watchlist_db, mcp_manager,
-                poller, telegram, autonomous_scheduler, lag_scheduler,
-                portfolio_scheduler
+                planner, output, db, mcp_manager,
+                telegram, portfolio_scheduler
             )
         elif query:
             await run_single_query(planner, query, output, context={})
@@ -1811,7 +870,7 @@ Examples:
         output.info("\nInterrupted")
     finally:
         output.status("Shutting down...")
-        await watchlist_db.close()
+        await db.close()
         await mcp_manager.shutdown()
 
 
