@@ -321,6 +321,28 @@ class Database:
         row = await cursor.fetchone()
         return float(row["pnl"]) if row and row["pnl"] is not None else 0.0
 
+    async def delete_closed_portfolio_data(self) -> int:
+        """Delete all closed positions and their associated executions.
+
+        Returns the number of closed positions deleted.
+        """
+        conn = await self._ensure_connected()
+        async with self._lock:
+            # Delete executions linked to closed positions first
+            await conn.execute(
+                """
+                DELETE FROM portfolio_executions
+                WHERE position_id IN (
+                    SELECT id FROM portfolio_positions WHERE status = 'closed'
+                )
+                """
+            )
+            cursor = await conn.execute(
+                "DELETE FROM portfolio_positions WHERE status = 'closed'"
+            )
+            await conn.commit()
+            return cursor.rowcount
+
     async def record_portfolio_execution(
         self,
         position_id: Optional[int],

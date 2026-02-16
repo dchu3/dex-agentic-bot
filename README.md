@@ -130,6 +130,7 @@ Send any token address to your bot:
 | `/portfolio close <id\|all>` | Manually close position(s) |
 | `/portfolio set [param] [value]` | Show or change tunable runtime parameters |
 | `/portfolio history` | Show recent closed positions with PnL |
+| `/portfolio reset` | Delete closed positions and reset daily PnL |
 
 ### Portfolio Strategy
 
