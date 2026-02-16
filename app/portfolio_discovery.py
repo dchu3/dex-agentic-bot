@@ -132,8 +132,22 @@ class PortfolioDiscovery:
         scored = await self._ai_score(safe_candidates)
         scored.sort(key=lambda c: c.momentum_score, reverse=True)
 
+        # Log individual scores for diagnostics
+        for c in scored:
+            self._log(
+                "info",
+                f"Score: {c.symbol} = {c.momentum_score:.0f} "
+                f"(vol=${c.volume_24h:,.0f} liq=${c.liquidity_usd:,.0f} "
+                f"chg={c.price_change_24h:+.1f}%) — {c.reasoning}",
+            )
+
         # Step 6: Filter by minimum score and return top N
         result = [c for c in scored if c.momentum_score >= self.min_momentum_score]
+        if scored and not result:
+            self._log(
+                "info",
+                f"All {len(scored)} candidates scored below min_momentum_score={self.min_momentum_score}",
+            )
         return result[:max_candidates]
 
     async def _scan_trending(self) -> List[Dict[str, Any]]:
