@@ -315,6 +315,7 @@ class CLIOutput:
                     "/portfolio positions": "List open portfolio positions",
                     "/portfolio close <id|all>": "Manually close position(s)",
                     "/portfolio history": "Show closed positions with PnL",
+                    "/portfolio reset": "Delete closed positions & reset PnL",
                     "/portfolio set [param] [value]": "View/change runtime params",
                     "/help": "Show this help",
                 },
@@ -339,6 +340,7 @@ class CLIOutput:
             print("  /portfolio positions         List open portfolio positions")
             print("  /portfolio close <id|all>    Manually close position(s)")
             print("  /portfolio history           Show closed positions with PnL")
+            print("  /portfolio reset             Delete closed positions & reset PnL")
             print("  /portfolio set [param] [val] View/change runtime params")
             print("\n  /help             Show this help")
             print("\nExamples:")
@@ -377,6 +379,7 @@ class CLIOutput:
         cmd_table.add_row("  /portfolio positions", "List open portfolio positions")
         cmd_table.add_row("  /portfolio close <id|all>", "Manually close position(s)")
         cmd_table.add_row("  /portfolio history", "Show closed positions with PnL")
+        cmd_table.add_row("  /portfolio reset", "Delete closed positions & reset PnL")
         cmd_table.add_row("  /portfolio set [param] [value]", "View/change runtime params")
         cmd_table.add_row("", "")
         cmd_table.add_row("  /help", "Show this help")
