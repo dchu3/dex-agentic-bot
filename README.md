@@ -121,6 +121,51 @@ Chain is auto-detected from the address format.
 | `/help` | Show help message |
 | `/status` | Check bot status |
 
+### Price Alerts (Interactive CLI)
+
+Price alerts let you set above/below thresholds on watchlist tokens. The background poller checks prices and fires a notification when the price **crosses** your threshold.
+
+#### Setup
+
+1. Enable polling in your `.env`:
+   ```env
+   WATCHLIST_POLL_ENABLED=true
+   WATCHLIST_POLL_INTERVAL=60   # seconds between price checks (default: 60)
+   ```
+2. Start in interactive mode:
+   ```bash
+   ./scripts/start.sh --interactive
+   # or with a custom poll interval
+   ./scripts/start.sh --interactive --poll-interval 30
+   ```
+
+#### Setting Alerts
+
+```
+/alert PEPE above 0.000005      # triggers when price rises to/above target
+/alert PEPE below 0.000003      # triggers when price drops to/below target
+/alert 0x6b17...d71 below 1.50  # works with addresses too
+```
+
+You can set both an above and below alert on the same token.
+
+#### How They Trigger
+
+- The watchlist poller runs in the background and fetches current prices each cycle.
+- An alert fires only on the **crossing event** — when `last_price` was below the threshold and `current_price` reaches or exceeds it (or vice versa for below alerts).
+- After firing, the alert is **one-shot per crossing**. It won't re-fire until the price crosses back and crosses the threshold again.
+- Triggered alerts appear in the CLI and are sent via Telegram (if configured).
+
+#### Managing Alerts
+
+| Command | Description |
+|---------|-------------|
+| `/alerts` | Show triggered (unacknowledged) alerts |
+| `/alerts clear` | Acknowledge all triggered alerts |
+| `/alerts history` | Show full alert history |
+
+> **Note:** Alerts require `WATCHLIST_POLL_ENABLED=true` and `--interactive` mode. Without polling enabled, alerts are stored but never checked. You can disable polling for a session with `--no-polling`.
+
 ### Lag Strategy (Interactive CLI, Solana)
 
 The lag strategy runs in interactive mode and monitors **Solana tokens in your watchlist** (or autonomous watchlist), then opens/closes positions via trader MCP.
