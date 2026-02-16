@@ -325,6 +325,7 @@ async def _cmd_portfolio(
         output.info("  /portfolio positions  - List open portfolio positions")
         output.info("  /portfolio close <id|all> - Manually close position(s)")
         output.info("  /portfolio history    - Show recently closed positions")
+        output.info("  /portfolio reset      - Delete closed positions & reset PnL")
         output.info("  /portfolio set [param] [value] - View/change runtime params")
         return
 
@@ -496,6 +497,27 @@ async def _cmd_portfolio(
                 f"  • #{pos.id} {pos.symbol} ${pos.entry_price:.10f} → ${pos.exit_price or 0:.10f} "
                 f"PnL ${pnl:,.4f} ({pct:+.1f}%) [{pos.close_reason or '?'}]"
             )
+        return
+
+    if subcmd == "reset":
+        chain_filter = scheduler.engine.config.chain if scheduler else "solana"
+        closed = await db.list_closed_portfolio_positions(limit=10000, chain=chain_filter)
+        if not closed:
+            output.info("No closed portfolio positions to delete.")
+            return
+        output.warning(
+            f"⚠️  This will permanently delete {len(closed)} closed position(s) "
+            "and their execution records."
+        )
+        try:
+            answer = input("Type 'yes' to confirm: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer != "yes":
+            output.info("Reset cancelled.")
+            return
+        deleted = await db.delete_closed_portfolio_data()
+        output.info(f"✅ Deleted {deleted} closed position(s) and associated executions. Daily PnL reset.")
         return
 
     if subcmd == "set":
