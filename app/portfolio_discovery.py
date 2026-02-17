@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -194,22 +195,27 @@ class PortfolioDiscovery:
     async def _fetch_boosted_tokens(self, client: Any) -> List[Dict[str, Any]]:
         """Fetch boosted token addresses from DexScreener trending endpoints."""
         endpoints = ["get_top_boosted_tokens", "get_latest_boosted_tokens"]
-        tokens: List[Dict[str, Any]] = []
-        seen: set[str] = set()
 
-        for endpoint in endpoints:
+        async def _call(endpoint: str) -> List[Dict[str, Any]]:
             try:
                 result = await client.call_tool(endpoint, {})
-                items = self._extract_boosted_tokens(result)
-                for item in items:
-                    chain = (item.get("chainId") or "").lower()
-                    addr = (item.get("tokenAddress") or "").lower()
-                    if chain != self.chain or not addr or addr in seen:
-                        continue
-                    seen.add(addr)
-                    tokens.append(item)
+                return self._extract_boosted_tokens(result)
             except Exception as exc:
                 self._log("warning", f"{endpoint} failed: {exc}")
+                return []
+
+        results = await asyncio.gather(*[_call(ep) for ep in endpoints])
+
+        tokens: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for items in results:
+            for item in items:
+                chain = (item.get("chainId") or "").lower()
+                addr = (item.get("tokenAddress") or "").lower()
+                if chain != self.chain or not addr or addr in seen:
+                    continue
+                seen.add(addr)
+                tokens.append(item)
 
         return tokens
 
@@ -230,12 +236,12 @@ class PortfolioDiscovery:
         self, client: Any, tokens: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """Fetch pair data for a list of boosted tokens via get_token_pools."""
-        pairs: List[Dict[str, Any]] = []
-        for token in tokens:
+
+        async def _fetch_one(token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             chain = token.get("chainId", self.chain)
             addr = token.get("tokenAddress", "")
             if not addr:
-                continue
+                return None
             try:
                 result = await client.call_tool(
                     "get_token_pools",
@@ -243,18 +249,19 @@ class PortfolioDiscovery:
                 )
                 pool_pairs = self._extract_pairs(result)
                 if pool_pairs:
-                    # Use highest-liquidity pair for the token
-                    best = max(
+                    return max(
                         pool_pairs,
                         key=lambda p: float(
                             (p.get("liquidity") or {}).get("usd", 0)
                             if isinstance(p.get("liquidity"), dict) else 0
                         ),
                     )
-                    pairs.append(best)
             except Exception as exc:
                 self._log("warning", f"get_token_pools failed for {addr[:12]}…: {exc}")
-        return pairs
+            return None
+
+        results = await asyncio.gather(*[_fetch_one(t) for t in tokens])
+        return [p for p in results if p is not None]
 
     @staticmethod
     def _extract_pairs(result: Any) -> List[Dict[str, Any]]:
