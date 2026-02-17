@@ -15,14 +15,27 @@ from app.portfolio_discovery import DiscoveryCandidate, PortfolioDiscovery
 # ---------------------------------------------------------------------------
 
 class MockDexScreenerClient:
-    """Returns canned pairs for search_pairs."""
+    """Returns canned data for DexScreener MCP endpoints."""
 
-    def __init__(self, pairs: Optional[List[Dict[str, Any]]] = None) -> None:
+    def __init__(
+        self,
+        pairs: Optional[List[Dict[str, Any]]] = None,
+        boosted_tokens: Optional[List[Dict[str, Any]]] = None,
+        pool_pairs: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    ) -> None:
         self.pairs = pairs or []
+        self.boosted_tokens = boosted_tokens or []
+        # pool_pairs: token_address (lower) → list of pair dicts
+        self.pool_pairs = pool_pairs or {}
 
     async def call_tool(self, method: str, arguments: Dict[str, Any]) -> Any:
         if method == "search_pairs":
             return {"pairs": self.pairs}
+        if method in ("get_top_boosted_tokens", "get_latest_boosted_tokens"):
+            return self.boosted_tokens
+        if method == "get_token_pools":
+            addr = arguments.get("tokenAddress", "").lower()
+            return self.pool_pairs.get(addr, [])
         return {}
 
 
@@ -325,3 +338,155 @@ class TestExtractPairs:
     def test_from_string(self):
         result = PortfolioDiscovery._extract_pairs("invalid")
         assert len(result) == 0
+
+
+# ---------------------------------------------------------------------------
+# Boosted token extraction
+# ---------------------------------------------------------------------------
+
+
+class TestExtractBoostedTokens:
+    def test_extracts_from_list(self):
+        data = [
+            {"tokenAddress": "addr1", "chainId": "solana"},
+            {"tokenAddress": "addr2", "chainId": "ethereum"},
+        ]
+        result = PortfolioDiscovery._extract_boosted_tokens(data)
+        assert len(result) == 2
+
+    def test_extracts_from_wrapped_dict(self):
+        data = {"tokens": [{"tokenAddress": "addr1", "chainId": "solana"}]}
+        result = PortfolioDiscovery._extract_boosted_tokens(data)
+        assert len(result) == 1
+
+    def test_skips_entries_without_address(self):
+        data = [{"chainId": "solana"}, {"tokenAddress": "addr1", "chainId": "solana"}]
+        result = PortfolioDiscovery._extract_boosted_tokens(data)
+        assert len(result) == 1
+
+    def test_returns_empty_for_string(self):
+        assert PortfolioDiscovery._extract_boosted_tokens("invalid") == []
+
+    def test_returns_empty_for_empty_list(self):
+        assert PortfolioDiscovery._extract_boosted_tokens([]) == []
+
+
+# ---------------------------------------------------------------------------
+# Boosted token discovery integration
+# ---------------------------------------------------------------------------
+
+
+class TestFetchBoostedTokens:
+    @pytest.mark.asyncio
+    async def test_filters_by_chain(self):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", chain="solana",
+        )
+        client = MockDexScreenerClient(boosted_tokens=[
+            {"tokenAddress": "SolToken111", "chainId": "solana"},
+            {"tokenAddress": "EthToken111", "chainId": "ethereum"},
+        ])
+        tokens = await discovery._fetch_boosted_tokens(client)
+        assert len(tokens) == 1
+        assert tokens[0]["tokenAddress"] == "SolToken111"
+
+    @pytest.mark.asyncio
+    async def test_deduplicates_across_endpoints(self):
+        """Same token from both boosted endpoints should appear once."""
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", chain="solana",
+        )
+        client = MockDexScreenerClient(boosted_tokens=[
+            {"tokenAddress": "DupAddr1111", "chainId": "solana"},
+            {"tokenAddress": "DupAddr1111", "chainId": "solana"},
+            {"tokenAddress": "Unique11111", "chainId": "solana"},
+        ])
+        tokens = await discovery._fetch_boosted_tokens(client)
+        assert len(tokens) == 2
+
+
+class TestFetchPairsForTokens:
+    @pytest.mark.asyncio
+    async def test_selects_highest_liquidity_pair(self):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", chain="solana",
+        )
+        pool_pairs = {
+            "addr1": [
+                _make_pair(address="addr1", liquidity_usd=5000),
+                _make_pair(address="addr1", liquidity_usd=50000),
+                _make_pair(address="addr1", liquidity_usd=10000),
+            ]
+        }
+        client = MockDexScreenerClient(pool_pairs=pool_pairs)
+        tokens = [{"tokenAddress": "addr1", "chainId": "solana"}]
+        pairs = await discovery._fetch_pairs_for_tokens(client, tokens)
+        assert len(pairs) == 1
+        assert float(pairs[0]["liquidity"]["usd"]) == 50000
+
+    @pytest.mark.asyncio
+    async def test_handles_empty_pools(self):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", chain="solana",
+        )
+        client = MockDexScreenerClient(pool_pairs={})
+        tokens = [{"tokenAddress": "nopool", "chainId": "solana"}]
+        pairs = await discovery._fetch_pairs_for_tokens(client, tokens)
+        assert len(pairs) == 0
+
+
+class TestScanTrendingIntegration:
+    @pytest.mark.asyncio
+    async def test_merges_boosted_and_search_results(self):
+        """Boosted tokens + search results are merged and deduplicated."""
+        boosted_addr = "BoostedToken1111111111111111111111111111111"
+        search_addr = "SearchToken11111111111111111111111111111111"
+
+        boosted_pair = _make_pair(address=boosted_addr, symbol="BOOST", volume_24h=100000)
+        search_pair = _make_pair(address=search_addr, symbol="SRCH", volume_24h=50000)
+
+        client = MockDexScreenerClient(
+            pairs=[search_pair],
+            boosted_tokens=[{"tokenAddress": boosted_addr, "chainId": "solana"}],
+            pool_pairs={boosted_addr.lower(): [boosted_pair]},
+        )
+        manager = MockMCPManager(dexscreener=client)
+        discovery = PortfolioDiscovery(
+            mcp_manager=manager, api_key="x", chain="solana",
+        )
+        pairs = await discovery._scan_trending()
+        addresses = {(p.get("baseToken") or {}).get("address", "") for p in pairs}
+        assert boosted_addr in addresses
+        assert search_addr in addresses
+
+    @pytest.mark.asyncio
+    async def test_deduplicates_across_sources(self):
+        """Token appearing in both boosted and search results appears once."""
+        addr = "SharedToken11111111111111111111111111111111"
+        pair = _make_pair(address=addr, symbol="SHARED")
+
+        client = MockDexScreenerClient(
+            pairs=[pair],
+            boosted_tokens=[{"tokenAddress": addr, "chainId": "solana"}],
+            pool_pairs={addr.lower(): [pair]},
+        )
+        manager = MockMCPManager(dexscreener=client)
+        discovery = PortfolioDiscovery(
+            mcp_manager=manager, api_key="x", chain="solana",
+        )
+        pairs = await discovery._scan_trending()
+        assert len(pairs) == 1
+
+    @pytest.mark.asyncio
+    async def test_works_without_boosted_tokens(self):
+        """Falls back to search_pairs when no boosted tokens exist."""
+        addr = "SearchOnly111111111111111111111111111111111"
+        pair = _make_pair(address=addr, symbol="ONLY")
+
+        client = MockDexScreenerClient(pairs=[pair], boosted_tokens=[])
+        manager = MockMCPManager(dexscreener=client)
+        discovery = PortfolioDiscovery(
+            mcp_manager=manager, api_key="x", chain="solana",
+        )
+        pairs = await discovery._scan_trending()
+        assert len(pairs) == 1
