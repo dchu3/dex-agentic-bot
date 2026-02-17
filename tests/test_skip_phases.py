@@ -448,3 +448,72 @@ class TestSkipPhasesIntegration:
         result2 = await engine.run_discovery_cycle()
         assert len(result2.positions_opened) == 1
         assert result2.positions_opened[0].token_address == TOKEN_1
+
+    @pytest.mark.asyncio
+    async def test_stop_loss_with_positive_pnl_does_not_increment(self, db):
+        """Stop loss with positive PnL (e.g. trailing stop above entry) does NOT increment counter."""
+        # stop_price set above entry to simulate a trailing stop that locked in profit
+        # entry=1.00, stop=1.10 (trailing stop above entry), current price=1.05 (below stop)
+        # PnL = (1.05 - 1.00) * 100 = +5.0  → positive
+        pos = await db.add_portfolio_position(
+            token_address=TOKEN_1,
+            symbol="TEST",
+            chain="solana",
+            entry_price=1.00,
+            quantity_token=100.0,
+            notional_usd=10.0,
+            stop_price=1.10,   # trailing stop above entry
+            take_price=1.20,
+        )
+
+        engine = _make_engine(db, dex_price=1.05)  # below stop, but above entry
+        result = await engine.run_exit_checks()
+
+        assert len(result.positions_closed) == 1
+        assert result.positions_closed[0].close_reason == "stop_loss"
+        assert result.positions_closed[0].realized_pnl_usd > 0  # positive PnL
+
+        # Positive-PnL stop loss must NOT increment the skip counter
+        skip = await db.get_skip_phases(TOKEN_1, "solana")
+        assert skip == 0
+        # Verify the row wasn't even created (count stays 0)
+        count_after = await db.increment_negative_sl_count(TOKEN_1, "solana")
+        assert count_after == 1  # fresh start, not 2
+
+    @pytest.mark.asyncio
+    async def test_take_profit_close_does_not_increment(self, db):
+        """Take profit close does NOT increment negative_sl_count regardless of PnL."""
+        # Price above take_price triggers take_profit close
+        pos = await _insert_position(db, entry_price=1.00)  # take_price = 1.15
+
+        engine = _make_engine(db, dex_price=1.20)  # above take_price
+        result = await engine.run_exit_checks()
+
+        assert len(result.positions_closed) == 1
+        assert result.positions_closed[0].close_reason == "take_profit"
+
+        skip = await db.get_skip_phases(TOKEN_1, "solana")
+        assert skip == 0
+        # Counter should not exist or be 0
+        count_after = await db.increment_negative_sl_count(TOKEN_1, "solana")
+        assert count_after == 1  # fresh, not incremented by the close
+
+    @pytest.mark.asyncio
+    async def test_max_hold_time_close_does_not_increment(self, db):
+        """max_hold_time close does NOT increment negative_sl_count."""
+        # Use max_hold_hours=0 so any position is immediately expired
+        pos = await _insert_position(db, entry_price=1.00)
+
+        # Engine with max_hold_hours=0: position is closed by timeout even if price is neutral
+        engine = _make_engine(db, dex_price=1.00)
+        engine.config = _make_config(max_hold_hours=0)
+
+        result = await engine.run_exit_checks()
+
+        assert len(result.positions_closed) == 1
+        assert result.positions_closed[0].close_reason == "max_hold_time"
+
+        skip = await db.get_skip_phases(TOKEN_1, "solana")
+        assert skip == 0
+        count_after = await db.increment_negative_sl_count(TOKEN_1, "solana")
+        assert count_after == 1  # fresh, not incremented
