@@ -182,6 +182,15 @@ class PortfolioStrategyEngine:
             if skip_expires and now < skip_expires:
                 continue
             self._skip_until.pop(key, None)
+            
+            # Skip phases check: skip token if it has skip_phases > 0
+            skip_phases = await self.db.get_skip_phases(candidate.token_address, candidate.chain)
+            if skip_phases > 0:
+                self._log(
+                    "info",
+                    f"Skipping {candidate.symbol} (skip_phases={skip_phases})",
+                )
+                continue
 
             # Cooldown check
             last_entry = await self.db.get_last_portfolio_entry_time(
@@ -199,6 +208,9 @@ class PortfolioStrategyEngine:
                 result.errors.append(err)
                 self._skip_until[key] = now + timedelta(seconds=_ERROR_SKIP_SECONDS)
                 logger.warning("Skipping %s after error: %s", candidate.symbol, exc)
+        
+        # Decrement skip_phases for all tokens after discovery cycle
+        await self.db.decrement_all_skip_phases(self.config.chain)
 
         parts = [f"found={result.candidates_found}"]
         if result.positions_opened:
@@ -460,6 +472,17 @@ class PortfolioStrategyEngine:
                     f"Closed {position.symbol} ({close_reason}) "
                     f"PnL=${realized_pnl:.4f}",
                 )
+                
+                # Track negative stop losses for skip phases
+                if close_reason == "stop_loss" and realized_pnl < 0:
+                    count = await self.db.increment_negative_sl_count(
+                        position.token_address, position.chain
+                    )
+                    if count >= 2:
+                        self._log(
+                            "info",
+                            f"{position.symbol} hit 2 negative stop losses - skipping next discovery cycle",
+                        )
         else:
             err = f"Sell failed for {position.symbol}: {execution.error}"
             cycle_result.errors.append(err)
