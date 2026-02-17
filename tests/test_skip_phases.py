@@ -284,11 +284,9 @@ class TestSkipPhasesIntegration:
         assert result.positions_closed[0].close_reason == "stop_loss"
         assert result.positions_closed[0].realized_pnl_usd < 0
 
-        # Check that negative_sl_count was incremented
-        # Note: get_skip_phases returns skip_phases value, not count
-        # For the first negative SL, skip_phases should still be 0
+        # Should still increment for any negative PnL stop loss
         skip_phases = await db.get_skip_phases(TOKEN_1, "solana")
-        assert skip_phases == 0
+        assert skip_phases == 0  # First one doesn't trigger skip yet
 
     @pytest.mark.asyncio
     async def test_two_negative_stop_losses_set_skip_phases(self, db):
@@ -311,9 +309,10 @@ class TestSkipPhasesIntegration:
 
     @pytest.mark.asyncio
     async def test_positive_stop_loss_does_not_increment(self, db):
-        """Stop loss with positive PnL does not increment counter."""
-        # Position at 1.00, stop at 0.92, current price 0.93
-        # This is a stop loss but with positive PnL (if entry was < 0.93)
+        """Stop loss with negative PnL still increments counter (all negative SLs are tracked)."""
+        # Position at entry 0.85, stop at 0.782 (0.85 * 0.92)
+        # Current price 0.78 is below stop, triggering stop loss
+        # This results in negative PnL: (0.78 - 0.85) * 100 = -7.0
         pos = await _insert_position(db, entry_price=0.85, quantity_token=100.0)
 
         engine = _make_engine(db, dex_price=0.78)  # Below stop (0.85 * 0.92 = 0.782)
@@ -323,7 +322,7 @@ class TestSkipPhasesIntegration:
         assert result.positions_closed[0].close_reason == "stop_loss"
         assert result.positions_closed[0].realized_pnl_usd < 0
 
-        # Should still increment for any negative PnL stop loss
+        # Should increment for any negative PnL stop loss
         skip_phases = await db.get_skip_phases(TOKEN_1, "solana")
         assert skip_phases == 0  # First one doesn't trigger skip yet
 
