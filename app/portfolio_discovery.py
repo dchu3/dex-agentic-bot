@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -151,31 +152,116 @@ class PortfolioDiscovery:
         return result[:max_candidates]
 
     async def _scan_trending(self) -> List[Dict[str, Any]]:
-        """Fetch trending tokens from DexScreener using multiple queries."""
+        """Fetch trending tokens from DexScreener using boosted + search endpoints."""
         client = self.mcp_manager.get_client("dexscreener")
         if not client:
             self._log("error", "DexScreener MCP client not available")
             return []
 
-        queries = ["trending solana", "solana", "trending"]
         all_pairs: List[Dict[str, Any]] = []
-        seen_pair_ids: set[str] = set()
+        seen_addresses: set[str] = set()
 
+        def _add_pairs(pairs: List[Dict[str, Any]]) -> int:
+            added = 0
+            for pair in pairs:
+                addr = (pair.get("baseToken") or {}).get("address", "").lower()
+                if not addr or addr in seen_addresses:
+                    continue
+                seen_addresses.add(addr)
+                all_pairs.append(pair)
+                added += 1
+            return added
+
+        # Primary: boosted/trending token endpoints → fetch pair data per token
+        boosted_tokens = await self._fetch_boosted_tokens(client)
+        if boosted_tokens:
+            boosted_pairs = await self._fetch_pairs_for_tokens(client, boosted_tokens)
+            count = _add_pairs(boosted_pairs)
+            self._log("info", f"Boosted tokens: {len(boosted_tokens)} found, {count} pairs added")
+
+        # Secondary: text search for additional breadth
+        queries = ["trending solana", "solana"]
         for query in queries:
             try:
                 result = await client.call_tool("search_pairs", {"query": query})
                 pairs = self._extract_pairs(result)
-                for pair in pairs:
-                    pair_id = pair.get("pairAddress", "") or pair.get("url", "")
-                    if pair_id and pair_id in seen_pair_ids:
-                        continue
-                    if pair_id:
-                        seen_pair_ids.add(pair_id)
-                    all_pairs.append(pair)
+                count = _add_pairs(pairs)
+                self._log("info", f"Search '{query}': {len(pairs)} results, {count} new pairs added")
             except Exception as exc:
                 self._log("warning", f"DexScreener query '{query}' failed: {exc}")
 
         return all_pairs
+
+    async def _fetch_boosted_tokens(self, client: Any) -> List[Dict[str, Any]]:
+        """Fetch boosted token addresses from DexScreener trending endpoints."""
+        endpoints = ["get_top_boosted_tokens", "get_latest_boosted_tokens"]
+
+        async def _call(endpoint: str) -> List[Dict[str, Any]]:
+            try:
+                result = await client.call_tool(endpoint, {})
+                return self._extract_boosted_tokens(result)
+            except Exception as exc:
+                self._log("warning", f"{endpoint} failed: {exc}")
+                return []
+
+        results = await asyncio.gather(*[_call(ep) for ep in endpoints])
+
+        tokens: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for items in results:
+            for item in items:
+                chain = (item.get("chainId") or "").lower()
+                addr = (item.get("tokenAddress") or "").lower()
+                if chain != self.chain or not addr or addr in seen:
+                    continue
+                seen.add(addr)
+                tokens.append(item)
+
+        return tokens
+
+    @staticmethod
+    def _extract_boosted_tokens(result: Any) -> List[Dict[str, Any]]:
+        """Extract token entries from boosted token response."""
+        if isinstance(result, list):
+            return [t for t in result if isinstance(t, dict) and t.get("tokenAddress")]
+        if isinstance(result, dict):
+            # Some responses wrap in a key
+            for key in ("tokens", "data", "results"):
+                items = result.get(key)
+                if isinstance(items, list):
+                    return [t for t in items if isinstance(t, dict) and t.get("tokenAddress")]
+        return []
+
+    async def _fetch_pairs_for_tokens(
+        self, client: Any, tokens: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Fetch pair data for a list of boosted tokens via get_token_pools."""
+
+        async def _fetch_one(token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            chain = token.get("chainId", self.chain)
+            addr = token.get("tokenAddress", "")
+            if not addr:
+                return None
+            try:
+                result = await client.call_tool(
+                    "get_token_pools",
+                    {"chainId": chain, "tokenAddress": addr},
+                )
+                pool_pairs = self._extract_pairs(result)
+                if pool_pairs:
+                    return max(
+                        pool_pairs,
+                        key=lambda p: float(
+                            (p.get("liquidity") or {}).get("usd", 0)
+                            if isinstance(p.get("liquidity"), dict) else 0
+                        ),
+                    )
+            except Exception as exc:
+                self._log("warning", f"get_token_pools failed for {addr[:12]}…: {exc}")
+            return None
+
+        results = await asyncio.gather(*[_fetch_one(t) for t in tokens])
+        return [p for p in results if p is not None]
 
     @staticmethod
     def _extract_pairs(result: Any) -> List[Dict[str, Any]]:
