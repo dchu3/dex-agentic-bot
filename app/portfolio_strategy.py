@@ -171,40 +171,44 @@ class PortfolioStrategyEngine:
         )
         result.candidates_found = len(candidates)
 
+        if not candidates:
+            result.summary = "No suitable candidates found"
+            await self.db.decrement_all_skip_phases(self.config.chain)
+            return result
+
         # Execute buys for each candidate
-        if candidates:
-            for candidate in candidates:
-                key = candidate.token_address.lower()
-                skip_expires = self._skip_until.get(key)
-                if skip_expires and now < skip_expires:
-                    continue
-                self._skip_until.pop(key, None)
-                
-                # Skip phases check: skip token if it has skip_phases > 0
-                skip_phases = await self.db.get_skip_phases(candidate.token_address, candidate.chain)
-                if skip_phases > 0:
-                    self._log(
-                        "info",
-                        f"Skipping {candidate.symbol} (skip_phases={skip_phases})",
-                    )
-                    continue
-
-                # Cooldown check
-                last_entry = await self.db.get_last_portfolio_entry_time(
-                    candidate.token_address, candidate.chain
+        for candidate in candidates:
+            key = candidate.token_address.lower()
+            skip_expires = self._skip_until.get(key)
+            if skip_expires and now < skip_expires:
+                continue
+            self._skip_until.pop(key, None)
+            
+            # Skip phases check: skip token if it has skip_phases > 0
+            skip_phases = await self.db.get_skip_phases(candidate.token_address, candidate.chain)
+            if skip_phases > 0:
+                self._log(
+                    "info",
+                    f"Skipping {candidate.symbol} (skip_phases={skip_phases})",
                 )
-                if last_entry and (now - last_entry).total_seconds() < self.config.cooldown_seconds:
-                    continue
+                continue
 
-                try:
-                    position = await self._open_position(candidate)
-                    if position:
-                        result.positions_opened.append(position)
-                except Exception as exc:
-                    err = f"{candidate.symbol}: {exc}"
-                    result.errors.append(err)
-                    self._skip_until[key] = now + timedelta(seconds=_ERROR_SKIP_SECONDS)
-                    logger.warning("Skipping %s after error: %s", candidate.symbol, exc)
+            # Cooldown check
+            last_entry = await self.db.get_last_portfolio_entry_time(
+                candidate.token_address, candidate.chain
+            )
+            if last_entry and (now - last_entry).total_seconds() < self.config.cooldown_seconds:
+                continue
+
+            try:
+                position = await self._open_position(candidate)
+                if position:
+                    result.positions_opened.append(position)
+            except Exception as exc:
+                err = f"{candidate.symbol}: {exc}"
+                result.errors.append(err)
+                self._skip_until[key] = now + timedelta(seconds=_ERROR_SKIP_SECONDS)
+                logger.warning("Skipping %s after error: %s", candidate.symbol, exc)
         
         # Decrement skip_phases for all tokens after discovery cycle
         await self.db.decrement_all_skip_phases(self.config.chain)

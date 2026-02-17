@@ -443,13 +443,13 @@ class Database:
             row = await cursor.fetchone()
             count = int(row["negative_sl_count"]) if row else 1
             
-            # If count reaches 2, set skip_phases = 1
+            # If count reaches 2, set skip_phases = 1 (only if not already skipping)
             if count >= 2:
                 await conn.execute(
                     """
                     UPDATE token_skip_phases
                     SET skip_phases = 1, updated_at = ?
-                    WHERE token_address = ? AND chain = ?
+                    WHERE token_address = ? AND chain = ? AND skip_phases = 0
                     """,
                     (now, token_address.lower(), chain.lower()),
                 )
@@ -491,14 +491,14 @@ class Database:
             )
             updated = cursor.rowcount
             
-            # Reset negative_sl_count for tokens that reached skip_phases = 0
+            # Reset negative_sl_count only for tokens that just transitioned 1→0
             await conn.execute(
                 """
                 UPDATE token_skip_phases
                 SET negative_sl_count = 0,
                     last_negative_sl_at = NULL,
                     updated_at = ?
-                WHERE chain = ? AND skip_phases = 0
+                WHERE chain = ? AND skip_phases = 0 AND negative_sl_count > 0
                 """,
                 (now, chain.lower()),
             )
