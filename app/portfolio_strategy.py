@@ -149,12 +149,14 @@ class PortfolioStrategyEngine:
         open_count = await self.db.count_open_portfolio_positions(self.config.chain)
         available_slots = self.config.max_positions - open_count
         if available_slots <= 0:
+            await self.db.decrement_all_skip_phases(self.config.chain)
             result.summary = f"Portfolio full ({open_count}/{self.config.max_positions})"
             return result
 
         # Check daily loss limit
         daily_pnl = await self.db.get_daily_portfolio_pnl(now)
         if daily_pnl <= -abs(self.config.daily_loss_limit_usd):
+            await self.db.decrement_all_skip_phases(self.config.chain)
             result.summary = "Skipped: daily loss limit reached"
             result.errors.append(f"Daily PnL ${daily_pnl:.2f} exceeds limit")
             return result

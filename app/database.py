@@ -479,30 +479,26 @@ class Database:
         conn = await self._ensure_connected()
         now = datetime.now(timezone.utc)
         async with self._lock:
-            # Decrement skip_phases where > 0
+            # Decrement skip_phases where > 0, and reset negative_sl_count only
+            # for tokens whose skip_phases transitions from 1→0.
             cursor = await conn.execute(
                 """
                 UPDATE token_skip_phases
                 SET skip_phases = skip_phases - 1,
+                    negative_sl_count = CASE
+                        WHEN skip_phases = 1 THEN 0
+                        ELSE negative_sl_count
+                    END,
+                    last_negative_sl_at = CASE
+                        WHEN skip_phases = 1 THEN NULL
+                        ELSE last_negative_sl_at
+                    END,
                     updated_at = ?
                 WHERE chain = ? AND skip_phases > 0
                 """,
                 (now, chain.lower()),
             )
             updated = cursor.rowcount
-            
-            # Reset negative_sl_count only for tokens that just transitioned 1→0
-            await conn.execute(
-                """
-                UPDATE token_skip_phases
-                SET negative_sl_count = 0,
-                    last_negative_sl_at = NULL,
-                    updated_at = ?
-                WHERE chain = ? AND skip_phases = 0 AND negative_sl_count > 0
-                """,
-                (now, chain.lower()),
-            )
-            
             await conn.commit()
             return updated
 

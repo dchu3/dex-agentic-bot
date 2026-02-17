@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 import pytest_asyncio
 
+import app.execution as execution_module
 from app.portfolio_strategy import (
     PortfolioStrategyConfig,
     PortfolioStrategyEngine,
@@ -112,6 +113,16 @@ async def db(temp_db_path):
     await database.connect()
     yield database
     await database.close()
+
+
+@pytest.fixture(autouse=True)
+def seed_decimals_cache():
+    """Pre-seed decimals cache for fake mints so tests don't hit Solana RPC."""
+    execution_module._decimals_cache[TOKEN_1.lower()] = 6
+    execution_module._decimals_cache[TOKEN_2.lower()] = 6
+    yield
+    execution_module._decimals_cache.pop(TOKEN_1.lower(), None)
+    execution_module._decimals_cache.pop(TOKEN_2.lower(), None)
 
 
 def _make_config(**overrides) -> PortfolioStrategyConfig:
@@ -267,6 +278,27 @@ class TestSkipPhasesTracking:
         skip_phases = await db.get_skip_phases(TOKEN_1, "solana")
         assert skip_phases == 0
 
+    @pytest.mark.asyncio
+    async def test_decrement_preserves_count_for_mid_accumulation_token(self, db):
+        """decrement_all_skip_phases must NOT reset negative_sl_count for a token
+        with count=1 and skip_phases=0 (has not yet triggered a skip phase)."""
+        # Token has one negative SL — count=1, skip_phases=0 (not yet skipping)
+        count = await db.increment_negative_sl_count(TOKEN_1, "solana")
+        assert count == 1
+        assert await db.get_skip_phases(TOKEN_1, "solana") == 0
+
+        # A discovery cycle runs; TOKEN_2 has skip_phases=1 so decrement fires
+        await db.increment_negative_sl_count(TOKEN_2, "solana")
+        await db.increment_negative_sl_count(TOKEN_2, "solana")
+        assert await db.get_skip_phases(TOKEN_2, "solana") == 1
+
+        await db.decrement_all_skip_phases("solana")
+
+        # TOKEN_1's counter should still be 1 — not wiped
+        count_after = await db.increment_negative_sl_count(TOKEN_1, "solana")
+        assert count_after == 2  # Was 1, now 2 → triggers skip
+        assert await db.get_skip_phases(TOKEN_1, "solana") == 1
+
 
 class TestSkipPhasesIntegration:
     """Integration tests for skip phases in portfolio strategy."""
@@ -308,11 +340,10 @@ class TestSkipPhasesIntegration:
         assert skip_phases == 1
 
     @pytest.mark.asyncio
-    async def test_positive_stop_loss_does_not_increment(self, db):
-        """Stop loss with negative PnL still increments counter (all negative SLs are tracked)."""
+    async def test_first_negative_stop_loss_does_not_trigger_skip(self, db):
+        """First negative stop loss increments count to 1 but does not yet trigger skip_phases."""
         # Position at entry 0.85, stop at 0.782 (0.85 * 0.92)
-        # Current price 0.78 is below stop, triggering stop loss
-        # This results in negative PnL: (0.78 - 0.85) * 100 = -7.0
+        # Current price 0.78 is below stop, triggering stop loss with negative PnL
         pos = await _insert_position(db, entry_price=0.85, quantity_token=100.0)
 
         engine = _make_engine(db, dex_price=0.78)  # Below stop (0.85 * 0.92 = 0.782)
@@ -322,7 +353,7 @@ class TestSkipPhasesIntegration:
         assert result.positions_closed[0].close_reason == "stop_loss"
         assert result.positions_closed[0].realized_pnl_usd < 0
 
-        # Should increment for any negative PnL stop loss
+        # First negative SL increments count to 1 but skip_phases stays 0
         skip_phases = await db.get_skip_phases(TOKEN_1, "solana")
         assert skip_phases == 0  # First one doesn't trigger skip yet
 
