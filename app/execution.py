@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -82,11 +83,9 @@ async def verify_transaction_success(
     or ``None`` if the status could not be determined (RPC error,
     transaction not yet found, etc.).
     """
-    import asyncio
-
-    for attempt in range(retries + 1):
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(timeout=15) as client:
+        for attempt in range(retries + 1):
+            try:
                 resp = await client.post(
                     rpc_url,
                     json={
@@ -106,15 +105,15 @@ async def verify_transaction_success(
                     return None
                 meta = result.get("meta", {})
                 return meta.get("err") is None
-        except Exception:
-            if attempt < retries:
-                await asyncio.sleep(retry_delay_seconds)
-                continue
-            logger.warning(
-                "Could not verify tx %s on-chain (RPC error); proceeding as unknown",
-                tx_hash,
-            )
-            return None
+            except Exception:
+                if attempt < retries:
+                    await asyncio.sleep(retry_delay_seconds)
+                    continue
+                logger.warning(
+                    "Could not verify tx %s on-chain (RPC error); proceeding as unknown",
+                    tx_hash,
+                )
+                return None
 
 
 @dataclass
