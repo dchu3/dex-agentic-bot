@@ -66,6 +66,16 @@ ON portfolio_positions(status, chain);
 
 CREATE INDEX IF NOT EXISTS idx_portfolio_executions_position
 ON portfolio_executions(position_id);
+
+CREATE TABLE IF NOT EXISTS token_skip_phases (
+    token_address TEXT NOT NULL,
+    chain TEXT NOT NULL,
+    skip_phases INTEGER NOT NULL DEFAULT 0,
+    negative_sl_count INTEGER NOT NULL DEFAULT 0,
+    last_negative_sl_at TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (token_address, chain)
+);
 """
 
 
@@ -404,6 +414,112 @@ class Database:
         if row and row["last_opened"]:
             return self._parse_dt(row["last_opened"])
         return None
+
+    # --- Token Skip Phases Operations ---
+
+    async def increment_negative_sl_count(
+        self, token_address: str, chain: str
+    ) -> int:
+        """Increment negative stop loss count for a token.
+        
+        Returns the updated negative_sl_count. When count reaches 2, sets skip_phases=1.
+        """
+        conn = await self._ensure_connected()
+        now = datetime.now(timezone.utc)
+        async with self._lock:
+            # First, insert or get current count
+            cursor = await conn.execute(
+                """
+                INSERT INTO token_skip_phases (token_address, chain, negative_sl_count, last_negative_sl_at, updated_at)
+                VALUES (?, ?, 1, ?, ?)
+                ON CONFLICT(token_address, chain) DO UPDATE SET
+                    negative_sl_count = negative_sl_count + 1,
+                    last_negative_sl_at = ?,
+                    updated_at = ?
+                RETURNING negative_sl_count
+                """,
+                (token_address.lower(), chain.lower(), now, now, now, now),
+            )
+            row = await cursor.fetchone()
+            count = int(row["negative_sl_count"]) if row else 1
+            
+            # If count reaches 2, set skip_phases = 1 (only if not already skipping)
+            if count >= 2:
+                await conn.execute(
+                    """
+                    UPDATE token_skip_phases
+                    SET skip_phases = 1, updated_at = ?
+                    WHERE token_address = ? AND chain = ? AND skip_phases = 0
+                    """,
+                    (now, token_address.lower(), chain.lower()),
+                )
+            
+            await conn.commit()
+            return count
+
+    async def get_skip_phases(self, token_address: str, chain: str) -> int:
+        """Get the current skip_phases value for a token."""
+        conn = await self._ensure_connected()
+        cursor = await conn.execute(
+            """
+            SELECT skip_phases FROM token_skip_phases
+            WHERE token_address = ? AND chain = ?
+            """,
+            (token_address.lower(), chain.lower()),
+        )
+        row = await cursor.fetchone()
+        return int(row["skip_phases"]) if row else 0
+
+    async def decrement_all_skip_phases(self, chain: str) -> int:
+        """Decrement skip_phases for all tokens in the chain.
+        
+        When skip_phases reaches 0, reset negative_sl_count to allow fresh attempts.
+        Returns the number of tokens updated.
+        """
+        conn = await self._ensure_connected()
+        now = datetime.now(timezone.utc)
+        async with self._lock:
+            # Decrement skip_phases where > 0, and reset negative_sl_count only
+            # for tokens whose skip_phases transitions from 1→0.
+            cursor = await conn.execute(
+                """
+                UPDATE token_skip_phases
+                SET skip_phases = skip_phases - 1,
+                    negative_sl_count = CASE
+                        WHEN skip_phases = 1 THEN 0
+                        ELSE negative_sl_count
+                    END,
+                    last_negative_sl_at = CASE
+                        WHEN skip_phases = 1 THEN NULL
+                        ELSE last_negative_sl_at
+                    END,
+                    updated_at = ?
+                WHERE chain = ? AND skip_phases > 0
+                """,
+                (now, chain.lower()),
+            )
+            updated = cursor.rowcount
+            await conn.commit()
+            return updated
+
+    async def reset_token_skip_phases(self, token_address: str, chain: str) -> bool:
+        """Reset skip_phases and negative_sl_count for a specific token."""
+        conn = await self._ensure_connected()
+        now = datetime.now(timezone.utc)
+        async with self._lock:
+            cursor = await conn.execute(
+                """
+                UPDATE token_skip_phases
+                SET skip_phases = 0,
+                    negative_sl_count = 0,
+                    last_negative_sl_at = NULL,
+                    updated_at = ?
+                WHERE token_address = ? AND chain = ?
+                """,
+                (now, token_address.lower(), chain.lower()),
+            )
+            await conn.commit()
+            return cursor.rowcount > 0
 
     # --- Helper Methods ---
 

@@ -139,74 +139,88 @@ class PortfolioStrategyEngine:
             result.summary = "Portfolio strategy disabled"
             return result
 
-        await self._refresh_native_price()
-        if self._native_price_usd is None:
-            result.summary = "Skipped: native token price unavailable"
-            result.errors.append("Native token price is None")
-            return result
+        try:
+            await self._refresh_native_price()
+            if self._native_price_usd is None:
+                result.summary = "Skipped: native token price unavailable"
+                result.errors.append("Native token price is None")
+                return result
 
-        # Check available slots
-        open_count = await self.db.count_open_portfolio_positions(self.config.chain)
-        available_slots = self.config.max_positions - open_count
-        if available_slots <= 0:
-            result.summary = f"Portfolio full ({open_count}/{self.config.max_positions})"
-            return result
+            # Check available slots
+            open_count = await self.db.count_open_portfolio_positions(self.config.chain)
+            available_slots = self.config.max_positions - open_count
+            if available_slots <= 0:
+                result.summary = f"Portfolio full ({open_count}/{self.config.max_positions})"
+                return result
 
-        # Check daily loss limit
-        daily_pnl = await self.db.get_daily_portfolio_pnl(now)
-        if daily_pnl <= -abs(self.config.daily_loss_limit_usd):
-            result.summary = "Skipped: daily loss limit reached"
-            result.errors.append(f"Daily PnL ${daily_pnl:.2f} exceeds limit")
-            return result
+            # Check daily loss limit
+            daily_pnl = await self.db.get_daily_portfolio_pnl(now)
+            if daily_pnl <= -abs(self.config.daily_loss_limit_usd):
+                result.summary = "Skipped: daily loss limit reached"
+                result.errors.append(f"Daily PnL ${daily_pnl:.2f} exceeds limit")
+                return result
 
-        # Sync tunable config to discovery engine
-        self.discovery.min_momentum_score = self.config.min_momentum_score
-        self.discovery.min_volume_usd = self.config.min_volume_usd
-        self.discovery.min_liquidity_usd = self.config.min_liquidity_usd
+            # Sync tunable config to discovery engine
+            self.discovery.min_momentum_score = self.config.min_momentum_score
+            self.discovery.min_volume_usd = self.config.min_volume_usd
+            self.discovery.min_liquidity_usd = self.config.min_liquidity_usd
 
-        # Discover candidates
-        candidates = await self.discovery.discover(
-            db=self.db,
-            max_candidates=available_slots,
-        )
-        result.candidates_found = len(candidates)
-
-        if not candidates:
-            result.summary = "No suitable candidates found"
-            return result
-
-        # Execute buys for each candidate
-        for candidate in candidates:
-            key = candidate.token_address.lower()
-            skip_expires = self._skip_until.get(key)
-            if skip_expires and now < skip_expires:
-                continue
-            self._skip_until.pop(key, None)
-
-            # Cooldown check
-            last_entry = await self.db.get_last_portfolio_entry_time(
-                candidate.token_address, candidate.chain
+            # Discover candidates
+            candidates = await self.discovery.discover(
+                db=self.db,
+                max_candidates=available_slots,
             )
-            if last_entry and (now - last_entry).total_seconds() < self.config.cooldown_seconds:
-                continue
+            result.candidates_found = len(candidates)
 
-            try:
-                position = await self._open_position(candidate)
-                if position:
-                    result.positions_opened.append(position)
-            except Exception as exc:
-                err = f"{candidate.symbol}: {exc}"
-                result.errors.append(err)
-                self._skip_until[key] = now + timedelta(seconds=_ERROR_SKIP_SECONDS)
-                logger.warning("Skipping %s after error: %s", candidate.symbol, exc)
+            if not candidates:
+                result.summary = "No suitable candidates found"
+                return result
 
-        parts = [f"found={result.candidates_found}"]
-        if result.positions_opened:
-            parts.append(f"opened={len(result.positions_opened)}")
-        if result.errors:
-            parts.append(f"errors={len(result.errors)}")
-        result.summary = " | ".join(parts)
-        return result
+            # Execute buys for each candidate
+            for candidate in candidates:
+                key = candidate.token_address.lower()
+                skip_expires = self._skip_until.get(key)
+                if skip_expires and now < skip_expires:
+                    continue
+                self._skip_until.pop(key, None)
+
+                # Skip phases check: skip token if it has skip_phases > 0
+                skip_phases = await self.db.get_skip_phases(candidate.token_address, candidate.chain)
+                if skip_phases > 0:
+                    self._log(
+                        "info",
+                        f"Skipping {candidate.symbol} (skip_phases={skip_phases})",
+                    )
+                    continue
+
+                # Cooldown check
+                last_entry = await self.db.get_last_portfolio_entry_time(
+                    candidate.token_address, candidate.chain
+                )
+                if last_entry and (now - last_entry).total_seconds() < self.config.cooldown_seconds:
+                    continue
+
+                try:
+                    position = await self._open_position(candidate)
+                    if position:
+                        result.positions_opened.append(position)
+                except Exception as exc:
+                    err = f"{candidate.symbol}: {exc}"
+                    result.errors.append(err)
+                    self._skip_until[key] = now + timedelta(seconds=_ERROR_SKIP_SECONDS)
+                    logger.warning("Skipping %s after error: %s", candidate.symbol, exc)
+
+            parts = [f"found={result.candidates_found}"]
+            if result.positions_opened:
+                parts.append(f"opened={len(result.positions_opened)}")
+            if result.errors:
+                parts.append(f"errors={len(result.errors)}")
+            result.summary = " | ".join(parts)
+            return result
+
+        finally:
+            # Always advance skip phases once per scheduled cycle (except when disabled).
+            await self.db.decrement_all_skip_phases(self.config.chain)
 
     async def _open_position(
         self, candidate: DiscoveryCandidate
@@ -460,6 +474,17 @@ class PortfolioStrategyEngine:
                     f"Closed {position.symbol} ({close_reason}) "
                     f"PnL=${realized_pnl:.4f}",
                 )
+                
+                # Track negative stop losses for skip phases
+                if close_reason == "stop_loss" and realized_pnl < 0:
+                    count = await self.db.increment_negative_sl_count(
+                        position.token_address, position.chain
+                    )
+                    if count >= 2:
+                        self._log(
+                            "info",
+                            f"{position.symbol} hit 2 negative stop losses - skipping next discovery cycle",
+                        )
         else:
             err = f"Sell failed for {position.symbol}: {execution.error}"
             cycle_result.errors.append(err)
