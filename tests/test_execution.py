@@ -317,3 +317,263 @@ class TestVerifyTransactionSuccess:
             result = await verify_transaction_success("tx123", retries=2, retry_delay_seconds=0.0)
 
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_429_with_retry_after_header_respects_header(self):
+        """429 response with Retry-After header: sleep duration uses the header value."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from app.execution import verify_transaction_success
+
+        rate_limited = MagicMock()
+        rate_limited.status_code = 429
+        rate_limited.headers = {"Retry-After": "7"}
+
+        success_response = MagicMock()
+        success_response.status_code = 200
+        success_response.raise_for_status = MagicMock()
+        success_response.json.return_value = {"result": {"meta": {"err": None}}}
+
+        responses = iter([rate_limited, success_response])
+
+        with patch("httpx.AsyncClient") as mock_client_cls, \
+             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(side_effect=lambda *a, **kw: next(responses))
+            mock_client_cls.return_value = mock_client
+
+            result = await verify_transaction_success("tx123", retries=2, retry_delay_seconds=5.0)
+
+        assert result is True
+        mock_sleep.assert_called_once_with(7.0)
+
+    @pytest.mark.asyncio
+    async def test_429_without_retry_after_uses_exponential_backoff(self):
+        """429 without Retry-After header: sleep uses exponential backoff (base * 2^attempt)."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from app.execution import verify_transaction_success
+
+        rate_limited = MagicMock()
+        rate_limited.status_code = 429
+        rate_limited.headers = {}  # no Retry-After
+
+        success_response = MagicMock()
+        success_response.status_code = 200
+        success_response.raise_for_status = MagicMock()
+        success_response.json.return_value = {"result": {"meta": {"err": None}}}
+
+        responses = iter([rate_limited, success_response])
+
+        with patch("httpx.AsyncClient") as mock_client_cls, \
+             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(side_effect=lambda *a, **kw: next(responses))
+            mock_client_cls.return_value = mock_client
+
+            # attempt=0, base=5.0 → delay = min(5.0 * 2^0, 30) = 5.0
+            result = await verify_transaction_success("tx123", retries=2, retry_delay_seconds=5.0)
+
+        assert result is True
+        mock_sleep.assert_called_once_with(5.0)
+
+    @pytest.mark.asyncio
+    async def test_429_all_retries_exhausted_returns_none(self):
+        """Returns None when all retries are 429 responses."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from app.execution import verify_transaction_success
+
+        rate_limited = MagicMock()
+        rate_limited.status_code = 429
+        rate_limited.headers = {}
+
+        with patch("httpx.AsyncClient") as mock_client_cls, \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(return_value=rate_limited)
+            mock_client_cls.return_value = mock_client
+
+            result = await verify_transaction_success("tx123", retries=2, retry_delay_seconds=0.0)
+
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _rpc_retry_delay unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestRpcRetryDelay:
+    """Unit tests for the _rpc_retry_delay helper."""
+
+    def test_uses_retry_after_header_for_429(self):
+        from unittest.mock import MagicMock
+        from app.execution import _rpc_retry_delay
+
+        resp = MagicMock()
+        resp.status_code = 429
+        resp.headers = {"Retry-After": "10"}
+        assert _rpc_retry_delay(resp, attempt=0, base_delay=5.0) == 10.0
+
+    def test_caps_retry_after_at_max_delay(self):
+        from unittest.mock import MagicMock
+        from app.execution import _rpc_retry_delay
+
+        resp = MagicMock()
+        resp.status_code = 429
+        resp.headers = {"Retry-After": "999"}
+        assert _rpc_retry_delay(resp, attempt=0, base_delay=5.0) == 30.0
+
+    def test_exponential_backoff_without_retry_after(self):
+        from unittest.mock import MagicMock
+        from app.execution import _rpc_retry_delay
+
+        resp = MagicMock()
+        resp.status_code = 429
+        resp.headers = {}
+        # attempt 0: 5 * 2^0 = 5.0
+        assert _rpc_retry_delay(resp, attempt=0, base_delay=5.0) == 5.0
+        # attempt 1: 5 * 2^1 = 10.0
+        assert _rpc_retry_delay(resp, attempt=1, base_delay=5.0) == 10.0
+        # attempt 2: 5 * 2^2 = 20.0
+        assert _rpc_retry_delay(resp, attempt=2, base_delay=5.0) == 20.0
+
+    def test_exponential_backoff_for_non_429(self):
+        from unittest.mock import MagicMock
+        from app.execution import _rpc_retry_delay
+
+        resp = MagicMock()
+        resp.status_code = 500
+        resp.headers = {}
+        assert _rpc_retry_delay(resp, attempt=0, base_delay=5.0) == 5.0
+        assert _rpc_retry_delay(resp, attempt=1, base_delay=5.0) == 10.0
+
+    def test_handles_none_resp(self):
+        """Network error (no response) uses exponential backoff."""
+        from app.execution import _rpc_retry_delay
+
+        assert _rpc_retry_delay(None, attempt=0, base_delay=5.0) == 5.0
+        assert _rpc_retry_delay(None, attempt=1, base_delay=5.0) == 10.0
+
+    def test_invalid_retry_after_falls_back_to_exponential(self):
+        """Non-numeric Retry-After header falls back to exponential backoff."""
+        from unittest.mock import MagicMock
+        from app.execution import _rpc_retry_delay
+
+        resp = MagicMock()
+        resp.status_code = 429
+        resp.headers = {"Retry-After": "Wed, 21 Oct 2025 07:28:00 GMT"}
+        # Should fall back to base * 2^0 = 5.0
+        assert _rpc_retry_delay(resp, attempt=0, base_delay=5.0) == 5.0
+
+
+# ---------------------------------------------------------------------------
+# get_token_decimals tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetTokenDecimals:
+    """Tests for get_token_decimals() 429-aware retry behavior."""
+
+    def _make_success_response(self, decimals: int):
+        from unittest.mock import MagicMock
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {
+            "result": {
+                "value": {
+                    "data": {
+                        "parsed": {"info": {"decimals": decimals}}
+                    }
+                }
+            }
+        }
+        return resp
+
+    def _make_429_response(self, retry_after: str = ""):
+        from unittest.mock import MagicMock
+        resp = MagicMock()
+        resp.status_code = 429
+        resp.headers = {"Retry-After": retry_after} if retry_after else {}
+        return resp
+
+    @pytest.mark.asyncio
+    async def test_429_with_retry_after_retries_then_returns_decimals(self):
+        """429 with Retry-After: retries after the specified delay and returns correct decimals."""
+        from unittest.mock import AsyncMock, patch
+        from app.execution import get_token_decimals
+
+        rate_limited = self._make_429_response(retry_after="4")
+        success = self._make_success_response(decimals=6)
+        responses = iter([rate_limited, success])
+
+        with patch("httpx.AsyncClient") as mock_client_cls, \
+             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep, \
+             patch("app.execution._decimals_cache", {}):
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(side_effect=lambda *a, **kw: next(responses))
+            mock_client_cls.return_value = mock_client
+
+            result = await get_token_decimals("FakeMint_429A", retries=2, retry_delay_seconds=5.0)
+
+        assert result == 6
+        mock_sleep.assert_called_once_with(4.0)
+
+    @pytest.mark.asyncio
+    async def test_429_all_retries_exhausted_returns_default(self):
+        """429 on every attempt: returns SPL default (9) after exhausting retries."""
+        from unittest.mock import AsyncMock, patch
+        from app.execution import get_token_decimals, _SPL_DEFAULT_DECIMALS
+
+        rate_limited = self._make_429_response()
+
+        with patch("httpx.AsyncClient") as mock_client_cls, \
+             patch("asyncio.sleep", new_callable=AsyncMock), \
+             patch("app.execution._decimals_cache", {}):
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(return_value=rate_limited)
+            mock_client_cls.return_value = mock_client
+
+            result = await get_token_decimals("FakeMint_429B", retries=2, retry_delay_seconds=0.0)
+
+        assert result == _SPL_DEFAULT_DECIMALS
+
+    @pytest.mark.asyncio
+    async def test_network_error_retries_then_returns_decimals(self):
+        """Network error on first attempt: retries with exponential backoff and succeeds."""
+        from unittest.mock import AsyncMock, patch
+        from app.execution import get_token_decimals
+
+        success = self._make_success_response(decimals=9)
+        call_count = 0
+
+        async def _post(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ConnectionError("RPC timeout")
+            return success
+
+        with patch("httpx.AsyncClient") as mock_client_cls, \
+             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep, \
+             patch("app.execution._decimals_cache", {}):
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = _post
+            mock_client_cls.return_value = mock_client
+
+            result = await get_token_decimals("FakeMint_429C", retries=2, retry_delay_seconds=5.0)
+
+        assert result == 9
+        assert call_count == 2
+        mock_sleep.assert_called_once_with(5.0)  # base * 2^0 = 5.0
