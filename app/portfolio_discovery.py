@@ -315,6 +315,7 @@ class PortfolioDiscovery:
                 liquidity = float(liquidity_data.get("usd", 0)) if isinstance(liquidity_data, dict) else 0.0
                 price_change = float(pair.get("priceChange", {}).get("h24", 0))
                 market_cap_usd = float(pair.get("marketCap", pair.get("fdv", 0)))
+                pair_created_at_ms = float(pair.get("pairCreatedAt") or 0)
             except (TypeError, ValueError):
                 continue
 
@@ -330,13 +331,11 @@ class PortfolioDiscovery:
             if price <= 0:
                 continue
 
-            if self.min_token_age_hours > 0:
-                pair_created_at_ms = pair.get("pairCreatedAt") or 0
-                if pair_created_at_ms > 0:
-                    age_hours = (now_ms - pair_created_at_ms) / 1_000 / 3_600
-                    if age_hours < self.min_token_age_hours:
-                        rejected_age += 1
-                        continue
+            if self.min_token_age_hours > 0 and pair_created_at_ms > 0:
+                age_hours = (now_ms - pair_created_at_ms) / 1_000 / 3_600
+                if age_hours < self.min_token_age_hours:
+                    rejected_age += 1
+                    continue
 
             candidates.append(DiscoveryCandidate(
                 token_address=address,
