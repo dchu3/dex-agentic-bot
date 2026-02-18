@@ -43,6 +43,7 @@ class PortfolioStrategyConfig:
     min_volume_usd: float
     min_liquidity_usd: float
     min_market_cap_usd: float
+    min_token_age_hours: float
     cooldown_seconds: int
     min_momentum_score: float
     max_slippage_bps: int
@@ -116,6 +117,7 @@ class PortfolioStrategyEngine:
             min_volume_usd=config.min_volume_usd,
             min_liquidity_usd=config.min_liquidity_usd,
             min_market_cap_usd=config.min_market_cap_usd,
+            min_token_age_hours=config.min_token_age_hours,
             min_momentum_score=config.min_momentum_score,
             chain=config.chain,
             verbose=verbose,
@@ -169,6 +171,7 @@ class PortfolioStrategyEngine:
             self.discovery.min_momentum_score = self.config.min_momentum_score
             self.discovery.min_volume_usd = self.config.min_volume_usd
             self.discovery.min_liquidity_usd = self.config.min_liquidity_usd
+            self.discovery.min_token_age_hours = self.config.min_token_age_hours
 
             # Discover candidates
             candidates = await self.discovery.discover(

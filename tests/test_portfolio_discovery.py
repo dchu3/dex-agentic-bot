@@ -86,8 +86,9 @@ def _make_pair(
     liquidity_usd: float = 30000.0,
     market_cap: float = 500000.0,
     price_change: float = 5.0,
+    pair_created_at: Optional[int] = None,
 ) -> Dict[str, Any]:
-    return {
+    pair: Dict[str, Any] = {
         "chainId": chain,
         "baseToken": {"address": address, "symbol": symbol},
         "priceUsd": str(price),
@@ -96,6 +97,9 @@ def _make_pair(
         "marketCap": market_cap,
         "priceChange": {"h24": price_change},
     }
+    if pair_created_at is not None:
+        pair["pairCreatedAt"] = pair_created_at
+    return pair
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +195,39 @@ class TestApplyFilters:
         pairs = [{"chainId": "solana", "baseToken": {"address": "", "symbol": "X"}}]
         result = discovery._apply_filters(pairs)
         assert len(result) == 0
+
+    def test_filters_young_token(self):
+        """Rejects a pair created 1 hour ago when min age is 4 hours."""
+        import time
+        now_ms = int(time.time() * 1000)
+        one_hour_ago_ms = now_ms - int(1 * 3_600 * 1_000)
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", min_token_age_hours=4.0,
+        )
+        pairs = [_make_pair(pair_created_at=one_hour_ago_ms)]
+        result = discovery._apply_filters(pairs)
+        assert len(result) == 0
+
+    def test_passes_old_token(self):
+        """Allows a pair created 8 hours ago when min age is 4 hours."""
+        import time
+        now_ms = int(time.time() * 1000)
+        eight_hours_ago_ms = now_ms - int(8 * 3_600 * 1_000)
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", min_token_age_hours=4.0,
+        )
+        pairs = [_make_pair(pair_created_at=eight_hours_ago_ms)]
+        result = discovery._apply_filters(pairs)
+        assert len(result) == 1
+
+    def test_passes_missing_pair_created_at(self):
+        """Passes a pair with no pairCreatedAt field (permissive fallback)."""
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", min_token_age_hours=4.0,
+        )
+        pairs = [_make_pair()]  # no pair_created_at kwarg → field absent
+        result = discovery._apply_filters(pairs)
+        assert len(result) == 1
 
 
 # ---------------------------------------------------------------------------
