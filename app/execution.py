@@ -658,6 +658,64 @@ class TraderExecutionService:
             raw=result,
         )
 
+    async def probe_slippage(
+        self,
+        token_address: str,
+        probe_usd: float,
+        input_price_usd: float,
+        max_slippage_pct: float,
+    ) -> tuple[bool, Optional[float], Optional[str]]:
+        """Execute a tiny buy+sell probe to validate real vs quoted slippage.
+
+        Returns ``(should_abort, actual_slippage_pct, reason)``.
+        ``should_abort`` is always ``False`` when the probe infrastructure is
+        unavailable — the caller should proceed normally in that case.
+        """
+        try:
+            probe_quote = await self.get_quote(
+                token_address=token_address,
+                notional_usd=probe_usd,
+                side="buy",
+                input_price_usd=input_price_usd,
+            )
+        except Exception as exc:
+            logger.warning("Slippage probe: quote failed (%s); skipping probe", exc)
+            return False, None, None
+
+        if probe_quote.price <= 0:
+            logger.warning("Slippage probe: quote price <= 0; skipping probe")
+            return False, None, None
+
+        result = await self.execute_atomic_trade(
+            token_address=token_address,
+            notional_usd=probe_usd,
+            dry_run=False,
+            input_price_usd=input_price_usd,
+            buy_price=probe_quote.price,
+        )
+
+        if not result.success or result.entry_price is None:
+            # Probe failed (buy_and_sell unavailable or execution error) — degrade gracefully
+            logger.warning(
+                "Slippage probe: atomic trade failed (%s); skipping probe",
+                result.error,
+            )
+            return False, None, result.error
+
+        actual_slippage_pct = abs(result.entry_price - probe_quote.price) / probe_quote.price * 100
+        logger.info(
+            "Slippage probe: quoted=%.10f actual=%.10f deviation=%.2f%%",
+            probe_quote.price, result.entry_price, actual_slippage_pct,
+        )
+
+        if actual_slippage_pct > max_slippage_pct:
+            reason = (
+                f"probe slippage {actual_slippage_pct:.1f}% exceeds threshold {max_slippage_pct:.1f}%"
+            )
+            return True, actual_slippage_pct, reason
+
+        return False, actual_slippage_pct, None
+
     def _build_tool_args(
         self,
         tool_schema: Dict[str, Any],

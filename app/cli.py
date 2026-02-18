@@ -846,6 +846,9 @@ Examples:
             rpc_url=settings.solana_rpc_url,
             quote_method=settings.portfolio_quote_method,
             execute_method=settings.portfolio_execute_method,
+            slippage_probe_enabled=settings.portfolio_slippage_probe_enabled,
+            slippage_probe_usd=settings.portfolio_slippage_probe_usd,
+            slippage_probe_max_slippage_pct=settings.portfolio_slippage_probe_max_slippage_pct,
         )
         portfolio_engine = PortfolioStrategyEngine(
             db=db,

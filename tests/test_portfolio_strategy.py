@@ -517,3 +517,115 @@ class TestParseReferenceResult:
         price, liq = PortfolioStrategyEngine._parse_reference_result(result)
         assert price == 1.0
         assert liq is None
+
+
+# ---------------------------------------------------------------------------
+# Slippage probe integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestSlippageProbeInOpenPosition:
+    """Tests for the slippage probe gate inside _open_position()."""
+
+    def _candidate(self) -> DiscoveryCandidate:
+        from app.portfolio_discovery import DiscoveryCandidate
+        return DiscoveryCandidate(
+            token_address="ProbeToken1111111111111111111111111111111",
+            symbol="PROB",
+            chain="solana",
+            price_usd=0.01,
+            volume_24h=100_000.0,
+            liquidity_usd=50_000.0,
+            market_cap_usd=500_000.0,
+            momentum_score=80.0,
+            safety_status="Safe",
+            reasoning="test candidate",
+        )
+
+    @pytest.mark.asyncio
+    async def test_probe_disabled_skips_probe(self, db):
+        """When slippage_probe_enabled=False, probe_slippage is never called."""
+        from unittest.mock import AsyncMock, patch
+
+        engine = _make_engine(db, slippage_probe_enabled=False, dry_run=False)
+        engine._native_price_usd = 180.0
+
+        with patch.object(engine.execution, "probe_slippage", new_callable=AsyncMock) as mock_probe, \
+             patch.object(engine.execution, "get_quote", new_callable=AsyncMock) as mock_quote, \
+             patch.object(engine.execution, "execute_trade", new_callable=AsyncMock) as mock_exec:
+
+            from app.execution import TradeQuote, TradeExecution
+            mock_quote.return_value = TradeQuote(price=0.01, liquidity_usd=50_000.0, method="mock", raw={})
+            mock_exec.return_value = TradeExecution(
+                success=True, method="mock", raw={}, executed_price=0.01, quantity_token=500.0, tx_hash="abc"
+            )
+
+            await engine._open_position(self._candidate())
+
+        mock_probe.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_probe_enabled_acceptable_slippage_opens_position(self, db):
+        """Probe returns no abort → position is opened normally."""
+        from unittest.mock import AsyncMock, patch
+
+        engine = _make_engine(db, slippage_probe_enabled=True, dry_run=False)
+        engine._native_price_usd = 180.0
+
+        with patch.object(
+            engine.execution, "probe_slippage", new_callable=AsyncMock,
+            return_value=(False, 1.5, None),
+        ), \
+             patch.object(engine.execution, "get_quote", new_callable=AsyncMock) as mock_quote, \
+             patch.object(engine.execution, "execute_trade", new_callable=AsyncMock) as mock_exec:
+
+            from app.execution import TradeQuote, TradeExecution
+            mock_quote.return_value = TradeQuote(price=0.01, liquidity_usd=50_000.0, method="mock", raw={})
+            mock_exec.return_value = TradeExecution(
+                success=True, method="mock", raw={}, executed_price=0.01, quantity_token=500.0, tx_hash="abc"
+            )
+
+            position = await engine._open_position(self._candidate())
+
+        assert position is not None
+
+    @pytest.mark.asyncio
+    async def test_probe_enabled_excessive_slippage_aborts(self, db):
+        """Probe returns should_abort=True → _open_position returns None, no buy executed."""
+        from unittest.mock import AsyncMock, patch
+
+        engine = _make_engine(db, slippage_probe_enabled=True, dry_run=False)
+        engine._native_price_usd = 180.0
+
+        with patch.object(
+            engine.execution, "probe_slippage", new_callable=AsyncMock,
+            return_value=(True, 12.5, "probe slippage 12.5% exceeds threshold 5.0%"),
+        ), \
+             patch.object(engine.execution, "execute_trade", new_callable=AsyncMock) as mock_exec:
+
+            position = await engine._open_position(self._candidate())
+
+        assert position is None
+        mock_exec.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_probe_skipped_in_dry_run(self, db):
+        """Probe is never called in dry-run mode even if enabled."""
+        from unittest.mock import AsyncMock, patch
+
+        engine = _make_engine(db, slippage_probe_enabled=True, dry_run=True)
+        engine._native_price_usd = 180.0
+
+        with patch.object(engine.execution, "probe_slippage", new_callable=AsyncMock) as mock_probe, \
+             patch.object(engine.execution, "get_quote", new_callable=AsyncMock) as mock_quote, \
+             patch.object(engine.execution, "execute_trade", new_callable=AsyncMock) as mock_exec:
+
+            from app.execution import TradeQuote, TradeExecution
+            mock_quote.return_value = TradeQuote(price=0.01, liquidity_usd=50_000.0, method="mock", raw={})
+            mock_exec.return_value = TradeExecution(
+                success=True, method="mock", raw={}, executed_price=0.01, quantity_token=500.0, tx_hash=None
+            )
+
+            await engine._open_position(self._candidate())
+
+        mock_probe.assert_not_called()

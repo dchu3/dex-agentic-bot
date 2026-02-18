@@ -146,6 +146,14 @@ The portfolio strategy autonomously discovers promising Solana tokens, buys smal
 - `PORTFOLIO_MIN_LIQUIDITY_USD` — Minimum liquidity depth (default: 25k)
 - `PORTFOLIO_MIN_MARKET_CAP_USD` — Minimum market cap or FDV (default: 250k)
 
+**Pre-trade slippage probe (opt-in, live mode only):**
+
+Before opening a position, optionally executes a tiny `buy_and_sell` round-trip to validate that real on-chain slippage matches the quoted slippage. If the deviation exceeds the threshold, the trade is aborted.
+
+- `PORTFOLIO_SLIPPAGE_PROBE_ENABLED` — Enable the probe (default: `false`)
+- `PORTFOLIO_SLIPPAGE_PROBE_USD` — Size of the test trade in USD (default: `0.50`)
+- `PORTFOLIO_SLIPPAGE_PROBE_MAX_SLIPPAGE_PCT` — Abort if real slippage deviates more than this % from quoted price (default: `5.0`)
+
 By default this runs in **dry-run mode** (`PORTFOLIO_DRY_RUN=true`).
 
 ### Example Report
