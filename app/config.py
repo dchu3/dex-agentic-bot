@@ -133,10 +133,13 @@ class Settings(BaseSettings):
         default=50.0, alias="PORTFOLIO_DAILY_LOSS_LIMIT_USD", ge=0
     )
     portfolio_min_volume_usd: float = Field(
-        default=10000.0, alias="PORTFOLIO_MIN_VOLUME_USD", ge=0
+        default=50000.0, alias="PORTFOLIO_MIN_VOLUME_USD", ge=0
     )
     portfolio_min_liquidity_usd: float = Field(
-        default=5000.0, alias="PORTFOLIO_MIN_LIQUIDITY_USD", ge=0
+        default=25000.0, alias="PORTFOLIO_MIN_LIQUIDITY_USD", ge=0
+    )
+    portfolio_min_market_cap_usd: float = Field(
+        default=250000.0, alias="PORTFOLIO_MIN_MARKET_CAP_USD", ge=0
     )
     portfolio_cooldown_seconds: int = Field(
         default=300, alias="PORTFOLIO_COOLDOWN_SECONDS", ge=0, le=86400

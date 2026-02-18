@@ -42,6 +42,7 @@ class PortfolioStrategyConfig:
     daily_loss_limit_usd: float
     min_volume_usd: float
     min_liquidity_usd: float
+    min_market_cap_usd: float
     cooldown_seconds: int
     min_momentum_score: float
     max_slippage_bps: int
@@ -111,6 +112,7 @@ class PortfolioStrategyEngine:
             model_name=model_name,
             min_volume_usd=config.min_volume_usd,
             min_liquidity_usd=config.min_liquidity_usd,
+            min_market_cap_usd=config.min_market_cap_usd,
             min_momentum_score=config.min_momentum_score,
             chain=config.chain,
             verbose=verbose,

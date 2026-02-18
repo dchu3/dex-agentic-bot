@@ -838,6 +838,7 @@ Examples:
             daily_loss_limit_usd=settings.portfolio_daily_loss_limit_usd,
             min_volume_usd=settings.portfolio_min_volume_usd,
             min_liquidity_usd=settings.portfolio_min_liquidity_usd,
+            min_market_cap_usd=settings.portfolio_min_market_cap_usd,
             cooldown_seconds=settings.portfolio_cooldown_seconds,
             min_momentum_score=settings.portfolio_min_momentum_score,
             max_slippage_bps=settings.portfolio_max_slippage_bps,
