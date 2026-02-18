@@ -594,18 +594,19 @@ class PortfolioStrategyEngine:
         if not pairs:
             raise RuntimeError("DexScreener returned no pairs")
 
-        most_liquid_pair = max(
-            pairs,
-            key=lambda p: (
-                (
-                    float(liquidity.get("usd"))
-                    if liquidity.get("usd") is not None
-                    else 0.0
-                )
-                if isinstance((liquidity := p.get("liquidity")), dict)
-                else 0.0
-            ),
-        )
+        def _safe_liquidity_usd(pair: Dict[str, Any]) -> float:
+            liquidity = pair.get("liquidity")
+            if not isinstance(liquidity, dict):
+                return 0.0
+            liq_val = liquidity.get("usd")
+            if liq_val is None:
+                return 0.0
+            try:
+                return float(liq_val)
+            except (TypeError, ValueError):
+                return 0.0
+
+        most_liquid_pair = max(pairs, key=_safe_liquidity_usd)
         price_value = most_liquid_pair.get("priceUsd")
         if price_value is None:
             raise RuntimeError("DexScreener pair missing priceUsd")

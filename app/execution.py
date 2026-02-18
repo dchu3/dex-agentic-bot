@@ -105,13 +105,14 @@ async def verify_transaction_success(
                     return None
                 meta = result.get("meta", {})
                 return meta.get("err") is None
-            except Exception:
+            except Exception as exc:
                 if attempt < retries:
                     await asyncio.sleep(retry_delay_seconds)
                     continue
                 logger.warning(
-                    "Could not verify tx %s on-chain (RPC error); proceeding as unknown",
+                    "Could not verify tx %s on-chain (RPC error: %s); proceeding as unknown",
                     tx_hash,
+                    exc,
                 )
                 return None
 
