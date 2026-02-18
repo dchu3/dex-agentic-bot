@@ -160,6 +160,15 @@ class Settings(BaseSettings):
     portfolio_execute_method: str = Field(
         default="", alias="PORTFOLIO_EXECUTE_METHOD"
     )
+    portfolio_slippage_probe_enabled: bool = Field(
+        default=False, alias="PORTFOLIO_SLIPPAGE_PROBE_ENABLED"
+    )
+    portfolio_slippage_probe_usd: float = Field(
+        default=0.50, alias="PORTFOLIO_SLIPPAGE_PROBE_USD", ge=0.10
+    )
+    portfolio_slippage_probe_max_slippage_pct: float = Field(
+        default=5.0, alias="PORTFOLIO_SLIPPAGE_PROBE_MAX_SLIPPAGE_PCT", ge=0.1, le=100.0
+    )
 
 
 @lru_cache(maxsize=1)

@@ -50,6 +50,9 @@ class PortfolioStrategyConfig:
     rpc_url: str = "https://api.mainnet-beta.solana.com"
     quote_method: str = ""
     execute_method: str = ""
+    slippage_probe_enabled: bool = False
+    slippage_probe_usd: float = 0.50
+    slippage_probe_max_slippage_pct: float = 5.0
 
 
 @dataclass
@@ -229,6 +232,20 @@ class PortfolioStrategyEngine:
     ) -> Optional[PortfolioPosition]:
         """Execute buy and create portfolio position."""
         notional = self.config.position_size_usd
+
+        if self.config.slippage_probe_enabled and not self.config.dry_run:
+            should_abort, slippage_pct, reason = await self.execution.probe_slippage(
+                token_address=candidate.token_address,
+                probe_usd=self.config.slippage_probe_usd,
+                input_price_usd=self._native_price_usd or 1.0,
+                max_slippage_pct=self.config.slippage_probe_max_slippage_pct,
+            )
+            if should_abort:
+                self._log(
+                    "warn",
+                    f"Skipping {candidate.symbol}: {reason}",
+                )
+                return None
 
         quote = await self.execution.get_quote(
             token_address=candidate.token_address,
