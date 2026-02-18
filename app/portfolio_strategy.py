@@ -494,6 +494,14 @@ class PortfolioStrategyEngine:
                     f"PnL=${realized_pnl:.4f}",
                 )
                 
+                # Warn when take_profit fires but actual PnL is negative (slippage/price inaccuracy)
+                if close_reason == "take_profit" and realized_pnl < 0:
+                    logger.warning(
+                        "take_profit triggered for %s but realized PnL is negative "
+                        "(entry=$%.10f exit=$%.10f pnl=$%.4f) — likely sell-side slippage",
+                        position.symbol, position.entry_price, exit_price, realized_pnl,
+                    )
+
                 # Track negative stop losses for skip phases
                 if close_reason == "stop_loss" and realized_pnl < 0:
                     count = await self.db.increment_negative_sl_count(
@@ -586,15 +594,27 @@ class PortfolioStrategyEngine:
         if not pairs:
             raise RuntimeError("DexScreener returned no pairs")
 
-        first = pairs[0]
-        price_value = first.get("priceUsd")
+        def _safe_liquidity_usd(pair: Dict[str, Any]) -> float:
+            liquidity = pair.get("liquidity")
+            if not isinstance(liquidity, dict):
+                return 0.0
+            liq_val = liquidity.get("usd")
+            if liq_val is None:
+                return 0.0
+            try:
+                return float(liq_val)
+            except (TypeError, ValueError):
+                return 0.0
+
+        most_liquid_pair = max(pairs, key=_safe_liquidity_usd)
+        price_value = most_liquid_pair.get("priceUsd")
         if price_value is None:
             raise RuntimeError("DexScreener pair missing priceUsd")
 
         price = float(price_value)
 
         liquidity_usd: Optional[float] = None
-        liquidity = first.get("liquidity")
+        liquidity = most_liquid_pair.get("liquidity")
         if isinstance(liquidity, dict):
             liq_val = liquidity.get("usd")
             if liq_val is not None:

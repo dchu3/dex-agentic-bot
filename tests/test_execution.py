@@ -194,3 +194,126 @@ class TestProbeSlippage:
         assert should_abort is False
         assert slippage_pct is not None
         assert slippage_pct < 5.0
+
+
+# ---------------------------------------------------------------------------
+# verify_transaction_success tests
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyTransactionSuccess:
+    """Unit tests for verify_transaction_success()."""
+
+    @pytest.mark.asyncio
+    async def test_returns_true_when_tx_confirmed(self):
+        """Returns True when transaction confirmed with no error."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from app.execution import verify_transaction_success
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {"result": {"meta": {"err": None}}}
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            result = await verify_transaction_success("tx123", retries=0)
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_tx_has_error(self):
+        """Returns False when meta.err is set (tx failed on-chain)."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from app.execution import verify_transaction_success
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {"result": {"meta": {"err": {"InstructionError": [0, "SlippageToleranceExceeded"]}}}}
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            result = await verify_transaction_success("tx123", retries=0)
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_tx_not_found(self):
+        """Returns None when RPC returns null result (tx not yet indexed)."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from app.execution import verify_transaction_success
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {"result": None}
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            result = await verify_transaction_success("tx123", retries=0)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_retries_on_rpc_error_then_succeeds(self):
+        """Retries after RPC failure and returns True on subsequent success."""
+        from unittest.mock import AsyncMock, MagicMock, call, patch
+        from app.execution import verify_transaction_success
+
+        success_response = MagicMock()
+        success_response.raise_for_status = MagicMock()
+        success_response.json.return_value = {"result": {"meta": {"err": None}}}
+
+        call_count = 0
+
+        async def _post(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ConnectionError("RPC timeout")
+            return success_response
+
+        with patch("httpx.AsyncClient") as mock_client_cls, \
+             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = _post
+            mock_client_cls.return_value = mock_client
+
+            result = await verify_transaction_success("tx123", retries=2, retry_delay_seconds=0.0)
+
+        assert result is True
+        assert call_count == 2
+        mock_sleep.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_after_all_retries_exhausted(self):
+        """Returns None (not raises) when all retry attempts fail."""
+        from unittest.mock import AsyncMock, patch
+        from app.execution import verify_transaction_success
+
+        with patch("httpx.AsyncClient") as mock_client_cls, \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(side_effect=ConnectionError("RPC down"))
+            mock_client_cls.return_value = mock_client
+
+            result = await verify_transaction_success("tx123", retries=2, retry_delay_seconds=0.0)
+
+        assert result is None

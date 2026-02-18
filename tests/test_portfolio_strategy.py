@@ -518,6 +518,43 @@ class TestParseReferenceResult:
         assert price == 1.0
         assert liq is None
 
+    def test_selects_highest_liquidity_pair(self):
+        """When multiple pairs are present, the one with the highest liquidity is used."""
+        result = {
+            "pairs": [
+                {"priceUsd": "0.50", "liquidity": {"usd": 5_000}},
+                {"priceUsd": "1.50", "liquidity": {"usd": 500_000}},
+                {"priceUsd": "0.75", "liquidity": {"usd": 50_000}},
+            ]
+        }
+        price, liq = PortfolioStrategyEngine._parse_reference_result(result)
+        assert price == pytest.approx(1.50)
+        assert liq == pytest.approx(500_000.0)
+
+    def test_handles_none_liquidity_usd(self):
+        """Pair with liquidity.usd=None should not crash — treated as 0."""
+        result = {
+            "pairs": [
+                {"priceUsd": "1.00", "liquidity": {"usd": None}},
+                {"priceUsd": "2.00", "liquidity": {"usd": 10_000}},
+            ]
+        }
+        price, liq = PortfolioStrategyEngine._parse_reference_result(result)
+        assert price == pytest.approx(2.00)
+        assert liq == pytest.approx(10_000.0)
+
+    def test_handles_non_numeric_liquidity_usd(self):
+        """Pair with non-numeric liquidity.usd (e.g. 'N/A') should not crash."""
+        result = {
+            "pairs": [
+                {"priceUsd": "3.00", "liquidity": {"usd": "N/A"}},
+                {"priceUsd": "4.00", "liquidity": {"usd": 20_000}},
+            ]
+        }
+        price, liq = PortfolioStrategyEngine._parse_reference_result(result)
+        assert price == pytest.approx(4.00)
+        assert liq == pytest.approx(20_000.0)
+
 
 # ---------------------------------------------------------------------------
 # Slippage probe integration tests
