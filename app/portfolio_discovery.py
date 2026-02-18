@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
@@ -79,6 +80,7 @@ class PortfolioDiscovery:
         min_volume_usd: float = 50000.0,
         min_liquidity_usd: float = 25000.0,
         min_market_cap_usd: float = 250000.0,
+        min_token_age_hours: float = 4.0,
         min_momentum_score: float = 50.0,
         chain: str = "solana",
         verbose: bool = False,
@@ -90,6 +92,7 @@ class PortfolioDiscovery:
         self.min_volume_usd = min_volume_usd
         self.min_liquidity_usd = min_liquidity_usd
         self.min_market_cap_usd = min_market_cap_usd
+        self.min_token_age_hours = min_token_age_hours
         self.min_momentum_score = min_momentum_score
         self.chain = chain
         self.verbose = verbose
@@ -278,13 +281,15 @@ class PortfolioDiscovery:
         return []
 
     def _apply_filters(self, pairs: List[Dict[str, Any]]) -> List[DiscoveryCandidate]:
-        """Apply deterministic volume/liquidity/chain filters."""
+        """Apply deterministic volume/liquidity/chain/age filters."""
         candidates: List[DiscoveryCandidate] = []
         seen_addresses: set[str] = set()
         chain_counts: Dict[str, int] = {}
         rejected_volume = 0
         rejected_liquidity = 0
         rejected_market_cap = 0
+        rejected_age = 0
+        now_ms = time.time() * 1000
 
         for pair in pairs:
             chain_id = (pair.get("chainId") or "").lower()
@@ -310,6 +315,7 @@ class PortfolioDiscovery:
                 liquidity = float(liquidity_data.get("usd", 0)) if isinstance(liquidity_data, dict) else 0.0
                 price_change = float(pair.get("priceChange", {}).get("h24", 0))
                 market_cap_usd = float(pair.get("marketCap", pair.get("fdv", 0)))
+                pair_created_at_ms = float(pair.get("pairCreatedAt") or 0)
             except (TypeError, ValueError):
                 continue
 
@@ -324,6 +330,12 @@ class PortfolioDiscovery:
                 continue
             if price <= 0:
                 continue
+
+            if self.min_token_age_hours > 0 and pair_created_at_ms > 0:
+                age_hours = (now_ms - pair_created_at_ms) / 1_000 / 3_600
+                if age_hours < self.min_token_age_hours:
+                    rejected_age += 1
+                    continue
 
             candidates.append(DiscoveryCandidate(
                 token_address=address,
@@ -340,7 +352,7 @@ class PortfolioDiscovery:
             "info",
             f"Filter breakdown: chains={chain_counts}, "
             f"rejected_volume={rejected_volume}, rejected_liquidity={rejected_liquidity}, "
-            f"rejected_market_cap={rejected_market_cap}, "
+            f"rejected_market_cap={rejected_market_cap}, rejected_age={rejected_age}, "
             f"passed={len(candidates)}",
         )
 

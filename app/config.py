@@ -141,6 +141,9 @@ class Settings(BaseSettings):
     portfolio_min_market_cap_usd: float = Field(
         default=250000.0, alias="PORTFOLIO_MIN_MARKET_CAP_USD", ge=0
     )
+    portfolio_min_token_age_hours: float = Field(
+        default=4.0, alias="PORTFOLIO_MIN_TOKEN_AGE_HOURS", ge=0
+    )
     portfolio_cooldown_seconds: int = Field(
         default=300, alias="PORTFOLIO_COOLDOWN_SECONDS", ge=0, le=86400
     )
