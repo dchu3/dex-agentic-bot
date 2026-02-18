@@ -31,6 +31,7 @@ class DiscoveryCandidate:
     price_usd: float
     volume_24h: float
     liquidity_usd: float
+    market_cap_usd: float = 0.0
     price_change_24h: float = 0.0
     safety_status: str = "unknown"
     safety_score: Optional[float] = None
@@ -75,8 +76,9 @@ class PortfolioDiscovery:
         mcp_manager: "MCPManager",
         api_key: str,
         model_name: str = "gemini-2.5-flash",
-        min_volume_usd: float = 10000.0,
-        min_liquidity_usd: float = 5000.0,
+        min_volume_usd: float = 50000.0,
+        min_liquidity_usd: float = 25000.0,
+        min_market_cap_usd: float = 250000.0,
         min_momentum_score: float = 50.0,
         chain: str = "solana",
         verbose: bool = False,
@@ -87,6 +89,7 @@ class PortfolioDiscovery:
         self.model_name = model_name
         self.min_volume_usd = min_volume_usd
         self.min_liquidity_usd = min_liquidity_usd
+        self.min_market_cap_usd = min_market_cap_usd
         self.min_momentum_score = min_momentum_score
         self.chain = chain
         self.verbose = verbose
@@ -281,6 +284,7 @@ class PortfolioDiscovery:
         chain_counts: Dict[str, int] = {}
         rejected_volume = 0
         rejected_liquidity = 0
+        rejected_market_cap = 0
 
         for pair in pairs:
             chain_id = (pair.get("chainId") or "").lower()
@@ -305,6 +309,7 @@ class PortfolioDiscovery:
                 liquidity_data = pair.get("liquidity", {})
                 liquidity = float(liquidity_data.get("usd", 0)) if isinstance(liquidity_data, dict) else 0.0
                 price_change = float(pair.get("priceChange", {}).get("h24", 0))
+                market_cap_usd = float(pair.get("marketCap", pair.get("fdv", 0)))
             except (TypeError, ValueError):
                 continue
 
@@ -313,6 +318,9 @@ class PortfolioDiscovery:
                 continue
             if liquidity < self.min_liquidity_usd:
                 rejected_liquidity += 1
+                continue
+            if market_cap_usd < self.min_market_cap_usd:
+                rejected_market_cap += 1
                 continue
             if price <= 0:
                 continue
@@ -324,6 +332,7 @@ class PortfolioDiscovery:
                 price_usd=price,
                 volume_24h=volume_24h,
                 liquidity_usd=liquidity,
+                market_cap_usd=market_cap_usd,
                 price_change_24h=price_change,
             ))
 
@@ -331,6 +340,7 @@ class PortfolioDiscovery:
             "info",
             f"Filter breakdown: chains={chain_counts}, "
             f"rejected_volume={rejected_volume}, rejected_liquidity={rejected_liquidity}, "
+            f"rejected_market_cap={rejected_market_cap}, "
             f"passed={len(candidates)}",
         )
 
@@ -430,6 +440,7 @@ class PortfolioDiscovery:
                 "price_usd": c.price_usd,
                 "volume_24h": c.volume_24h,
                 "liquidity_usd": c.liquidity_usd,
+                "market_cap_usd": c.market_cap_usd,
                 "price_change_24h": c.price_change_24h,
                 "safety_status": c.safety_status,
             })

@@ -83,7 +83,8 @@ def _make_pair(
     chain: str = "solana",
     price: float = 0.01,
     volume_24h: float = 50000.0,
-    liquidity_usd: float = 20000.0,
+    liquidity_usd: float = 30000.0,
+    market_cap: float = 500000.0,
     price_change: float = 5.0,
 ) -> Dict[str, Any]:
     return {
@@ -92,6 +93,7 @@ def _make_pair(
         "priceUsd": str(price),
         "volume": {"h24": volume_24h},
         "liquidity": {"usd": liquidity_usd},
+        "marketCap": market_cap,
         "priceChange": {"h24": price_change},
     }
 
@@ -118,24 +120,46 @@ class TestApplyFilters:
 
     def test_filters_by_volume(self):
         discovery = PortfolioDiscovery(
-            mcp_manager=MockMCPManager(), api_key="x", min_volume_usd=20000.0,
+            mcp_manager=MockMCPManager(), api_key="x", min_volume_usd=50000.0,
         )
         pairs = [
-            _make_pair(volume_24h=25000.0, address="A1111111111111111111111111111111111111111"),
-            _make_pair(volume_24h=5000.0, address="B2222222222222222222222222222222222222222"),
+            _make_pair(volume_24h=60000.0, address="A1111111111111111111111111111111111111111"),
+            _make_pair(volume_24h=30000.0, address="B2222222222222222222222222222222222222222"),
         ]
         result = discovery._apply_filters(pairs)
         assert len(result) == 1
 
     def test_filters_by_liquidity(self):
         discovery = PortfolioDiscovery(
-            mcp_manager=MockMCPManager(), api_key="x", min_liquidity_usd=10000.0,
+            mcp_manager=MockMCPManager(), api_key="x", min_liquidity_usd=25000.0,
         )
         pairs = [
-            _make_pair(liquidity_usd=15000.0, address="A1111111111111111111111111111111111111111"),
-            _make_pair(liquidity_usd=3000.0, address="B2222222222222222222222222222222222222222"),
+            _make_pair(liquidity_usd=30000.0, address="A1111111111111111111111111111111111111111"),
+            _make_pair(liquidity_usd=15000.0, address="B2222222222222222222222222222222222222222"),
         ]
         result = discovery._apply_filters(pairs)
+        assert len(result) == 1
+
+    def test_filters_by_market_cap(self):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", min_market_cap_usd=250000.0,
+        )
+        pairs = [
+            _make_pair(market_cap=300000.0, address="A1111111111111111111111111111111111111111"),
+            _make_pair(market_cap=100000.0, address="B2222222222222222222222222222222222222222"),
+        ]
+        result = discovery._apply_filters(pairs)
+        assert len(result) == 1
+
+    def test_filters_by_market_cap_fdv_fallback(self):
+        """Should use fdv when marketCap is missing."""
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", min_market_cap_usd=250000.0,
+        )
+        pair = _make_pair(address="A1111111111111111111111111111111111111111")
+        pair.pop("marketCap", None)
+        pair["fdv"] = 300000.0
+        result = discovery._apply_filters([pair])
         assert len(result) == 1
 
     def test_filters_zero_price(self):
