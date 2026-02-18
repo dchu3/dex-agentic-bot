@@ -26,10 +26,35 @@ _decimals_cache: Dict[str, int] = {
 
 _SPL_DEFAULT_DECIMALS = 9
 
+# Maximum sleep between RPC retries (seconds)
+_RPC_MAX_RETRY_DELAY = 30.0
+
+
+def _rpc_retry_delay(
+    resp: Optional["httpx.Response"],
+    attempt: int,
+    base_delay: float,
+) -> float:
+    """Compute the delay before the next RPC retry attempt.
+
+    For 429 responses: honour the ``Retry-After`` header when present;
+    fall back to exponential backoff otherwise.
+    For all other cases: exponential backoff (``base_delay * 2^attempt``).
+    """
+    if resp is not None and resp.status_code == 429:
+        retry_after = resp.headers.get("Retry-After", "")
+        try:
+            return min(float(retry_after), _RPC_MAX_RETRY_DELAY)
+        except (ValueError, TypeError):
+            pass
+    return min(base_delay * (2 ** attempt), _RPC_MAX_RETRY_DELAY)
+
 
 async def get_token_decimals(
     mint_address: str,
     rpc_url: str = _DEFAULT_RPC_URL,
+    retries: int = 2,
+    retry_delay_seconds: float = 5.0,
 ) -> int:
     """Fetch SPL token decimals from Solana RPC with in-memory caching.
 
@@ -39,33 +64,54 @@ async def get_token_decimals(
     if mint_address in _decimals_cache:
         return _decimals_cache[mint_address]
 
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                rpc_url,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getAccountInfo",
-                    "params": [mint_address, {"encoding": "jsonParsed"}],
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            decimals = (
-                data.get("result", {})
-                .get("value", {})
-                .get("data", {})
-                .get("parsed", {})
-                .get("info", {})
-                .get("decimals")
-            )
-            if isinstance(decimals, int):
-                _decimals_cache[mint_address] = decimals
-                return decimals
-    except Exception:
-        logger.warning("Failed to fetch decimals for %s; defaulting to %d", mint_address, _SPL_DEFAULT_DECIMALS)
+    async with httpx.AsyncClient(timeout=10) as client:
+        for attempt in range(retries + 1):
+            resp = None
+            try:
+                resp = await client.post(
+                    rpc_url,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "getAccountInfo",
+                        "params": [mint_address, {"encoding": "jsonParsed"}],
+                    },
+                )
+                if resp.status_code == 429:
+                    if attempt < retries:
+                        delay = _rpc_retry_delay(resp, attempt, retry_delay_seconds)
+                        logger.debug(
+                            "RPC rate-limited (429) fetching decimals for %s, retrying in %.1fs (attempt %d/%d)",
+                            mint_address, delay, attempt + 1, retries,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    break
+                resp.raise_for_status()
+                data = resp.json()
+                decimals = (
+                    data.get("result", {})
+                    .get("value", {})
+                    .get("data", {})
+                    .get("parsed", {})
+                    .get("info", {})
+                    .get("decimals")
+                )
+                if isinstance(decimals, int):
+                    _decimals_cache[mint_address] = decimals
+                    return decimals
+                break  # valid response but no decimals; use default
+            except Exception:
+                if attempt < retries:
+                    delay = _rpc_retry_delay(resp, attempt, retry_delay_seconds)
+                    await asyncio.sleep(delay)
+                    continue
+                break
 
+    logger.warning(
+        "Failed to fetch decimals for %s; defaulting to %d",
+        mint_address, _SPL_DEFAULT_DECIMALS,
+    )
     _decimals_cache[mint_address] = _SPL_DEFAULT_DECIMALS
     return _SPL_DEFAULT_DECIMALS
 
@@ -73,8 +119,8 @@ async def get_token_decimals(
 async def verify_transaction_success(
     tx_hash: str,
     rpc_url: str = _DEFAULT_RPC_URL,
-    retries: int = 2,
-    retry_delay_seconds: float = 2.0,
+    retries: int = 3,
+    retry_delay_seconds: float = 5.0,
 ) -> Optional[bool]:
     """Check whether a Solana transaction succeeded on-chain.
 
@@ -85,6 +131,7 @@ async def verify_transaction_success(
     """
     async with httpx.AsyncClient(timeout=15) as client:
         for attempt in range(retries + 1):
+            resp = None
             try:
                 resp = await client.post(
                     rpc_url,
@@ -98,6 +145,20 @@ async def verify_transaction_success(
                         ],
                     },
                 )
+                if resp.status_code == 429:
+                    if attempt < retries:
+                        delay = _rpc_retry_delay(resp, attempt, retry_delay_seconds)
+                        logger.debug(
+                            "RPC rate-limited (429) verifying tx %s, retrying in %.1fs (attempt %d/%d)",
+                            tx_hash, delay, attempt + 1, retries,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    logger.warning(
+                        "Could not verify tx %s on-chain (rate-limited after %d attempts); proceeding as unknown",
+                        tx_hash, retries + 1,
+                    )
+                    return None
                 resp.raise_for_status()
                 data = resp.json()
                 result = data.get("result")
@@ -107,7 +168,8 @@ async def verify_transaction_success(
                 return meta.get("err") is None
             except Exception as exc:
                 if attempt < retries:
-                    await asyncio.sleep(retry_delay_seconds)
+                    delay = _rpc_retry_delay(resp, attempt, retry_delay_seconds)
+                    await asyncio.sleep(delay)
                     continue
                 logger.warning(
                     "Could not verify tx %s on-chain (RPC error: %s); proceeding as unknown",
