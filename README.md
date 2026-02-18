@@ -137,9 +137,14 @@ Send any token address to your bot:
 The portfolio strategy autonomously discovers promising Solana tokens, buys small positions, and exits when take-profit, stop-loss, or trailing stop conditions are met.
 
 **How it works:**
-1. **Discovery** (every 30 min): DexScreener trending → volume/liquidity filter → rugcheck safety → Gemini AI momentum scoring → buy top candidates
+1. **Discovery** (every 30 min): DexScreener trending → volume/liquidity/market cap filter → rugcheck safety → Gemini AI momentum scoring → buy top candidates
 2. **Exit monitoring** (every 60s): Check TP/SL thresholds, update trailing stops, close expired positions
 3. **Risk guards**: Max positions cap, daily loss limit, cooldown after failures, duplicate prevention
+
+**Discovery filters (configurable via `.env`):**
+- `PORTFOLIO_MIN_VOLUME_USD` — Minimum 24h trading volume (default: 50k)
+- `PORTFOLIO_MIN_LIQUIDITY_USD` — Minimum liquidity depth (default: 25k)
+- `PORTFOLIO_MIN_MARKET_CAP_USD` — Minimum market cap or FDV (default: 250k)
 
 By default this runs in **dry-run mode** (`PORTFOLIO_DRY_RUN=true`).
 

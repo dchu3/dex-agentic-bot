@@ -165,6 +165,7 @@ def _config(**overrides: Any) -> PortfolioStrategyConfig:
         daily_loss_limit_usd=50.0,
         min_volume_usd=10000.0,
         min_liquidity_usd=5000.0,
+        min_market_cap_usd=250000.0,
         cooldown_seconds=300,
         min_momentum_score=50.0,
         max_slippage_bps=300,
