@@ -43,7 +43,6 @@ class PortfolioStrategyConfig:
     min_volume_usd: float
     min_liquidity_usd: float
     min_market_cap_usd: float
-    min_token_age_hours: float
     cooldown_seconds: int
     min_momentum_score: float
     max_slippage_bps: int
@@ -51,6 +50,7 @@ class PortfolioStrategyConfig:
     rpc_url: str = "https://api.mainnet-beta.solana.com"
     quote_method: str = ""
     execute_method: str = ""
+    min_token_age_hours: float = 4.0
     slippage_probe_enabled: bool = False
     slippage_probe_usd: float = 0.50
     slippage_probe_max_slippage_pct: float = 5.0
