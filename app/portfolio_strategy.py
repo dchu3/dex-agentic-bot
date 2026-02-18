@@ -494,6 +494,14 @@ class PortfolioStrategyEngine:
                     f"PnL=${realized_pnl:.4f}",
                 )
                 
+                # Warn when take_profit fires but actual PnL is negative (slippage/price inaccuracy)
+                if close_reason == "take_profit" and realized_pnl < 0:
+                    logger.warning(
+                        "take_profit triggered for %s but realized PnL is negative "
+                        "(entry=$%.10f exit=$%.10f pnl=$%.4f) — likely sell-side slippage",
+                        position.symbol, position.entry_price, exit_price, realized_pnl,
+                    )
+
                 # Track negative stop losses for skip phases
                 if close_reason == "stop_loss" and realized_pnl < 0:
                     count = await self.db.increment_negative_sl_count(
@@ -586,7 +594,13 @@ class PortfolioStrategyEngine:
         if not pairs:
             raise RuntimeError("DexScreener returned no pairs")
 
-        first = pairs[0]
+        first = max(
+            pairs,
+            key=lambda p: float(
+                (p.get("liquidity") or {}).get("usd", 0)
+                if isinstance(p.get("liquidity"), dict) else 0
+            ),
+        )
         price_value = first.get("priceUsd")
         if price_value is None:
             raise RuntimeError("DexScreener pair missing priceUsd")

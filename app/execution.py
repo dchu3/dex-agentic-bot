@@ -72,6 +72,8 @@ async def get_token_decimals(
 async def verify_transaction_success(
     tx_hash: str,
     rpc_url: str = _DEFAULT_RPC_URL,
+    retries: int = 2,
+    retry_delay_seconds: float = 2.0,
 ) -> Optional[bool]:
     """Check whether a Solana transaction succeeded on-chain.
 
@@ -80,30 +82,39 @@ async def verify_transaction_success(
     or ``None`` if the status could not be determined (RPC error,
     transaction not yet found, etc.).
     """
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                rpc_url,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getTransaction",
-                    "params": [
-                        tx_hash,
-                        {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0},
-                    ],
-                },
+    import asyncio
+
+    for attempt in range(retries + 1):
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    rpc_url,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "getTransaction",
+                        "params": [
+                            tx_hash,
+                            {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0},
+                        ],
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                result = data.get("result")
+                if result is None:
+                    return None
+                meta = result.get("meta", {})
+                return meta.get("err") is None
+        except Exception:
+            if attempt < retries:
+                await asyncio.sleep(retry_delay_seconds)
+                continue
+            logger.warning(
+                "Could not verify tx %s on-chain (RPC error); proceeding as unknown",
+                tx_hash,
             )
-            resp.raise_for_status()
-            data = resp.json()
-            result = data.get("result")
-            if result is None:
-                return None
-            meta = result.get("meta", {})
-            return meta.get("err") is None
-    except Exception:
-        logger.warning("Failed to verify tx %s on-chain", tx_hash)
-        return None
+            return None
 
 
 @dataclass
