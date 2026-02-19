@@ -425,7 +425,7 @@ async def _cmd_portfolio(
                 age_h = (datetime.now(timezone.utc) - pos.opened_at).total_seconds() / 3600
             output.info(
                 f"  • #{pos.id} {pos.symbol} entry ${pos.entry_price:.10f}, "
-                f"stop ${pos.stop_price:.10f}, take ${pos.take_price:.10f}, "
+                f"stop ${pos.stop_price:.10f}, take {'disabled' if pos.take_price == float('inf') else f'${pos.take_price:.10f}'}, "
                 f"high ${pos.highest_price:.10f}, qty {pos.quantity_token:.4f}, "
                 f"age {age_h:.1f}h"
             )

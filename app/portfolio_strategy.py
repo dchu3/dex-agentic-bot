@@ -329,7 +329,7 @@ class PortfolioStrategyEngine:
         self._log(
             "info",
             f"Opened {candidate.symbol} at ${executed_price:.10f} "
-            f"(TP=${take_price:.10f} SL=${stop_price:.10f})",
+            f"(TP={'disabled' if take_price == float('inf') else f'${take_price:.10f}'} SL=${stop_price:.10f})",
         )
         return position
 
