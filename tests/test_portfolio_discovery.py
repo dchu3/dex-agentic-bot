@@ -439,8 +439,46 @@ class TestAiDecideHeuristicFallback:
 
 
 # ---------------------------------------------------------------------------
-# Heuristic scoring fallback
+# DexScreener parameter normalization
 # ---------------------------------------------------------------------------
+
+
+class TestNormalizeDexscreenerArgs:
+    def test_normalizes_token_address(self):
+        args = {"token_address": "abc123", "chainId": "solana"}
+        result = PortfolioDiscovery._normalize_dexscreener_args(args)
+        assert result == {"tokenAddress": "abc123", "chainId": "solana"}
+
+    def test_normalizes_chain_id(self):
+        args = {"tokenAddress": "abc123", "chain_id": "solana"}
+        result = PortfolioDiscovery._normalize_dexscreener_args(args)
+        assert result == {"tokenAddress": "abc123", "chainId": "solana"}
+
+    def test_normalizes_pair_address(self):
+        args = {"pair_address": "pair123"}
+        result = PortfolioDiscovery._normalize_dexscreener_args(args)
+        assert result == {"pairAddress": "pair123"}
+
+    def test_already_camel_case_unchanged(self):
+        args = {"tokenAddress": "abc", "chainId": "solana"}
+        result = PortfolioDiscovery._normalize_dexscreener_args(args)
+        assert result == {"tokenAddress": "abc", "chainId": "solana"}
+
+    def test_unknown_keys_passed_through(self):
+        args = {"query": "trending solana"}
+        result = PortfolioDiscovery._normalize_dexscreener_args(args)
+        assert result == {"query": "trending solana"}
+
+    def test_empty_args_unchanged(self):
+        assert PortfolioDiscovery._normalize_dexscreener_args({}) == {}
+
+    def test_all_aliases_at_once(self):
+        args = {"token_address": "t", "chain_id": "solana", "pair_address": "p"}
+        result = PortfolioDiscovery._normalize_dexscreener_args(args)
+        assert result == {"tokenAddress": "t", "chainId": "solana", "pairAddress": "p"}
+
+
+
 
 
 class TestHeuristicScore:
