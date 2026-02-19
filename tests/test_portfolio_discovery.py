@@ -64,6 +64,9 @@ class MockMCPManager:
             return self._rugcheck
         return None
 
+    def get_gemini_functions(self) -> list:
+        return []
+
 
 class MockDatabase:
     """Mock DB that reports no open positions by default."""
@@ -311,33 +314,125 @@ class TestParseSafety:
 # ---------------------------------------------------------------------------
 
 
-class TestParseScores:
-    def test_parses_valid_json(self):
-        text = json.dumps({
-            "scores": [
-                {"token_address": "addr1", "momentum_score": 85, "reasoning": "strong"},
-                {"token_address": "addr2", "momentum_score": 40, "reasoning": "weak"},
-            ]
-        })
-        result = PortfolioDiscovery._parse_scores(text)
-        assert len(result) == 2
-        assert result["addr1"]["momentum_score"] == 85
-        assert result["addr2"]["reasoning"] == "weak"
+class TestParseDecision:
+    def test_parses_buy_true(self):
+        text = '{"buy": true, "reasoning": "Strong volume surge, safe token"}'
+        buy, reasoning = PortfolioDiscovery._parse_decision(text)
+        assert buy is True
+        assert "Strong volume" in reasoning
 
-    def test_parses_code_block(self):
-        text = '```json\n{"scores": [{"token_address": "a", "momentum_score": 60, "reasoning": "ok"}]}\n```'
-        result = PortfolioDiscovery._parse_scores(text)
-        assert len(result) == 1
-        assert result["a"]["momentum_score"] == 60
+    def test_parses_buy_false(self):
+        text = '{"buy": false, "reasoning": "Negative momentum, low volume"}'
+        buy, reasoning = PortfolioDiscovery._parse_decision(text)
+        assert buy is False
+        assert "Negative" in reasoning
 
-    def test_empty_on_invalid(self):
-        result = PortfolioDiscovery._parse_scores("no json here")
-        assert result == {}
+    def test_parses_from_code_block_with_surrounding_text(self):
+        text = (
+            "I have analysed the token.\n"
+            "```json\n"
+            '{"buy": true, "reasoning": "Good metrics"}\n'
+            "```"
+        )
+        buy, reasoning = PortfolioDiscovery._parse_decision(text)
+        assert buy is True
+        assert reasoning == "Good metrics"
 
-    def test_handles_surrounding_text(self):
-        text = 'Here are the scores: {"scores": [{"token_address": "x", "momentum_score": 70, "reasoning": "good"}]} End.'
-        result = PortfolioDiscovery._parse_scores(text)
-        assert len(result) == 1
+    def test_uses_last_json_block(self):
+        """When the model emits multiple JSON blocks, use the last one."""
+        text = (
+            '{"buy": false, "reasoning": "initial thought"}\n'
+            "After further investigation:\n"
+            '{"buy": true, "reasoning": "final decision"}'
+        )
+        buy, reasoning = PortfolioDiscovery._parse_decision(text)
+        assert buy is True
+        assert reasoning == "final decision"
+
+    def test_fallback_bare_buy_true(self):
+        text = 'The answer is "buy": true for this token.'
+        buy, _ = PortfolioDiscovery._parse_decision(text)
+        assert buy is True
+
+    def test_fallback_bare_buy_false(self):
+        text = 'Decision: "buy": false — skip this token.'
+        buy, _ = PortfolioDiscovery._parse_decision(text)
+        assert buy is False
+
+    def test_conservative_skip_on_unparseable(self):
+        buy, reasoning = PortfolioDiscovery._parse_decision("I cannot decide.")
+        assert buy is False
+        assert "unparseable" in reasoning.lower() or "conservative" in reasoning.lower()
+
+    def test_empty_string_returns_skip(self):
+        buy, _ = PortfolioDiscovery._parse_decision("")
+        assert buy is False
+
+
+# ---------------------------------------------------------------------------
+# Agentic decision (_ai_decide) — heuristic fallback path
+# ---------------------------------------------------------------------------
+
+
+class TestAiDecideHeuristicFallback:
+    """Test that _ai_decide falls back to heuristic when the AI call fails."""
+
+    @pytest.mark.asyncio
+    async def test_fallback_on_api_error(self, monkeypatch):
+        """When genai raises, heuristic fallback is used."""
+        import app.portfolio_discovery as pd_module
+
+        def _bad_client(*args, **kwargs):
+            raise RuntimeError("API unavailable")
+
+        monkeypatch.setattr(pd_module.genai, "Client", _bad_client)
+
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(),
+            api_key="x",
+            min_momentum_score=50.0,
+        )
+        candidate = DiscoveryCandidate(
+            token_address="Addr1111111111111111111111111111111111111",
+            symbol="TKN",
+            chain="solana",
+            price_usd=0.01,
+            volume_24h=100000,
+            liquidity_usd=50000,
+            price_change_24h=15.0,
+            safety_status="Safe",
+        )
+        buy, reasoning = await discovery._ai_decide(candidate)
+        assert isinstance(buy, bool)
+        assert "fallback" in reasoning.lower()
+
+    @pytest.mark.asyncio
+    async def test_heuristic_rejects_weak_candidate(self, monkeypatch):
+        """A weak candidate is rejected by the heuristic fallback."""
+        import app.portfolio_discovery as pd_module
+
+        def _bad_client(*args, **kwargs):
+            raise RuntimeError("API unavailable")
+
+        monkeypatch.setattr(pd_module.genai, "Client", _bad_client)
+
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(),
+            api_key="x",
+            min_momentum_score=50.0,
+        )
+        candidate = DiscoveryCandidate(
+            token_address="Weak111111111111111111111111111111111111",
+            symbol="WEAK",
+            chain="solana",
+            price_usd=0.001,
+            volume_24h=1000,
+            liquidity_usd=500,
+            price_change_24h=-10.0,
+            safety_status="Dangerous",
+        )
+        buy, _ = await discovery._ai_decide(candidate)
+        assert buy is False
 
 
 # ---------------------------------------------------------------------------

@@ -38,34 +38,30 @@ class DiscoveryCandidate:
     safety_score: Optional[float] = None
     momentum_score: float = 0.0
     reasoning: str = ""
+    buy_decision: Optional[bool] = None
 
 
-AI_SCORING_PROMPT = """You are a crypto momentum analyst. Score each token candidate based on the provided market data.
+DECISION_SYSTEM_PROMPT = """You are an autonomous crypto investment analyst deciding whether to buy a Solana token for a live trading portfolio.
 
-## Scoring Criteria (0-100)
-- **Volume Surge** (0-30 pts): 24h volume relative to liquidity. Higher ratio = stronger interest.
-- **Price Momentum** (0-30 pts): Positive 24h price change indicates upward trend.
-- **Liquidity Depth** (0-20 pts): Higher liquidity = easier to enter/exit positions.
-- **Safety** (0-20 pts): Tokens that passed safety checks get full marks.
+## Your Job
+1. Review the candidate data provided.
+2. Use the available tools to fetch any additional information you need (deeper pool data, safety re-check, volume trends).
+3. Make a definitive buy or no-buy decision.
 
-## Response Format
-Return ONLY a JSON object:
+## Decision Criteria
+- **Buy** if: strong volume surge (volume/liquidity ratio > 1.5), positive price momentum, adequate liquidity (>$25k), safe or only mildly risky rugcheck status.
+- **No-buy** if: negative price momentum, low volume relative to liquidity, dangerous rugcheck risks, or insufficient data to confirm safety.
+
+## CRITICAL: Final Response Format
+When you have finished investigating, you MUST end your response with ONLY this JSON block and nothing else after it:
 ```json
 {
-  "scores": [
-    {
-      "token_address": "address",
-      "momentum_score": 75,
-      "reasoning": "Strong volume surge at 5x liquidity, 12% price gain, safe"
-    }
-  ]
+  "buy": true,
+  "reasoning": "One sentence explaining the decision"
 }
 ```
 
-## Rules
-1. Score ONLY the candidates provided — do not add new tokens
-2. Be conservative: tokens with negative price momentum or low volume should score below 50
-3. Keep reasoning concise (one sentence)
+Use `"buy": false` to reject. Keep reasoning to one sentence.
 """
 
 
@@ -107,7 +103,7 @@ class PortfolioDiscovery:
         db: "Database",
         max_candidates: int = 5,
     ) -> List[DiscoveryCandidate]:
-        """Run full discovery pipeline: scan → filter → safety → AI score."""
+        """Run full discovery pipeline: scan → filter → safety → AI decision."""
         # Step 1: Scan trending tokens via DexScreener
         raw_pairs = await self._scan_trending()
         if not raw_pairs:
@@ -135,27 +131,30 @@ class PortfolioDiscovery:
             return []
         self._log("info", f"{len(safe_candidates)} candidates passed safety")
 
-        # Step 5: AI scoring
-        scored = await self._ai_score(safe_candidates)
-        scored.sort(key=lambda c: c.momentum_score, reverse=True)
-
-        # Log individual scores for diagnostics
-        for c in scored:
+        # Step 5: Per-candidate agentic buy decision
+        approved: List[DiscoveryCandidate] = []
+        for candidate in safe_candidates:
+            if len(approved) >= max_candidates:
+                break
+            # Populate heuristic score for reference regardless of AI outcome
+            candidate.momentum_score = self._heuristic_score(candidate)
+            buy, reasoning = await self._ai_decide(candidate)
+            candidate.buy_decision = buy
+            candidate.reasoning = reasoning
             self._log(
                 "info",
-                f"Score: {c.symbol} = {c.momentum_score:.0f} "
-                f"(vol=${c.volume_24h:,.0f} liq=${c.liquidity_usd:,.0f} "
-                f"chg={c.price_change_24h:+.1f}%) — {c.reasoning}",
+                f"Decision: {candidate.symbol} → {'BUY' if buy else 'SKIP'} "
+                f"(heuristic={candidate.momentum_score:.0f}, "
+                f"vol=${candidate.volume_24h:,.0f} liq=${candidate.liquidity_usd:,.0f} "
+                f"chg={candidate.price_change_24h:+.1f}%) — {reasoning}",
             )
+            if buy:
+                approved.append(candidate)
 
-        # Step 6: Filter by minimum score and return top N
-        result = [c for c in scored if c.momentum_score >= self.min_momentum_score]
-        if scored and not result:
-            self._log(
-                "info",
-                f"All {len(scored)} candidates scored below min_momentum_score={self.min_momentum_score}",
-            )
-        return result[:max_candidates]
+        if not approved:
+            self._log("info", "No candidates approved by AI decision step")
+
+        return approved
 
     async def _scan_trending(self) -> List[Dict[str, Any]]:
         """Fetch trending tokens from DexScreener using boosted + search endpoints."""
@@ -437,100 +436,143 @@ class PortfolioDiscovery:
         else:
             return "Dangerous", score
 
-    async def _ai_score(
-        self, candidates: List[DiscoveryCandidate]
-    ) -> List[DiscoveryCandidate]:
-        """Use Gemini to score candidates with momentum reasoning."""
-        if not candidates:
-            return []
+    async def _ai_decide(self, candidate: DiscoveryCandidate) -> tuple[bool, str]:
+        """Run a per-candidate agentic loop to make a binary buy/no-buy decision.
 
-        candidate_data = []
-        for c in candidates:
-            candidate_data.append({
-                "token_address": c.token_address,
-                "symbol": c.symbol,
-                "price_usd": c.price_usd,
-                "volume_24h": c.volume_24h,
-                "liquidity_usd": c.liquidity_usd,
-                "market_cap_usd": c.market_cap_usd,
-                "price_change_24h": c.price_change_24h,
-                "safety_status": c.safety_status,
-            })
+        The model may call MCP tools to gather additional data before deciding.
+        Returns (buy: bool, reasoning: str).
+        Falls back to heuristic scoring if the agentic call fails or times out.
+        """
+        _MAX_ITERATIONS = 4
+        _TIMEOUT_SECONDS = 45
 
-        user_prompt = f"Score these Solana token candidates:\n```json\n{json.dumps(candidate_data, indent=2)}\n```"
+        initial_message = (
+            f"Should I buy {candidate.symbol} ({candidate.token_address}) on Solana?\n\n"
+            f"Current data:\n"
+            f"- Price: ${candidate.price_usd}\n"
+            f"- 24h Volume: ${candidate.volume_24h:,.0f}\n"
+            f"- Liquidity: ${candidate.liquidity_usd:,.0f}\n"
+            f"- Market Cap: ${candidate.market_cap_usd:,.0f}\n"
+            f"- 24h Price Change: {candidate.price_change_24h:+.2f}%\n"
+            f"- Safety: {candidate.safety_status}"
+            + (f" (score {candidate.safety_score:.0f})" if candidate.safety_score is not None else "")
+        )
 
         try:
-            client = genai.Client(api_key=self.api_key)
-            response = client.models.generate_content(
-                model=self.model_name,
-                contents=user_prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=AI_SCORING_PROMPT,
-                ),
+            return await asyncio.wait_for(
+                self._run_decision_loop(candidate, initial_message, _MAX_ITERATIONS),
+                timeout=_TIMEOUT_SECONDS,
             )
+        except asyncio.TimeoutError:
+            self._log("warning", f"AI decision timed out for {candidate.symbol} — using heuristic fallback")
+        except Exception as exc:
+            self._log("error", f"AI decision failed for {candidate.symbol}: {exc} — using heuristic fallback")
 
-            text = ""
+        # Heuristic fallback
+        score = self._heuristic_score(candidate)
+        buy = score >= self.min_momentum_score
+        return buy, f"Heuristic fallback (score={score:.0f}): {'buy' if buy else 'skip'}"
+
+    async def _run_decision_loop(
+        self,
+        candidate: DiscoveryCandidate,
+        initial_message: str,
+        max_iterations: int,
+    ) -> tuple[bool, str]:
+        """Inner agentic loop for _ai_decide."""
+        from app.tool_converter import parse_function_call_name
+
+        gemini_client = genai.Client(api_key=self.api_key)
+        tools = self.mcp_manager.get_gemini_functions()
+        tool_config = [types.Tool(functionDeclarations=tools)] if tools else None
+
+        chat = gemini_client.chats.create(
+            model=self.model_name,
+            config=types.GenerateContentConfig(
+                system_instruction=DECISION_SYSTEM_PROMPT,
+                tools=tool_config,
+            ),
+        )
+
+        response = chat.send_message(initial_message)
+
+        for _ in range(max_iterations):
+            # Collect any function calls in this response
+            function_calls = []
             if response.candidates:
                 for part in response.candidates[0].content.parts:
-                    if hasattr(part, "text") and part.text:
-                        text = part.text
-                        break
+                    if hasattr(part, "function_call") and part.function_call:
+                        function_calls.append(part.function_call)
 
-            scores_map = self._parse_scores(text)
-            for c in candidates:
-                entry = scores_map.get(c.token_address.lower())
-                if entry:
-                    c.momentum_score = entry.get("momentum_score", 0.0)
-                    c.reasoning = entry.get("reasoning", "")
+            if not function_calls:
+                # No more tool calls — extract the final decision
+                text = ""
+                if response.candidates:
+                    for part in response.candidates[0].content.parts:
+                        if hasattr(part, "text") and part.text:
+                            text += part.text
+                return self._parse_decision(text)
 
-        except Exception as exc:
-            self._log("error", f"AI scoring failed: {exc}")
-            # Fallback: simple heuristic score
-            for c in candidates:
-                c.momentum_score = self._heuristic_score(c)
-                c.reasoning = "AI scoring unavailable — heuristic fallback"
+            # Execute tool calls and feed results back
+            tool_results = []
+            for fc in function_calls:
+                client_name, method = parse_function_call_name(fc.name)
+                args = dict(fc.args) if fc.args else {}
+                try:
+                    mcp_client = self.mcp_manager.get_client(client_name)
+                    if mcp_client:
+                        result = await mcp_client.call_tool(method, args)
+                        result_str = json.dumps(result) if not isinstance(result, str) else result
+                    else:
+                        result_str = f"Client '{client_name}' not available"
+                except Exception as exc:
+                    result_str = f"Tool error: {exc}"
 
-        return candidates
+                tool_results.append(
+                    types.Part.from_function_response(
+                        name=fc.name,
+                        response={"result": result_str},
+                    )
+                )
+                self._log("debug", f"Tool call: {fc.name}({args}) → {result_str[:120]}…")
+
+            response = chat.send_message(tool_results)
+
+        # Exhausted iterations — parse whatever we have
+        text = ""
+        if response.candidates:
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, "text") and part.text:
+                    text += part.text
+        return self._parse_decision(text)
 
     @staticmethod
-    def _parse_scores(text: str) -> Dict[str, Dict[str, Any]]:
-        """Parse AI scoring response into address → {score, reasoning} map."""
-        result: Dict[str, Dict[str, Any]] = {}
+    def _parse_decision(text: str) -> tuple[bool, str]:
+        """Parse the model's final JSON decision block.
 
-        # Try code block extraction first
-        code_block = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', text)
-        json_str = code_block.group(1) if code_block else text
+        Expected format (last JSON block in text):
+          { "buy": true/false, "reasoning": "..." }
+        """
+        # Find the last JSON block in the text
+        matches = list(re.finditer(r'\{[^{}]*"buy"[^{}]*\}', text, re.DOTALL))
+        for match in reversed(matches):
+            try:
+                data = json.loads(match.group())
+                buy = bool(data.get("buy", False))
+                reasoning = str(data.get("reasoning", "")).strip()
+                return buy, reasoning
+            except (json.JSONDecodeError, ValueError):
+                continue
 
-        # Find JSON with "scores" key
-        key_pos = json_str.find('"scores"')
-        if key_pos == -1:
-            return result
+        # Fallback: look for bare true/false near "buy" keyword
+        lower = text.lower()
+        if '"buy": true' in lower or '"buy":true' in lower:
+            return True, "Decision: buy (parsed from text)"
+        if '"buy": false' in lower or '"buy":false' in lower:
+            return False, "Decision: skip (parsed from text)"
 
-        start = json_str.rfind('{', 0, key_pos)
-        if start == -1:
-            return result
-
-        depth = 0
-        for i, char in enumerate(json_str[start:], start):
-            if char == '{':
-                depth += 1
-            elif char == '}':
-                depth -= 1
-                if depth == 0:
-                    try:
-                        data = json.loads(json_str[start:i + 1])
-                        for item in data.get("scores", []):
-                            addr = item.get("token_address", "").lower()
-                            if addr:
-                                result[addr] = {
-                                    "momentum_score": float(item.get("momentum_score", 0)),
-                                    "reasoning": item.get("reasoning", ""),
-                                }
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-                    break
-
-        return result
+        # Cannot parse — conservative default
+        return False, "AI response unparseable — conservative skip"
 
     @staticmethod
     def _heuristic_score(candidate: DiscoveryCandidate) -> float:
