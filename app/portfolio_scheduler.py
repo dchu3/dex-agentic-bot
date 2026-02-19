@@ -174,10 +174,9 @@ class PortfolioScheduler:
             lines.append("🟢 <b>New Positions</b>")
             for pos in result.positions_opened:
                 reasoning = pos.discovery_reasoning or ""
-                reasoning_display = (reasoning[:97] + "…") if len(reasoning) > 100 else reasoning
                 lines.append(f"• {pos.symbol}: entry {format_price(pos.entry_price)}")
-                if reasoning_display:
-                    lines.append(f"  💬 {reasoning_display}")
+                if reasoning:
+                    lines.append(f"  💬 {reasoning}")
             lines.append("")
 
         if result.errors:
