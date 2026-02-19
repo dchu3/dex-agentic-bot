@@ -67,6 +67,9 @@ class MockMCPManager:
     def get_gemini_functions(self) -> list:
         return []
 
+    def get_gemini_functions_for(self, client_names: list) -> list:
+        return []
+
 
 class MockDatabase:
     """Mock DB that reports no open positions by default."""
