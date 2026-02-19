@@ -48,6 +48,10 @@ DECISION_SYSTEM_PROMPT = """You are an autonomous crypto investment analyst deci
 2. Use the available tools to fetch any additional information you need (deeper pool data, safety re-check, volume trends).
 3. Make a definitive buy or no-buy decision.
 
+## Available Tools
+- **dexscreener** — search pairs, get token pools, trending data
+- **rugcheck** — Solana token safety summary
+
 ## Decision Criteria
 - **Buy** if: strong volume surge (volume/liquidity ratio > 1.5), positive price momentum, adequate liquidity (>$25k), safe or only mildly risky rugcheck status.
 - **No-buy** if: negative price momentum, low volume relative to liquidity, dangerous rugcheck risks, or insufficient data to confirm safety.
@@ -483,7 +487,7 @@ class PortfolioDiscovery:
         from app.tool_converter import parse_function_call_name
 
         gemini_client = genai.Client(api_key=self.api_key)
-        tools = self.mcp_manager.get_gemini_functions()
+        tools = self.mcp_manager.get_gemini_functions_for(["dexscreener", "rugcheck"])
         tool_config = [types.Tool(functionDeclarations=tools)] if tools else None
 
         chat = gemini_client.chats.create(

@@ -391,6 +391,29 @@ class MCPManager:
         self._gemini_functions_cache = all_functions
         return all_functions
 
+    def get_gemini_functions_for(self, client_names: List[str]) -> List["types.FunctionDeclaration"]:
+        """Get Gemini function declarations for a specific subset of MCP clients.
+
+        Unknown or unavailable client names are silently skipped.
+        Use this to restrict tool access to only what is needed for a given task,
+        avoiding unintended calls to rate-limited or dangerous endpoints.
+        """
+        all_clients = {
+            "dexscreener": self.dexscreener,
+            "dexpaprika": self.dexpaprika,
+            "honeypot": self.honeypot,
+            "rugcheck": self.rugcheck,
+            "solana": self.solana,
+            "blockscout": self.blockscout,
+            "trader": self.trader,
+        }
+        functions: List["types.FunctionDeclaration"] = []
+        for name in client_names:
+            client = all_clients.get(name)
+            if client is not None:
+                functions.extend(client.to_gemini_functions())
+        return functions
+
     def format_tools_for_system_prompt(self) -> str:
         """Format all available tools as a string for inclusion in the system prompt."""
         lines = []

@@ -248,3 +248,94 @@ def test_mcp_manager_get_client_without_trader():
 
     client = manager.get_client("trader")
     assert client is None
+
+
+# ---------------------------------------------------------------------------
+# get_gemini_functions_for — filtered tool getter
+# ---------------------------------------------------------------------------
+
+
+def _manager_with_tools() -> MCPManager:
+    """Helper: manager with simulated tool schemas on dexscreener and rugcheck."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        rugcheck_cmd="echo rugcheck",
+        trader_cmd="echo trader",
+    )
+    manager.dexscreener._tools = [
+        {
+            "name": "search_pairs",
+            "description": "Search pairs",
+            "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+        }
+    ]
+    manager.dexpaprika._tools = [
+        {
+            "name": "get_pool",
+            "description": "Get pool",
+            "inputSchema": {"type": "object", "properties": {}, "required": []},
+        }
+    ]
+    manager.rugcheck._tools = [
+        {
+            "name": "get_token_summary",
+            "description": "Token safety",
+            "inputSchema": {"type": "object", "properties": {"token_address": {"type": "string"}}, "required": ["token_address"]},
+        }
+    ]
+    manager.trader._tools = [
+        {
+            "name": "execute_trade",
+            "description": "Execute trade",
+            "inputSchema": {"type": "object", "properties": {}, "required": []},
+        }
+    ]
+    return manager
+
+
+def test_get_gemini_functions_for_returns_only_requested_clients():
+    """Only tools from the named clients are returned."""
+    manager = _manager_with_tools()
+    functions = manager.get_gemini_functions_for(["dexscreener", "rugcheck"])
+    names = [f.name for f in functions]
+    assert "dexscreener_search_pairs" in names
+    assert "rugcheck_get_token_summary" in names
+    # dexpaprika and trader must be excluded
+    assert not any("dexpaprika" in n for n in names)
+    assert not any("trader" in n for n in names)
+
+
+def test_get_gemini_functions_for_unknown_name_skipped():
+    """Unknown client names are silently ignored."""
+    manager = _manager_with_tools()
+    functions = manager.get_gemini_functions_for(["dexscreener", "nonexistent_client"])
+    names = [f.name for f in functions]
+    assert "dexscreener_search_pairs" in names
+    assert len(names) == 1
+
+
+def test_get_gemini_functions_for_empty_list_returns_empty():
+    """Empty client list returns no functions."""
+    manager = _manager_with_tools()
+    assert manager.get_gemini_functions_for([]) == []
+
+
+def test_get_gemini_functions_for_skips_unconfigured_optional_client():
+    """Requesting an optional client that was not configured returns nothing for it."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        rugcheck_cmd="",  # not configured
+    )
+    manager.dexscreener._tools = [
+        {
+            "name": "search_pairs",
+            "description": "Search pairs",
+            "inputSchema": {"type": "object", "properties": {}, "required": []},
+        }
+    ]
+    functions = manager.get_gemini_functions_for(["dexscreener", "rugcheck"])
+    names = [f.name for f in functions]
+    assert "dexscreener_search_pairs" in names
+    assert not any("rugcheck" in n for n in names)
