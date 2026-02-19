@@ -112,7 +112,7 @@ class Settings(BaseSettings):
         default=5.0, alias="PORTFOLIO_POSITION_SIZE_USD", ge=0.01
     )
     portfolio_take_profit_pct: float = Field(
-        default=15.0, alias="PORTFOLIO_TAKE_PROFIT_PCT", ge=0.1, le=500.0
+        default=15.0, alias="PORTFOLIO_TAKE_PROFIT_PCT", ge=0.0, le=500.0
     )
     portfolio_stop_loss_pct: float = Field(
         default=8.0, alias="PORTFOLIO_STOP_LOSS_PCT", ge=0.1, le=100.0

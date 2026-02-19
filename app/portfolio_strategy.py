@@ -293,7 +293,11 @@ class PortfolioStrategyEngine:
             return None
 
         stop_price = executed_price * (1 - self.config.stop_loss_pct / 100)
-        take_price = executed_price * (1 + self.config.take_profit_pct / 100)
+        take_price = (
+            float("inf")
+            if self.config.take_profit_pct == 0
+            else executed_price * (1 + self.config.take_profit_pct / 100)
+        )
 
         position = await self.db.add_portfolio_position(
             token_address=candidate.token_address,
@@ -325,7 +329,7 @@ class PortfolioStrategyEngine:
         self._log(
             "info",
             f"Opened {candidate.symbol} at ${executed_price:.10f} "
-            f"(TP=${take_price:.10f} SL=${stop_price:.10f})",
+            f"(TP={'disabled' if take_price == float('inf') else f'${take_price:.10f}'} SL=${stop_price:.10f})",
         )
         return position
 

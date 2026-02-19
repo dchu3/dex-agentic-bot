@@ -345,7 +345,8 @@ async def _cmd_portfolio(
         output.info(f"  Chain: {config.chain}")
         output.info(f"  Dry run: {'✅ Yes' if config.dry_run else '❌ No (LIVE)'}")
         output.info(f"  Position size: ${config.position_size_usd:,.2f}")
-        output.info(f"  TP: {config.take_profit_pct:.1f}% | SL: {config.stop_loss_pct:.1f}% | Trail: {config.trailing_stop_pct:.1f}%")
+        tp_display = "disabled" if config.take_profit_pct == 0 else f"{config.take_profit_pct:.1f}%"
+        output.info(f"  TP: {tp_display} | SL: {config.stop_loss_pct:.1f}% | Trail: {config.trailing_stop_pct:.1f}%")
         output.info(f"  Open positions: {open_count}/{config.max_positions}")
         output.info(f"  Daily realized PnL: ${daily_pnl:,.2f}")
         output.info(f"  Discovery interval: {status['discovery_interval_seconds']}s")
@@ -424,7 +425,7 @@ async def _cmd_portfolio(
                 age_h = (datetime.now(timezone.utc) - pos.opened_at).total_seconds() / 3600
             output.info(
                 f"  • #{pos.id} {pos.symbol} entry ${pos.entry_price:.10f}, "
-                f"stop ${pos.stop_price:.10f}, take ${pos.take_price:.10f}, "
+                f"stop ${pos.stop_price:.10f}, take {'disabled' if pos.take_price == float('inf') else f'${pos.take_price:.10f}'}, "
                 f"high ${pos.highest_price:.10f}, qty {pos.quantity_token:.4f}, "
                 f"age {age_h:.1f}h"
             )
@@ -524,7 +525,7 @@ async def _cmd_portfolio(
         _TUNABLE_PARAMS: Dict[str, tuple] = {
             "position_size_usd": (float, 0.01, None),
             "max_positions": (int, 1, 50),
-            "take_profit_pct": (float, 0.1, 500.0),
+            "take_profit_pct": (float, 0.0, 500.0),
             "stop_loss_pct": (float, 0.1, 100.0),
             "trailing_stop_pct": (float, 0.1, 100.0),
             "max_hold_hours": (int, 1, 720),

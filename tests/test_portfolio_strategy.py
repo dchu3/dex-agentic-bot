@@ -209,7 +209,7 @@ async def _insert_position(
 ) -> PortfolioPosition:
     """Insert a position into the DB and return it."""
     stop_price = entry_price * (1 - stop_pct / 100)
-    take_price = entry_price * (1 + take_pct / 100)
+    take_price = float("inf") if take_pct == 0 else entry_price * (1 + take_pct / 100)
     pos = await db.add_portfolio_position(
         token_address=token_address,
         symbol=symbol,
@@ -266,6 +266,18 @@ class TestExitChecks:
 
         assert len(result.positions_closed) == 1
         assert result.positions_closed[0].close_reason == "take_profit"
+
+    @pytest.mark.asyncio
+    async def test_zero_take_profit_never_triggers_take_profit_close(self, db):
+        """When take_profit_pct=0, price far above entry never closes with take_profit."""
+        pos = await _insert_position(db, entry_price=1.00, take_pct=0)
+
+        engine = _make_engine(db, dex_price=10.00, take_profit_pct=0)  # 10x — no TP ceiling
+
+        result = await engine.run_exit_checks()
+
+        assert all(p.close_reason != "take_profit" for p in result.positions_closed)
+        assert len(await db.list_open_portfolio_positions(chain="solana")) == 1
 
     @pytest.mark.asyncio
     async def test_max_hold_triggers_close(self, db):
@@ -452,6 +464,20 @@ class TestRiskGuards:
 
         assert engine._exit_reason(pos, 1.15, now) == "take_profit"
         assert engine._exit_reason(pos, 1.50, now) == "take_profit"
+
+    @pytest.mark.asyncio
+    async def test_exit_reason_no_take_profit_when_disabled(self, db):
+        """When take_price is inf (TP disabled), price far above entry returns None."""
+        engine = _make_engine(db, take_profit_pct=0)
+        now = datetime.now(timezone.utc)
+        pos = PortfolioPosition(
+            id=1, token_address="t", symbol="T", chain="solana",
+            entry_price=1.0, quantity_token=10, notional_usd=10,
+            stop_price=0.92, take_price=float("inf"), highest_price=1.0,
+            opened_at=now,
+        )
+
+        assert engine._exit_reason(pos, 100.0, now) is None
 
     @pytest.mark.asyncio
     async def test_exit_reason_max_hold(self, db):
