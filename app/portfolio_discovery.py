@@ -49,8 +49,8 @@ DECISION_SYSTEM_PROMPT = """You are an autonomous crypto investment analyst deci
 3. Make a definitive buy or no-buy decision.
 
 ## Available Tools
-- **dexscreener** — search pairs, get token pools, trending data
-- **rugcheck** — Solana token safety summary
+- **dexscreener** — search pairs, get token pools, trending data (uses camelCase params: `tokenAddress`, `chainId`)
+- **rugcheck** — Solana token safety summary (uses snake_case params: `token_address`)
 
 ## Decision Criteria
 - **Buy** if: strong volume surge (volume/liquidity ratio > 1.5), positive price momentum, adequate liquidity (>$25k), safe or only mildly risky rugcheck status.
@@ -447,7 +447,7 @@ class PortfolioDiscovery:
         Returns (buy: bool, reasoning: str).
         Falls back to heuristic scoring if the agentic call fails or times out.
         """
-        _MAX_ITERATIONS = 4
+        _MAX_ITERATIONS = 5
         _TIMEOUT_SECONDS = 45
 
         initial_message = (
@@ -522,6 +522,8 @@ class PortfolioDiscovery:
             for fc in function_calls:
                 client_name, method = parse_function_call_name(fc.name)
                 args = dict(fc.args) if fc.args else {}
+                if client_name == "dexscreener":
+                    args = self._normalize_dexscreener_args(args)
                 try:
                     mcp_client = self.mcp_manager.get_client(client_name)
                     if mcp_client:
@@ -549,6 +551,20 @@ class PortfolioDiscovery:
                 if hasattr(part, "text") and part.text:
                     text += part.text
         return self._parse_decision(text)
+
+    # DexScreener MCP uses camelCase parameter names. The model sometimes
+    # generates snake_case (influenced by rugcheck's schema). Normalize before
+    # calling the MCP server so the first attempt always succeeds.
+    _DEXSCREENER_PARAM_ALIASES: Dict[str, str] = {
+        "token_address": "tokenAddress",
+        "chain_id": "chainId",
+        "pair_address": "pairAddress",
+    }
+
+    @classmethod
+    def _normalize_dexscreener_args(cls, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Translate any snake_case keys in dexscreener args to their camelCase equivalents."""
+        return {cls._DEXSCREENER_PARAM_ALIASES.get(k, k): v for k, v in args.items()}
 
     @staticmethod
     def _parse_decision(text: str) -> tuple[bool, str]:
