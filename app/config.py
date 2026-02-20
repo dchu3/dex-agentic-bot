@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     agentic_timeout_seconds: int = Field(
         default=120, alias="AGENTIC_TIMEOUT_SECONDS", ge=10, le=300
     )
+    mcp_call_timeout: int = Field(
+        default=90, alias="MCP_CALL_TIMEOUT", ge=10, le=600
+    )
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 

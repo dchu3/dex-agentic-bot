@@ -762,6 +762,7 @@ Examples:
         solana_rpc_cmd=settings.mcp_solana_rpc_cmd,
         blockscout_cmd="" if args.no_blockscout else settings.mcp_blockscout_cmd,
         trader_cmd="" if args.no_trader else settings.mcp_trader_cmd,
+        call_timeout=float(settings.mcp_call_timeout),
     )
 
     try:

@@ -1,6 +1,10 @@
 """Tests for MCP Manager configuration."""
 
-from app.mcp_client import MCPManager
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from app.mcp_client import MCPClient, MCPManager, MCPTimeoutError
 
 
 def test_mcp_manager_with_honeypot():
@@ -339,3 +343,202 @@ def test_get_gemini_functions_for_skips_unconfigured_optional_client():
     names = [f.name for f in functions]
     assert "dexscreener_search_pairs" in names
     assert not any("rugcheck" in n for n in names)
+
+
+# ---------------------------------------------------------------------------
+# MCPClient.call_tool — timeout, retry, and call_timeout tests
+# ---------------------------------------------------------------------------
+
+def _make_client(call_timeout: float = 90.0, retry_on_timeout: bool = True) -> MCPClient:
+    """Return an MCPClient with a fake command that won't actually be spawned."""
+    return MCPClient("test", "echo test", call_timeout=call_timeout, retry_on_timeout=retry_on_timeout)
+
+
+def test_mcp_client_stores_call_timeout():
+    """call_timeout is stored and defaults to 90.0."""
+    c_default = MCPClient("test", "echo test")
+    assert c_default._call_timeout == 90.0
+
+    c_custom = _make_client(call_timeout=120.0)
+    assert c_custom._call_timeout == 120.0
+
+
+def test_mcp_client_retry_on_timeout_defaults_true():
+    """retry_on_timeout defaults to True."""
+    client = MCPClient("test", "echo test")
+    assert client._retry_on_timeout is True
+
+
+def test_mcp_client_retry_on_timeout_false():
+    """retry_on_timeout=False is stored correctly."""
+    client = _make_client(retry_on_timeout=False)
+    assert client._retry_on_timeout is False
+
+
+def test_mcp_client_has_restart_lock():
+    """MCPClient has a _restart_lock for concurrency-safe restarts."""
+    import asyncio
+    client = _make_client()
+    assert isinstance(client._restart_lock, type(asyncio.Lock()))
+
+
+@pytest.mark.asyncio
+async def test_call_tool_success_on_first_attempt():
+    """call_tool returns the result when _call_tool_once succeeds immediately."""
+    client = _make_client()
+    expected = {"token": "data"}
+
+    with patch.object(client, "_call_tool_once", new=AsyncMock(return_value=expected)):
+        result = await client.call_tool("my_method", {"arg": 1})
+
+    assert result == expected
+
+
+@pytest.mark.asyncio
+async def test_call_tool_non_timeout_error_propagates_without_retry():
+    """Non-timeout RuntimeErrors are re-raised immediately; stop/start not called."""
+    client = _make_client()
+
+    with (
+        patch.object(client, "_call_tool_once", new=AsyncMock(side_effect=RuntimeError("some other error"))),
+        patch.object(client, "stop", new=AsyncMock()) as mock_stop,
+        patch.object(client, "start", new=AsyncMock()) as mock_start,
+    ):
+        with pytest.raises(RuntimeError, match="some other error"):
+            await client.call_tool("method", {})
+
+    mock_stop.assert_not_called()
+    mock_start.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_retries_after_timeout_and_succeeds():
+    """On timeout, stop+start are called and the retry succeeds."""
+    client = _make_client()
+    timeout_error = MCPTimeoutError("MCP request timed out: tools/call (test: echo test)")
+    expected = {"ok": True}
+
+    call_once = AsyncMock(side_effect=[timeout_error, expected])
+
+    with (
+        patch.object(client, "_call_tool_once", new=call_once),
+        patch.object(client, "stop", new=AsyncMock()) as mock_stop,
+        patch.object(client, "start", new=AsyncMock()) as mock_start,
+    ):
+        result = await client.call_tool("method", {})
+
+    assert result == expected
+    assert call_once.call_count == 2
+    mock_stop.assert_called_once()
+    mock_start.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_retry_also_times_out_raises():
+    """If the retry also times out, the error is propagated and no further retry occurs."""
+    client = _make_client()
+    timeout_error = MCPTimeoutError("MCP request timed out: tools/call (test: echo test)")
+
+    call_once = AsyncMock(side_effect=[timeout_error, timeout_error])
+
+    with (
+        patch.object(client, "_call_tool_once", new=call_once),
+        patch.object(client, "stop", new=AsyncMock()),
+        patch.object(client, "start", new=AsyncMock()),
+    ):
+        with pytest.raises(MCPTimeoutError):
+            await client.call_tool("method", {})
+
+    assert call_once.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_call_tool_no_retry_on_timeout_false():
+    """With retry_on_timeout=False, process is restarted but error is re-raised without retry."""
+    client = _make_client(retry_on_timeout=False)
+    timeout_error = MCPTimeoutError("MCP request timed out: tools/call (test: echo test)")
+
+    call_once = AsyncMock(side_effect=[timeout_error])
+
+    with (
+        patch.object(client, "_call_tool_once", new=call_once),
+        patch.object(client, "stop", new=AsyncMock()) as mock_stop,
+        patch.object(client, "start", new=AsyncMock()) as mock_start,
+    ):
+        with pytest.raises(MCPTimeoutError):
+            await client.call_tool("method", {})
+
+    # Restart happens to clean up the stuck process, but no retry
+    mock_stop.assert_called_once()
+    mock_start.assert_called_once()
+    assert call_once.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_call_tool_logs_warning_on_timeout(caplog):
+    """A warning is logged when a timeout triggers the restart-retry path."""
+    import logging
+    client = _make_client()
+    timeout_error = MCPTimeoutError("MCP request timed out: tools/call (test: echo test)")
+    expected = {"ok": True}
+
+    with (
+        patch.object(client, "_call_tool_once", new=AsyncMock(side_effect=[timeout_error, expected])),
+        patch.object(client, "stop", new=AsyncMock()),
+        patch.object(client, "start", new=AsyncMock()),
+        caplog.at_level(logging.WARNING, logger="app.mcp_client"),
+    ):
+        await client.call_tool("method", {})
+
+    assert any("timed out" in r.message.lower() for r in caplog.records)
+
+
+def test_mcp_manager_call_timeout_applied_to_all_clients():
+    """MCPManager propagates call_timeout to all configured clients."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        honeypot_cmd="echo honeypot",
+        rugcheck_cmd="echo rugcheck",
+        solana_rpc_cmd="echo solana",
+        blockscout_cmd="echo blockscout",
+        trader_cmd="echo trader",
+        call_timeout=120.0,
+    )
+
+    clients = [
+        manager.dexscreener,
+        manager.dexpaprika,
+        manager.honeypot,
+        manager.rugcheck,
+        manager.solana,
+        manager.blockscout,
+        manager.trader,
+    ]
+    for client in clients:
+        assert client is not None
+        assert client._call_timeout == 120.0
+
+
+def test_mcp_manager_trader_retry_on_timeout_disabled():
+    """MCPManager creates the trader client with retry_on_timeout=False to prevent double trades."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        trader_cmd="echo trader",
+    )
+    assert manager.trader is not None
+    assert manager.trader._retry_on_timeout is False
+
+
+def test_mcp_manager_non_trader_clients_retry_on_timeout_enabled():
+    """Non-trader MCP clients retain the default retry_on_timeout=True."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        rugcheck_cmd="echo rugcheck",
+    )
+    assert manager.dexscreener._retry_on_timeout is True
+    assert manager.dexpaprika._retry_on_timeout is True
+    assert manager.rugcheck is not None
+    assert manager.rugcheck._retry_on_timeout is True
