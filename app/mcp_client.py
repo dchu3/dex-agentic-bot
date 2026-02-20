@@ -25,10 +25,20 @@ CLIENT_INFO = {
 }
 
 
+class MCPTimeoutError(RuntimeError):
+    """Raised when an MCP request times out waiting for a response."""
+
+
 class MCPClient:
     """Lightweight JSON-over-stdio client for an MCP server process."""
 
-    def __init__(self, name: str, command: str, call_timeout: float = 60.0) -> None:
+    def __init__(
+        self,
+        name: str,
+        command: str,
+        call_timeout: float = 90.0,
+        retry_on_timeout: bool = True,
+    ) -> None:
         self.name = name
         self.command = command
         try:
@@ -39,12 +49,14 @@ class MCPClient:
             raise ValueError(f"Empty MCP command for {name!r}")
         self._command_repr = " ".join(self._command_args)
         self._call_timeout = call_timeout
+        self._retry_on_timeout = retry_on_timeout
         self._cwd = self._resolve_cwd()
         self.process: Optional[Process] = None
         self._reader_task: Optional[asyncio.Task[None]] = None
         self._stderr_task: Optional[asyncio.Task[None]] = None
         self._init_lock = asyncio.Lock()
         self._lock = asyncio.Lock()
+        self._restart_lock = asyncio.Lock()
         self._pending: Dict[str, asyncio.Future[Any]] = {}
         self._initialized = False
         self._tools: list[Dict[str, Any]] = []
@@ -265,7 +277,7 @@ class MCPClient:
             return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             self._pending.pop(request_id, None)
-            raise RuntimeError(
+            raise MCPTimeoutError(
                 f"MCP request timed out: {method} ({self.name}: {self._command_repr})"
             )
         except asyncio.CancelledError:
@@ -285,19 +297,26 @@ class MCPClient:
     async def call_tool(self, method: str, arguments: Dict[str, Any]) -> Any:
         """Call an MCP tool and return the result.
 
-        On timeout, restarts the MCP subprocess and retries once before raising.
+        On timeout, acquires a restart lock and restarts the MCP subprocess so that
+        subsequent calls start with a clean process.  If ``retry_on_timeout`` is
+        ``True`` (the default), the call is retried once after the restart.  Set
+        ``retry_on_timeout=False`` for non-idempotent operations (e.g. trade
+        execution) to avoid duplicate side-effects from a double submission.
         """
         try:
             return await self._call_tool_once(method, arguments)
-        except RuntimeError as exc:
-            if "timed out" not in str(exc):
-                raise
+        except MCPTimeoutError:
             logger.warning(
-                "MCP tool call timed out (%s/%s), restarting and retrying once.",
-                self.name, method,
+                "MCP tool call timed out (%s/%s), restarting process%s.",
+                self.name,
+                method,
+                " and retrying once" if self._retry_on_timeout else "",
             )
-            await self.stop()
-            await self.start()
+            async with self._restart_lock:
+                await self.stop()
+                await self.start()
+            if not self._retry_on_timeout:
+                raise
             return await self._call_tool_once(method, arguments)
 
     async def _call_tool_once(self, method: str, arguments: Dict[str, Any]) -> Any:
@@ -349,7 +368,7 @@ class MCPManager:
         solana_rpc_cmd: str = "",
         blockscout_cmd: str = "",
         trader_cmd: str = "",
-        call_timeout: float = 60.0,
+        call_timeout: float = 90.0,
     ) -> None:
         self.dexscreener = MCPClient("dexscreener", dexscreener_cmd, call_timeout=call_timeout)
         self.dexpaprika = MCPClient("dexpaprika", dexpaprika_cmd, call_timeout=call_timeout)
@@ -357,7 +376,8 @@ class MCPManager:
         self.rugcheck = MCPClient("rugcheck", rugcheck_cmd, call_timeout=call_timeout) if rugcheck_cmd else None
         self.solana = MCPClient("solana", solana_rpc_cmd, call_timeout=call_timeout) if solana_rpc_cmd else None
         self.blockscout = MCPClient("blockscout", blockscout_cmd, call_timeout=call_timeout) if blockscout_cmd else None
-        self.trader = MCPClient("trader", trader_cmd, call_timeout=call_timeout) if trader_cmd else None
+        # retry_on_timeout=False: trader executes swaps; retrying on timeout risks a double submission.
+        self.trader = MCPClient("trader", trader_cmd, call_timeout=call_timeout, retry_on_timeout=False) if trader_cmd else None
         self._gemini_functions_cache: Optional[List["types.FunctionDeclaration"]] = None
 
     async def start(self) -> None:
