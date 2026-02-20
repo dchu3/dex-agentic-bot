@@ -95,6 +95,16 @@ class PortfolioDiscovery:
         self.min_market_cap_usd = min_market_cap_usd
         self.min_token_age_hours = min_token_age_hours
         self.max_token_age_hours = max_token_age_hours
+        if (
+            self.min_token_age_hours > 0
+            and self.max_token_age_hours > 0
+            and self.min_token_age_hours > self.max_token_age_hours
+        ):
+            raise ValueError(
+                "Invalid token age configuration: "
+                f"min_token_age_hours ({self.min_token_age_hours}) "
+                f"cannot be greater than max_token_age_hours ({self.max_token_age_hours})."
+            )
         self.min_momentum_score = min_momentum_score
         self.chain = chain
         self.verbose = verbose

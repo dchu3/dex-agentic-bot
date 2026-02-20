@@ -587,6 +587,18 @@ async def _cmd_portfolio(
         old_value = getattr(config, param_name)
         setattr(config, param_name, parsed)
 
+        # Validate token age bounds after update
+        if param_name in ("min_token_age_hours", "max_token_age_hours"):
+            mn = config.min_token_age_hours
+            mx = config.max_token_age_hours
+            if mn > 0 and mx > 0 and mn > mx:
+                setattr(config, param_name, old_value)
+                output.warning(
+                    f"Rejected: min_token_age_hours ({mn}) cannot exceed "
+                    f"max_token_age_hours ({mx}). Value unchanged."
+                )
+                return
+
         if typ is float:
             output.info(f"✅ {param_name}: {old_value:,.2f} → {parsed:,.2f}")
         else:

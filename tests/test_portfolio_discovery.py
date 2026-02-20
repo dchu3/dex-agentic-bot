@@ -287,6 +287,16 @@ class TestMaxTokenAgeFilter:
         result = discovery._apply_filters(pairs)
         assert len(result) == 1
 
+    def test_raises_when_min_exceeds_max(self):
+        """Raises ValueError if min_token_age_hours > max_token_age_hours (both set)."""
+        import pytest
+        with pytest.raises(ValueError, match="min_token_age_hours"):
+            PortfolioDiscovery(
+                mcp_manager=MockMCPManager(), api_key="x",
+                min_token_age_hours=48.0,
+                max_token_age_hours=24.0,
+            )
+
 
 # ---------------------------------------------------------------------------
 # Held token exclusion
