@@ -52,6 +52,11 @@ MCP_SOLANA_RPC_CMD=node /path/to/solana-rpc-mcp/dist/index.js
 MCP_BLOCKSCOUT_CMD=node /path/to/dex-blockscout-mcp/dist/index.js
 MCP_TRADER_CMD=node /path/to/dex-trader-mcp/dist/index.js
 
+# Solana RPC (for token decimal lookups and tx verification)
+# The public endpoint is heavily rate-limited and blocks cloud IPs.
+# Use a private provider such as Helius (https://helius.dev).
+SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=your-key
+
 # Telegram (optional)
 TELEGRAM_BOT_TOKEN=your-telegram-bot-token
 TELEGRAM_CHAT_ID=your-chat-id
@@ -66,6 +71,10 @@ PORTFOLIO_TAKE_PROFIT_PCT=15.0
 PORTFOLIO_STOP_LOSS_PCT=8.0
 PORTFOLIO_TRAILING_STOP_PCT=5.0
 ```
+
+> **Trader MCP — additional configuration required**
+>
+> The `dex-trader-mcp` server has its own `.env` in its project directory. Set `SOLANA_RPC_URL` (private RPC such as Helius/QuickNode) and optionally `JUPITER_API_BASE` + `JUPITER_API_KEY` there. The public Solana RPC (`api.mainnet-beta.solana.com`) and Jupiter Lite API (`lite-api.jup.ag`) block cloud/VPN IPs. See the [dex-trader-mcp README](https://github.com/dchu3/dex-trader-mcp) for details.
 
 See `.env.example` for the full list of settings.
 
