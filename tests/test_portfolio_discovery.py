@@ -297,6 +297,18 @@ class TestMaxTokenAgeFilter:
                 max_token_age_hours=24.0,
             )
 
+    def test_rejects_future_timestamp(self):
+        """Rejects a pair whose pairCreatedAt is in the future (negative age)."""
+        import time
+        now_ms = int(time.time() * 1000)
+        future_ms = now_ms + int(10 * 3_600 * 1_000)
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", max_token_age_hours=24.0,
+        )
+        pairs = [_make_pair(pair_created_at=future_ms)]
+        result = discovery._apply_filters(pairs)
+        assert len(result) == 0
+
 
 # ---------------------------------------------------------------------------
 # Held token exclusion

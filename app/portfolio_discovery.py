@@ -348,6 +348,9 @@ class PortfolioDiscovery:
 
             if (self.min_token_age_hours > 0 or self.max_token_age_hours > 0) and pair_created_at_ms > 0:
                 age_hours = (now_ms - pair_created_at_ms) / 1_000 / 3_600
+                if age_hours < 0:
+                    rejected_age += 1
+                    continue
                 if self.min_token_age_hours > 0 and age_hours < self.min_token_age_hours:
                     rejected_age += 1
                     continue
