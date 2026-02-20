@@ -202,10 +202,11 @@ class MCPClient:
         msg_id = msg.get("id")
         if msg_id and msg_id in self._pending:
             future = self._pending.pop(msg_id)
-            if "error" in msg:
-                future.set_exception(RuntimeError(str(msg["error"])))
-            else:
-                future.set_result(msg.get("result"))
+            if not future.done():
+                if "error" in msg:
+                    future.set_exception(RuntimeError(str(msg["error"])))
+                else:
+                    future.set_result(msg.get("result"))
 
     def _fail_pending(self, reason: str) -> None:
         for future in self._pending.values():
@@ -263,6 +264,9 @@ class MCPClient:
             raise RuntimeError(
                 f"MCP request timed out: {method} ({self.name}: {self._command_repr})"
             )
+        except asyncio.CancelledError:
+            self._pending.pop(request_id, None)
+            raise
 
     async def _notify(self, method: str, params: Dict[str, Any]) -> None:
         async with self._lock:
