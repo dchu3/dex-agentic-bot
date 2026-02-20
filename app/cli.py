@@ -532,6 +532,7 @@ async def _cmd_portfolio(
             "daily_loss_limit_usd": (float, 0.0, None),
             "cooldown_seconds": (int, 0, None),
             "min_momentum_score": (float, 0.0, 100.0),
+            "price_check_seconds": (int, 10, 3600),
         }
 
         if not scheduler:
