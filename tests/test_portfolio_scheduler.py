@@ -136,6 +136,21 @@ class TestSchedulerStatus:
         engine.config.price_check_seconds = 120
         assert scheduler.get_status()["exit_check_interval_seconds"] == 120
 
+    def test_exit_check_interval_property_falls_back_to_constructor_arg(self):
+        """exit_check_interval falls back to constructor arg when engine.config lacks the attribute."""
+        class MinimalEngine:
+            pass
+
+        engine = MinimalEngine()
+        scheduler = PortfolioScheduler(
+            engine=engine,  # type: ignore[arg-type]
+            discovery_interval_seconds=3600,
+            exit_check_interval_seconds=45,
+        )
+
+        # No engine.config → should use the constructor arg as fallback
+        assert scheduler.exit_check_interval == 45
+
     @pytest.mark.asyncio
     async def test_status_after_cycles(self):
         engine = MockPortfolioEngine()

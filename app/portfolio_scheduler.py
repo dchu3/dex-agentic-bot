@@ -33,7 +33,7 @@ class PortfolioScheduler:
     ) -> None:
         self.engine = engine
         self.discovery_interval = discovery_interval_seconds
-        self.exit_check_interval = exit_check_interval_seconds
+        self._exit_check_interval_fallback = exit_check_interval_seconds
         self.telegram = telegram
         self.verbose = verbose
         self.log_callback = log_callback
@@ -53,6 +53,21 @@ class PortfolioScheduler:
     @property
     def is_running(self) -> bool:
         return self._running
+
+    @property
+    def exit_check_interval(self) -> int:
+        """Live exit-check interval in seconds.
+
+        Always reads from ``engine.config.price_check_seconds`` so that
+        runtime updates via ``/portfolio set`` are immediately visible in
+        logs, status reports, and the sleep between exit checks.
+        Falls back to the constructor argument when the engine config does
+        not expose that attribute (e.g. in tests with minimal mocks).
+        """
+        try:
+            return self.engine.config.price_check_seconds
+        except AttributeError:
+            return self._exit_check_interval_fallback
 
     async def start(self) -> None:
         """Start both discovery and exit check loops."""
@@ -124,7 +139,7 @@ class PortfolioScheduler:
                 self._log("error", f"Portfolio exit check failed: {exc}")
 
             try:
-                await asyncio.sleep(self.engine.config.price_check_seconds)
+                await asyncio.sleep(self.exit_check_interval)
             except asyncio.CancelledError:
                 break
 
@@ -227,7 +242,7 @@ class PortfolioScheduler:
         return {
             "running": self.is_running,
             "discovery_interval_seconds": self.discovery_interval,
-            "exit_check_interval_seconds": self.engine.config.price_check_seconds,
+            "exit_check_interval_seconds": self.exit_check_interval,
             "discovery_cycles": self._discovery_cycle_count,
             "exit_check_cycles": self._exit_cycle_count,
             "last_discovery": self._last_discovery.isoformat() if self._last_discovery else None,
