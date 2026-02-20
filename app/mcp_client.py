@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shlex
 import sys
 import uuid
@@ -13,6 +14,8 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from google.genai import types
+
+logger = logging.getLogger(__name__)
 
 JSONRPC_VERSION = "2.0"
 DEFAULT_PROTOCOL_VERSION = "2024-10-07"
@@ -346,15 +349,15 @@ class MCPManager:
         solana_rpc_cmd: str = "",
         blockscout_cmd: str = "",
         trader_cmd: str = "",
-        trader_call_timeout: float = 60.0,
+        call_timeout: float = 60.0,
     ) -> None:
-        self.dexscreener = MCPClient("dexscreener", dexscreener_cmd)
-        self.dexpaprika = MCPClient("dexpaprika", dexpaprika_cmd)
-        self.honeypot = MCPClient("honeypot", honeypot_cmd) if honeypot_cmd else None
-        self.rugcheck = MCPClient("rugcheck", rugcheck_cmd) if rugcheck_cmd else None
-        self.solana = MCPClient("solana", solana_rpc_cmd) if solana_rpc_cmd else None
-        self.blockscout = MCPClient("blockscout", blockscout_cmd) if blockscout_cmd else None
-        self.trader = MCPClient("trader", trader_cmd, call_timeout=trader_call_timeout) if trader_cmd else None
+        self.dexscreener = MCPClient("dexscreener", dexscreener_cmd, call_timeout=call_timeout)
+        self.dexpaprika = MCPClient("dexpaprika", dexpaprika_cmd, call_timeout=call_timeout)
+        self.honeypot = MCPClient("honeypot", honeypot_cmd, call_timeout=call_timeout) if honeypot_cmd else None
+        self.rugcheck = MCPClient("rugcheck", rugcheck_cmd, call_timeout=call_timeout) if rugcheck_cmd else None
+        self.solana = MCPClient("solana", solana_rpc_cmd, call_timeout=call_timeout) if solana_rpc_cmd else None
+        self.blockscout = MCPClient("blockscout", blockscout_cmd, call_timeout=call_timeout) if blockscout_cmd else None
+        self.trader = MCPClient("trader", trader_cmd, call_timeout=call_timeout) if trader_cmd else None
         self._gemini_functions_cache: Optional[List["types.FunctionDeclaration"]] = None
 
     async def start(self) -> None:
