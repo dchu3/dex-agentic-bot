@@ -33,7 +33,7 @@ class PortfolioScheduler:
     ) -> None:
         self.engine = engine
         self.discovery_interval = discovery_interval_seconds
-        self.exit_check_interval = exit_check_interval_seconds
+        self._exit_check_interval_fallback = exit_check_interval_seconds
         self.telegram = telegram
         self.verbose = verbose
         self.log_callback = log_callback
@@ -53,6 +53,21 @@ class PortfolioScheduler:
     @property
     def is_running(self) -> bool:
         return self._running
+
+    @property
+    def exit_check_interval(self) -> int:
+        """Live exit-check interval in seconds.
+
+        Always reads from ``engine.config.price_check_seconds`` so that
+        runtime updates via ``/portfolio set`` are immediately visible in
+        logs, status reports, and the sleep between exit checks.
+        Falls back to the constructor argument when the engine config does
+        not expose that attribute (e.g. in tests with minimal mocks).
+        """
+        try:
+            return self.engine.config.price_check_seconds
+        except AttributeError:
+            return self._exit_check_interval_fallback
 
     async def start(self) -> None:
         """Start both discovery and exit check loops."""

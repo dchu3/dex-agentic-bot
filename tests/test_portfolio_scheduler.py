@@ -19,9 +19,14 @@ from app.portfolio_strategy import (
 class MockPortfolioEngine:
     """Mock engine that returns empty results."""
 
-    def __init__(self) -> None:
+    class _Config:
+        price_check_seconds: int = 60
+
+    def __init__(self, price_check_seconds: int = 60) -> None:
         self.discovery_calls = 0
         self.exit_calls = 0
+        self.config = MockPortfolioEngine._Config()
+        self.config.price_check_seconds = price_check_seconds
 
     async def run_discovery_cycle(self) -> PortfolioDiscoveryCycleResult:
         self.discovery_calls += 1
@@ -100,7 +105,7 @@ class TestSchedulerLifecycle:
 
 class TestSchedulerStatus:
     def test_status_initial(self):
-        engine = MockPortfolioEngine()
+        engine = MockPortfolioEngine(price_check_seconds=30)
         scheduler = PortfolioScheduler(
             engine=engine,
             discovery_interval_seconds=1800,
@@ -115,6 +120,36 @@ class TestSchedulerStatus:
         assert status["exit_check_cycles"] == 0
         assert status["last_discovery"] is None
         assert status["last_exit_check"] is None
+
+    def test_status_reflects_live_price_check_seconds(self):
+        """get_status returns the live engine.config.price_check_seconds value."""
+        engine = MockPortfolioEngine(price_check_seconds=60)
+        scheduler = PortfolioScheduler(
+            engine=engine,
+            discovery_interval_seconds=3600,
+            exit_check_interval_seconds=60,
+        )
+
+        assert scheduler.get_status()["exit_check_interval_seconds"] == 60
+
+        # Simulate a runtime update via /portfolio set
+        engine.config.price_check_seconds = 120
+        assert scheduler.get_status()["exit_check_interval_seconds"] == 120
+
+    def test_exit_check_interval_property_falls_back_to_constructor_arg(self):
+        """exit_check_interval falls back to constructor arg when engine.config lacks the attribute."""
+        class MinimalEngine:
+            pass
+
+        engine = MinimalEngine()
+        scheduler = PortfolioScheduler(
+            engine=engine,  # type: ignore[arg-type]
+            discovery_interval_seconds=3600,
+            exit_check_interval_seconds=45,
+        )
+
+        # No engine.config → should use the constructor arg as fallback
+        assert scheduler.exit_check_interval == 45
 
     @pytest.mark.asyncio
     async def test_status_after_cycles(self):
