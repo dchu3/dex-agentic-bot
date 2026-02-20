@@ -533,6 +533,8 @@ async def _cmd_portfolio(
             "cooldown_seconds": (int, 0, None),
             "min_momentum_score": (float, 0.0, 100.0),
             "price_check_seconds": (int, 10, 3600),
+            "min_token_age_hours": (float, 0.0, None),
+            "max_token_age_hours": (float, 0.0, None),
         }
 
         if not scheduler:
@@ -843,6 +845,7 @@ Examples:
             min_liquidity_usd=settings.portfolio_min_liquidity_usd,
             min_market_cap_usd=settings.portfolio_min_market_cap_usd,
             min_token_age_hours=settings.portfolio_min_token_age_hours,
+            max_token_age_hours=settings.portfolio_max_token_age_hours,
             cooldown_seconds=settings.portfolio_cooldown_seconds,
             min_momentum_score=settings.portfolio_min_momentum_score,
             max_slippage_bps=settings.portfolio_max_slippage_bps,
