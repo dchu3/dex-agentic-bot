@@ -25,7 +25,7 @@ CLIENT_INFO = {
 class MCPClient:
     """Lightweight JSON-over-stdio client for an MCP server process."""
 
-    def __init__(self, name: str, command: str) -> None:
+    def __init__(self, name: str, command: str, call_timeout: float = 60.0) -> None:
         self.name = name
         self.command = command
         try:
@@ -35,6 +35,7 @@ class MCPClient:
         if not self._command_args:
             raise ValueError(f"Empty MCP command for {name!r}")
         self._command_repr = " ".join(self._command_args)
+        self._call_timeout = call_timeout
         self._cwd = self._resolve_cwd()
         self.process: Optional[Process] = None
         self._reader_task: Optional[asyncio.Task[None]] = None
@@ -279,11 +280,29 @@ class MCPClient:
             )
 
     async def call_tool(self, method: str, arguments: Dict[str, Any]) -> Any:
-        """Call an MCP tool and return the result."""
+        """Call an MCP tool and return the result.
+
+        On timeout, restarts the MCP subprocess and retries once before raising.
+        """
+        try:
+            return await self._call_tool_once(method, arguments)
+        except RuntimeError as exc:
+            if "timed out" not in str(exc):
+                raise
+            logger.warning(
+                "MCP tool call timed out (%s/%s), restarting and retrying once.",
+                self.name, method,
+            )
+            await self.stop()
+            await self.start()
+            return await self._call_tool_once(method, arguments)
+
+    async def _call_tool_once(self, method: str, arguments: Dict[str, Any]) -> Any:
+        """Single attempt to call an MCP tool."""
         result = await self._request(
             "tools/call",
             {"name": method, "arguments": arguments},
-            timeout=60.0,
+            timeout=self._call_timeout,
         )
 
         # Extract text content from result
@@ -327,6 +346,7 @@ class MCPManager:
         solana_rpc_cmd: str = "",
         blockscout_cmd: str = "",
         trader_cmd: str = "",
+        trader_call_timeout: float = 60.0,
     ) -> None:
         self.dexscreener = MCPClient("dexscreener", dexscreener_cmd)
         self.dexpaprika = MCPClient("dexpaprika", dexpaprika_cmd)
@@ -334,7 +354,7 @@ class MCPManager:
         self.rugcheck = MCPClient("rugcheck", rugcheck_cmd) if rugcheck_cmd else None
         self.solana = MCPClient("solana", solana_rpc_cmd) if solana_rpc_cmd else None
         self.blockscout = MCPClient("blockscout", blockscout_cmd) if blockscout_cmd else None
-        self.trader = MCPClient("trader", trader_cmd) if trader_cmd else None
+        self.trader = MCPClient("trader", trader_cmd, call_timeout=trader_call_timeout) if trader_cmd else None
         self._gemini_functions_cache: Optional[List["types.FunctionDeclaration"]] = None
 
     async def start(self) -> None:
