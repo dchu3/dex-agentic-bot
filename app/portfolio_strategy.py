@@ -51,6 +51,7 @@ class PortfolioStrategyConfig:
     quote_method: str = ""
     execute_method: str = ""
     min_token_age_hours: float = 4.0
+    max_token_age_hours: float = 0.0
     slippage_probe_enabled: bool = False
     slippage_probe_usd: float = 0.50
     slippage_probe_max_slippage_pct: float = 5.0
@@ -118,6 +119,7 @@ class PortfolioStrategyEngine:
             min_liquidity_usd=config.min_liquidity_usd,
             min_market_cap_usd=config.min_market_cap_usd,
             min_token_age_hours=config.min_token_age_hours,
+            max_token_age_hours=config.max_token_age_hours,
             min_momentum_score=config.min_momentum_score,
             chain=config.chain,
             verbose=verbose,
@@ -172,6 +174,7 @@ class PortfolioStrategyEngine:
             self.discovery.min_volume_usd = self.config.min_volume_usd
             self.discovery.min_liquidity_usd = self.config.min_liquidity_usd
             self.discovery.min_token_age_hours = self.config.min_token_age_hours
+            self.discovery.max_token_age_hours = self.config.max_token_age_hours
 
             # Discover candidates
             candidates = await self.discovery.discover(

@@ -154,6 +154,8 @@ The portfolio strategy autonomously discovers promising Solana tokens, buys smal
 - `PORTFOLIO_MIN_VOLUME_USD` — Minimum 24h trading volume (default: 50k)
 - `PORTFOLIO_MIN_LIQUIDITY_USD` — Minimum liquidity depth (default: 25k)
 - `PORTFOLIO_MIN_MARKET_CAP_USD` — Minimum market cap or FDV (default: 250k)
+- `PORTFOLIO_MIN_TOKEN_AGE_HOURS` — Reject tokens younger than this many hours (default: 4; 0 = disabled)
+- `PORTFOLIO_MAX_TOKEN_AGE_HOURS` — Reject tokens older than this many hours (default: 0 = disabled)
 
 **Pre-trade slippage probe (opt-in, live mode only):**
 

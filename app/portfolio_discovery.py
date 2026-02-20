@@ -81,6 +81,7 @@ class PortfolioDiscovery:
         min_liquidity_usd: float = 25000.0,
         min_market_cap_usd: float = 250000.0,
         min_token_age_hours: float = 4.0,
+        max_token_age_hours: float = 0.0,
         min_momentum_score: float = 50.0,
         chain: str = "solana",
         verbose: bool = False,
@@ -93,6 +94,17 @@ class PortfolioDiscovery:
         self.min_liquidity_usd = min_liquidity_usd
         self.min_market_cap_usd = min_market_cap_usd
         self.min_token_age_hours = min_token_age_hours
+        self.max_token_age_hours = max_token_age_hours
+        if (
+            self.min_token_age_hours > 0
+            and self.max_token_age_hours > 0
+            and self.min_token_age_hours > self.max_token_age_hours
+        ):
+            raise ValueError(
+                "Invalid token age configuration: "
+                f"min_token_age_hours ({self.min_token_age_hours}) "
+                f"cannot be greater than max_token_age_hours ({self.max_token_age_hours})."
+            )
         self.min_momentum_score = min_momentum_score
         self.chain = chain
         self.verbose = verbose
@@ -334,9 +346,15 @@ class PortfolioDiscovery:
             if price <= 0:
                 continue
 
-            if self.min_token_age_hours > 0 and pair_created_at_ms > 0:
+            if (self.min_token_age_hours > 0 or self.max_token_age_hours > 0) and pair_created_at_ms > 0:
                 age_hours = (now_ms - pair_created_at_ms) / 1_000 / 3_600
-                if age_hours < self.min_token_age_hours:
+                if age_hours < 0:
+                    rejected_age += 1
+                    continue
+                if self.min_token_age_hours > 0 and age_hours < self.min_token_age_hours:
+                    rejected_age += 1
+                    continue
+                if self.max_token_age_hours > 0 and age_hours > self.max_token_age_hours:
                     rejected_age += 1
                     continue
 

@@ -237,6 +237,80 @@ class TestApplyFilters:
 
 
 # ---------------------------------------------------------------------------
+# Max token age filter
+# ---------------------------------------------------------------------------
+
+
+class TestMaxTokenAgeFilter:
+    def test_rejects_old_token(self):
+        """Rejects a pair created 50 hours ago when max age is 24 hours."""
+        import time
+        now_ms = int(time.time() * 1000)
+        fifty_hours_ago_ms = now_ms - int(50 * 3_600 * 1_000)
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", max_token_age_hours=24.0,
+        )
+        pairs = [_make_pair(pair_created_at=fifty_hours_ago_ms)]
+        result = discovery._apply_filters(pairs)
+        assert len(result) == 0
+
+    def test_passes_young_enough_token(self):
+        """Allows a pair created 5 hours ago when max age is 24 hours."""
+        import time
+        now_ms = int(time.time() * 1000)
+        five_hours_ago_ms = now_ms - int(5 * 3_600 * 1_000)
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", max_token_age_hours=24.0,
+        )
+        pairs = [_make_pair(pair_created_at=five_hours_ago_ms)]
+        result = discovery._apply_filters(pairs)
+        assert len(result) == 1
+
+    def test_passes_when_disabled(self):
+        """When max_token_age_hours=0, no upper bound is applied."""
+        import time
+        now_ms = int(time.time() * 1000)
+        very_old_ms = now_ms - int(10_000 * 3_600 * 1_000)
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", max_token_age_hours=0.0,
+        )
+        pairs = [_make_pair(pair_created_at=very_old_ms)]
+        result = discovery._apply_filters(pairs)
+        assert len(result) == 1
+
+    def test_passes_missing_pair_created_at(self):
+        """Passes a pair with no pairCreatedAt field (permissive fallback)."""
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", max_token_age_hours=24.0,
+        )
+        pairs = [_make_pair()]  # no pair_created_at kwarg → field absent
+        result = discovery._apply_filters(pairs)
+        assert len(result) == 1
+
+    def test_raises_when_min_exceeds_max(self):
+        """Raises ValueError if min_token_age_hours > max_token_age_hours (both set)."""
+        import pytest
+        with pytest.raises(ValueError, match="min_token_age_hours"):
+            PortfolioDiscovery(
+                mcp_manager=MockMCPManager(), api_key="x",
+                min_token_age_hours=48.0,
+                max_token_age_hours=24.0,
+            )
+
+    def test_rejects_future_timestamp(self):
+        """Rejects a pair whose pairCreatedAt is in the future (negative age)."""
+        import time
+        now_ms = int(time.time() * 1000)
+        future_ms = now_ms + int(10 * 3_600 * 1_000)
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", max_token_age_hours=24.0,
+        )
+        pairs = [_make_pair(pair_created_at=future_ms)]
+        result = discovery._apply_filters(pairs)
+        assert len(result) == 0
+
+
+# ---------------------------------------------------------------------------
 # Held token exclusion
 # ---------------------------------------------------------------------------
 
