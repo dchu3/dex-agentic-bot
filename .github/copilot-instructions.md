@@ -1,5 +1,22 @@
 # Copilot Instructions for DEX Agentic Bot
 
+## Git Workflow
+
+**Never push directly to `main` in any repo** (`dex-agentic-bot`, `dex-trader-mcp`, or any other repo in this project).
+
+- Always create a branch before making changes: `feature/<short-description>` or `fix/<short-description>`
+- Commit changes to the branch and push it
+- Open a pull request for review — do not merge without user approval
+
+```bash
+# Start every change like this
+git checkout -b fix/my-fix        # or feature/my-feature
+# ... make changes ...
+git add <files>
+git commit -m "..."
+git push -u origin fix/my-fix     # opens PR, never pushes to main
+```
+
 ## Build, Test, and Lint
 
 ```bash
