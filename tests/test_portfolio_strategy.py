@@ -360,7 +360,7 @@ class TestExitChecks:
 
     @pytest.mark.asyncio
     async def test_partial_sell_uses_sell_pct(self, db):
-        """When sell_pct < 100, only that fraction of tokens is sold."""
+        """When sell_pct < 100 and position is profitable, only that fraction is sold."""
         await _insert_position(
             db, entry_price=1.00, quantity_token=100.0, notional_usd=100.0,
         )
@@ -373,6 +373,24 @@ class TestExitChecks:
         closed = result.positions_closed[0]
         # PnL should reflect only 90 tokens sold
         expected_pnl = (1.20 - 1.00) * 90.0  # $18.00
+        assert closed.realized_pnl_usd == pytest.approx(expected_pnl, rel=0.01)
+
+    @pytest.mark.asyncio
+    async def test_sell_pct_ignored_on_loss(self, db):
+        """When position is at a loss, sell_pct is ignored and 100% is sold."""
+        await _insert_position(
+            db, entry_price=1.00, quantity_token=100.0, notional_usd=100.0,
+        )
+
+        # Price dropped below stop-loss → loss → should sell all 100 tokens
+        engine = _make_engine(db, dex_price=0.90, trader_price=0.90, sell_pct=90.0)
+
+        result = await engine.run_exit_checks()
+
+        assert len(result.positions_closed) == 1
+        closed = result.positions_closed[0]
+        # Full 100 tokens sold despite sell_pct=90
+        expected_pnl = (0.90 - 1.00) * 100.0  # -$10.00
         assert closed.realized_pnl_usd == pytest.approx(expected_pnl, rel=0.01)
 
     @pytest.mark.asyncio
