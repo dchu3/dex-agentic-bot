@@ -123,6 +123,9 @@ class Settings(BaseSettings):
     portfolio_trailing_stop_pct: float = Field(
         default=5.0, alias="PORTFOLIO_TRAILING_STOP_PCT", ge=0.1, le=100.0
     )
+    portfolio_sell_pct: float = Field(
+        default=100.0, alias="PORTFOLIO_SELL_PCT", ge=0.1, le=100.0
+    )
     portfolio_max_hold_hours: int = Field(
         default=24, alias="PORTFOLIO_MAX_HOLD_HOURS", ge=1, le=720
     )

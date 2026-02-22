@@ -359,6 +359,40 @@ class TestExitChecks:
         assert closed.realized_pnl_usd == pytest.approx(expected_pnl, rel=0.01)
 
     @pytest.mark.asyncio
+    async def test_partial_sell_uses_sell_pct(self, db):
+        """When sell_pct < 100, only that fraction of tokens is sold."""
+        await _insert_position(
+            db, entry_price=1.00, quantity_token=100.0, notional_usd=100.0,
+        )
+
+        engine = _make_engine(db, dex_price=1.20, trader_price=1.20, sell_pct=90.0)
+
+        result = await engine.run_exit_checks()
+
+        assert len(result.positions_closed) == 1
+        closed = result.positions_closed[0]
+        # PnL should reflect only 90 tokens sold
+        expected_pnl = (1.20 - 1.00) * 90.0  # $18.00
+        assert closed.realized_pnl_usd == pytest.approx(expected_pnl, rel=0.01)
+
+    @pytest.mark.asyncio
+    async def test_default_sell_pct_is_100(self, db):
+        """Default sell_pct of 100 sells the full position quantity."""
+        await _insert_position(
+            db, entry_price=1.00, quantity_token=50.0, notional_usd=50.0,
+        )
+
+        engine = _make_engine(db, dex_price=1.20, trader_price=1.20)
+
+        result = await engine.run_exit_checks()
+
+        assert len(result.positions_closed) == 1
+        closed = result.positions_closed[0]
+        # Full 50 tokens sold
+        expected_pnl = (1.20 - 1.00) * 50.0  # $10.00
+        assert closed.realized_pnl_usd == pytest.approx(expected_pnl, rel=0.01)
+
+    @pytest.mark.asyncio
     async def test_no_positions_exits_early(self, db):
         """Exit check returns quickly when no open positions."""
         engine = _make_engine(db)

@@ -46,6 +46,7 @@ class PortfolioStrategyConfig:
     cooldown_seconds: int
     min_momentum_score: float
     max_slippage_bps: int
+    sell_pct: float = 100.0
     quote_mint: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
     rpc_url: str = "https://api.mainnet-beta.solana.com"
     quote_method: str = ""
@@ -448,7 +449,7 @@ class PortfolioStrategyEngine:
         cycle_result: PortfolioExitCycleResult,
     ) -> None:
         """Execute sell and close position."""
-        sell_qty = position.quantity_token
+        sell_qty = position.quantity_token * (self.config.sell_pct / 100.0)
 
         # Use wallet balance when available for live trades
         if not self.config.dry_run:

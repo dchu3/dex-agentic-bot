@@ -346,7 +346,7 @@ async def _cmd_portfolio(
         output.info(f"  Dry run: {'✅ Yes' if config.dry_run else '❌ No (LIVE)'}")
         output.info(f"  Position size: ${config.position_size_usd:,.2f}")
         tp_display = "disabled" if config.take_profit_pct == 0 else f"{config.take_profit_pct:.1f}%"
-        output.info(f"  TP: {tp_display} | SL: {config.stop_loss_pct:.1f}% | Trail: {config.trailing_stop_pct:.1f}%")
+        output.info(f"  TP: {tp_display} | SL: {config.stop_loss_pct:.1f}% | Trail: {config.trailing_stop_pct:.1f}% | Sell: {config.sell_pct:.1f}%")
         output.info(f"  Open positions: {open_count}/{config.max_positions}")
         output.info(f"  Daily realized PnL: ${daily_pnl:,.2f}")
         output.info(f"  Discovery interval: {status['discovery_interval_seconds']}s")
@@ -528,6 +528,7 @@ async def _cmd_portfolio(
             "take_profit_pct": (float, 0.0, 500.0),
             "stop_loss_pct": (float, 0.1, 100.0),
             "trailing_stop_pct": (float, 0.1, 100.0),
+            "sell_pct": (float, 0.1, 100.0),
             "max_hold_hours": (int, 1, 720),
             "daily_loss_limit_usd": (float, 0.0, None),
             "cooldown_seconds": (int, 0, None),
@@ -849,6 +850,7 @@ Examples:
             take_profit_pct=settings.portfolio_take_profit_pct,
             stop_loss_pct=settings.portfolio_stop_loss_pct,
             trailing_stop_pct=settings.portfolio_trailing_stop_pct,
+            sell_pct=settings.portfolio_sell_pct,
             max_hold_hours=settings.portfolio_max_hold_hours,
             discovery_interval_mins=settings.portfolio_discovery_interval_mins,
             price_check_seconds=settings.portfolio_price_check_seconds,
