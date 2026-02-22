@@ -449,7 +449,12 @@ class PortfolioStrategyEngine:
         cycle_result: PortfolioExitCycleResult,
     ) -> None:
         """Execute sell and close position."""
-        sell_qty = position.quantity_token * (self.config.sell_pct / 100.0)
+        # Only hold back a percentage when the position is profitable.
+        # If at a loss, always sell the full quantity.
+        if current_price > position.entry_price:
+            sell_qty = position.quantity_token * (self.config.sell_pct / 100.0)
+        else:
+            sell_qty = position.quantity_token
 
         # Use wallet balance when available for live trades
         if not self.config.dry_run:
