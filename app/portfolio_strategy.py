@@ -471,6 +471,7 @@ class PortfolioStrategyEngine:
         # Use wallet balance when available for live trades.
         # Track whether balance capped the sell so we can adjust remaining qty.
         wallet_balance_used = False
+        actual_balance: Optional[float] = None
         if not self.config.dry_run:
             actual_balance = await self.execution.get_wallet_token_balance(
                 position.token_address,
