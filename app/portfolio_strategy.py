@@ -591,6 +591,11 @@ class PortfolioStrategyEngine:
                 f"sold={sell_qty:.4f} remaining={new_qty:.4f} "
                 f"PnL=${realized_pnl:.4f}",
             )
+        else:
+            cycle_result.errors.append(
+                f"Failed to reduce position {position.id} "
+                f"for {position.symbol}: DB update returned reduced=False."
+            )
 
     async def _fully_close_position(
         self,
@@ -653,6 +658,11 @@ class PortfolioStrategyEngine:
                         "info",
                         f"{position.symbol} hit 2 negative stop losses - skipping next discovery cycle",
                     )
+        else:
+            cycle_result.errors.append(
+                f"Failed to close position {position.id} ({position.symbol}) "
+                "in database after trade execution."
+            )
 
     # ------------------------------------------------------------------
     # Price helpers

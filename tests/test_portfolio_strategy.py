@@ -477,6 +477,9 @@ class TestExitChecks:
         # Trailing stop should be reset relative to exit price
         expected_stop = 1.20 * (1 - 5.0 / 100)  # 1.14
         assert remaining.stop_price == pytest.approx(expected_stop, rel=0.01)
+        # Take-profit should be bumped to avoid immediate re-trigger
+        expected_take = max(1.00 * (1 + 15.0 / 100), 1.20 * (1 + 15.0 / 100))  # 1.38
+        assert remaining.take_price == pytest.approx(expected_take, rel=0.01)
 
     @pytest.mark.asyncio
     async def test_partial_sell_then_loss_sells_remaining(self, db):
