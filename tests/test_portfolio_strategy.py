@@ -360,7 +360,7 @@ class TestExitChecks:
 
     @pytest.mark.asyncio
     async def test_partial_sell_uses_sell_pct(self, db):
-        """When sell_pct < 100 and position is profitable, only that fraction is sold."""
+        """When sell_pct < 100 and position is profitable, position stays open with reduced qty."""
         await _insert_position(
             db, entry_price=1.00, quantity_token=100.0, notional_usd=100.0,
         )
@@ -369,11 +369,16 @@ class TestExitChecks:
 
         result = await engine.run_exit_checks()
 
-        assert len(result.positions_closed) == 1
-        closed = result.positions_closed[0]
-        # PnL should reflect only 90 tokens sold
-        expected_pnl = (1.20 - 1.00) * 90.0  # $18.00
-        assert closed.realized_pnl_usd == pytest.approx(expected_pnl, rel=0.01)
+        # Position is NOT fully closed — it was partially sold
+        assert len(result.positions_closed) == 0
+        assert result.positions_partially_sold == 1
+
+        # Remaining position is still open with reduced quantity
+        open_positions = await db.list_open_portfolio_positions(chain="solana")
+        assert len(open_positions) == 1
+        pos = open_positions[0]
+        assert pos.quantity_token == pytest.approx(10.0, rel=0.01)  # 100 - 90
+        assert pos.notional_usd == pytest.approx(10.0, rel=0.01)  # 10 * 1.00 entry
 
     @pytest.mark.asyncio
     async def test_sell_pct_ignored_on_loss(self, db):
@@ -450,6 +455,68 @@ class TestExitChecks:
         # Full 50 tokens sold
         expected_pnl = (1.20 - 1.00) * 50.0  # $10.00
         assert closed.realized_pnl_usd == pytest.approx(expected_pnl, rel=0.01)
+
+    @pytest.mark.asyncio
+    async def test_partial_sell_continues_trailing_stop(self, db):
+        """After partial sell, remaining position keeps trailing stop and can exit again."""
+        pos = await _insert_position(
+            db, entry_price=1.00, quantity_token=100.0, notional_usd=100.0,
+        )
+
+        # First exit: price at 1.20 triggers take_profit, partial sell 50%
+        engine = _make_engine(db, dex_price=1.20, trader_price=1.20, sell_pct=50.0)
+        result = await engine.run_exit_checks()
+
+        assert result.positions_partially_sold == 1
+        assert len(result.positions_closed) == 0
+
+        open_positions = await db.list_open_portfolio_positions(chain="solana")
+        assert len(open_positions) == 1
+        remaining = open_positions[0]
+        assert remaining.quantity_token == pytest.approx(50.0, rel=0.01)
+        # Trailing stop should be reset relative to exit price
+        expected_stop = 1.20 * (1 - 5.0 / 100)  # 1.14
+        assert remaining.stop_price == pytest.approx(expected_stop, rel=0.01)
+
+    @pytest.mark.asyncio
+    async def test_partial_sell_then_loss_sells_remaining(self, db):
+        """After partial sell, if price drops below entry, next cycle sells 100% of remaining."""
+        await _insert_position(
+            db, entry_price=1.00, quantity_token=100.0, notional_usd=100.0,
+        )
+
+        # First: profitable partial sell at 1.20 with 50%
+        engine = _make_engine(db, dex_price=1.20, trader_price=1.20, sell_pct=50.0)
+        await engine.run_exit_checks()
+
+        open_positions = await db.list_open_portfolio_positions(chain="solana")
+        assert len(open_positions) == 1
+        assert open_positions[0].quantity_token == pytest.approx(50.0, rel=0.01)
+
+        # Second: price drops below stop → loss exit sells 100% of remaining
+        engine2 = _make_engine(db, dex_price=0.50, trader_price=0.50, sell_pct=50.0)
+        result2 = await engine2.run_exit_checks()
+
+        assert len(result2.positions_closed) == 1
+        assert result2.positions_partially_sold == 0
+        assert len(await db.list_open_portfolio_positions(chain="solana")) == 0
+
+    @pytest.mark.asyncio
+    async def test_partial_sell_dust_forces_full_close(self, db):
+        """When remaining value after partial sell is dust (<$0.01), force full close."""
+        # Tiny position: 10 tokens at $0.001 = $0.01 notional
+        await _insert_position(
+            db, entry_price=0.001, quantity_token=10.0, notional_usd=0.01,
+        )
+
+        # Price up to 0.0012, sell 90% → remaining 1 token × $0.0012 = $0.0012 < $0.01
+        engine = _make_engine(db, dex_price=0.0012, trader_price=0.0012, sell_pct=90.0)
+        result = await engine.run_exit_checks()
+
+        # Should fully close (dust threshold), not partial
+        assert len(result.positions_closed) == 1
+        assert result.positions_partially_sold == 0
+        assert len(await db.list_open_portfolio_positions(chain="solana")) == 0
 
     @pytest.mark.asyncio
     async def test_no_positions_exits_early(self, db):

@@ -315,6 +315,41 @@ class Database:
             await conn.commit()
             return cursor.rowcount > 0
 
+    async def reduce_portfolio_position(
+        self,
+        position_id: int,
+        new_quantity: float,
+        new_notional: float,
+        new_stop_price: float,
+        new_highest_price: float,
+    ) -> bool:
+        """Reduce an open position after a partial sell.
+
+        Updates quantity, notional, and resets trailing stop while keeping
+        the position open so exit checks continue on the remainder.
+        """
+        conn = await self._ensure_connected()
+        async with self._lock:
+            cursor = await conn.execute(
+                """
+                UPDATE portfolio_positions
+                SET quantity_token = ?,
+                    notional_usd = ?,
+                    stop_price = ?,
+                    highest_price = ?
+                WHERE id = ? AND status = 'open'
+                """,
+                (
+                    new_quantity,
+                    new_notional,
+                    new_stop_price,
+                    new_highest_price,
+                    position_id,
+                ),
+            )
+            await conn.commit()
+            return cursor.rowcount > 0
+
     async def get_daily_portfolio_pnl(self, day: Optional[datetime] = None) -> float:
         """Get total realized PnL for the UTC calendar day."""
         conn = await self._ensure_connected()

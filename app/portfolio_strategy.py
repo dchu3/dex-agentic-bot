@@ -77,6 +77,7 @@ class PortfolioExitCycleResult:
     positions_checked: int = 0
     trailing_stops_updated: int = 0
     positions_closed: List[PortfolioPosition] = field(default_factory=list)
+    positions_partially_sold: int = 0
     errors: List[str] = field(default_factory=list)
     summary: str = ""
 
@@ -376,6 +377,8 @@ class PortfolioStrategyEngine:
             parts.append(f"trailing_updated={result.trailing_stops_updated}")
         if result.positions_closed:
             parts.append(f"closed={len(result.positions_closed)}")
+        if result.positions_partially_sold:
+            parts.append(f"partial_sold={result.positions_partially_sold}")
         if result.errors:
             parts.append(f"errors={len(result.errors)}")
         result.summary = " | ".join(parts)
@@ -448,13 +451,22 @@ class PortfolioStrategyEngine:
         close_reason: str,
         cycle_result: PortfolioExitCycleResult,
     ) -> None:
-        """Execute sell and close position."""
+        """Execute sell and close (or reduce) position."""
         # Only hold back a percentage when the position is profitable.
         # If at a loss, always sell the full quantity.
-        if current_price > position.entry_price:
+        is_profitable = current_price > position.entry_price
+        is_partial = is_profitable and self.config.sell_pct < 100.0
+
+        if is_profitable:
             sell_qty = position.quantity_token * (self.config.sell_pct / 100.0)
         else:
             sell_qty = position.quantity_token
+
+        # Force full close when remaining value would be dust
+        remaining_qty = position.quantity_token - sell_qty
+        if is_partial and (remaining_qty * current_price) < 0.01:
+            sell_qty = position.quantity_token
+            is_partial = False
 
         # Use wallet balance when available for live trades
         if not self.config.dry_run:
@@ -480,54 +492,17 @@ class PortfolioStrategyEngine:
 
         if execution.success:
             realized_pnl = (exit_price - position.entry_price) * sell_qty
-            closed = await self.db.close_portfolio_position(
-                position_id=position.id,
-                exit_price=exit_price,
-                close_reason=close_reason,
-                realized_pnl_usd=realized_pnl,
-            )
-            await self.db.record_portfolio_execution(
-                position_id=position.id,
-                token_address=position.token_address,
-                symbol=position.symbol,
-                chain=position.chain,
-                action="sell",
-                requested_notional_usd=requested_notional,
-                executed_price=exit_price,
-                quantity_token=sell_qty,
-                tx_hash=execution.tx_hash,
-                success=closed,
-                error=None if closed else "Position close update failed",
-            )
-            if closed:
-                position.exit_price = exit_price
-                position.realized_pnl_usd = realized_pnl
-                position.close_reason = close_reason
-                cycle_result.positions_closed.append(position)
-                self._log(
-                    "info",
-                    f"Closed {position.symbol} ({close_reason}) "
-                    f"PnL=${realized_pnl:.4f}",
-                )
-                
-                # Warn when take_profit fires but actual PnL is negative (slippage/price inaccuracy)
-                if close_reason == "take_profit" and realized_pnl < 0:
-                    logger.warning(
-                        "take_profit triggered for %s but realized PnL is negative "
-                        "(entry=$%.10f exit=$%.10f pnl=$%.4f) — likely sell-side slippage",
-                        position.symbol, position.entry_price, exit_price, realized_pnl,
-                    )
 
-                # Track negative stop losses for skip phases
-                if close_reason == "stop_loss" and realized_pnl < 0:
-                    count = await self.db.increment_negative_sl_count(
-                        position.token_address, position.chain
-                    )
-                    if count >= 2:
-                        self._log(
-                            "info",
-                            f"{position.symbol} hit 2 negative stop losses - skipping next discovery cycle",
-                        )
+            if is_partial:
+                await self._reduce_position_after_partial_sell(
+                    position, sell_qty, exit_price, realized_pnl,
+                    close_reason, cycle_result,
+                )
+            else:
+                await self._fully_close_position(
+                    position, sell_qty, exit_price, realized_pnl,
+                    close_reason, cycle_result,
+                )
         else:
             err = f"Sell failed for {position.symbol}: {execution.error}"
             cycle_result.errors.append(err)
@@ -544,6 +519,109 @@ class PortfolioStrategyEngine:
                 success=False,
                 error=execution.error,
             )
+
+    async def _reduce_position_after_partial_sell(
+        self,
+        position: PortfolioPosition,
+        sell_qty: float,
+        exit_price: float,
+        realized_pnl: float,
+        close_reason: str,
+        cycle_result: PortfolioExitCycleResult,
+    ) -> None:
+        """Reduce position after profitable partial sell, keeping it open."""
+        new_qty = position.quantity_token - sell_qty
+        new_notional = new_qty * position.entry_price
+        new_stop = exit_price * (1 - self.config.trailing_stop_pct / 100)
+        new_stop = max(position.stop_price, new_stop)
+
+        reduced = await self.db.reduce_portfolio_position(
+            position_id=position.id,
+            new_quantity=new_qty,
+            new_notional=new_notional,
+            new_stop_price=new_stop,
+            new_highest_price=exit_price,
+        )
+        await self.db.record_portfolio_execution(
+            position_id=position.id,
+            token_address=position.token_address,
+            symbol=position.symbol,
+            chain=position.chain,
+            action="sell",
+            requested_notional_usd=exit_price * sell_qty,
+            executed_price=exit_price,
+            quantity_token=sell_qty,
+            tx_hash=None,
+            success=reduced,
+            error=None if reduced else "Position reduce update failed",
+        )
+        if reduced:
+            cycle_result.positions_partially_sold += 1
+            self._log(
+                "info",
+                f"Partial sell {position.symbol} ({close_reason}) "
+                f"sold={sell_qty:.4f} remaining={new_qty:.4f} "
+                f"PnL=${realized_pnl:.4f}",
+            )
+
+    async def _fully_close_position(
+        self,
+        position: PortfolioPosition,
+        sell_qty: float,
+        exit_price: float,
+        realized_pnl: float,
+        close_reason: str,
+        cycle_result: PortfolioExitCycleResult,
+    ) -> None:
+        """Fully close a position."""
+        closed = await self.db.close_portfolio_position(
+            position_id=position.id,
+            exit_price=exit_price,
+            close_reason=close_reason,
+            realized_pnl_usd=realized_pnl,
+        )
+        await self.db.record_portfolio_execution(
+            position_id=position.id,
+            token_address=position.token_address,
+            symbol=position.symbol,
+            chain=position.chain,
+            action="sell",
+            requested_notional_usd=exit_price * sell_qty,
+            executed_price=exit_price,
+            quantity_token=sell_qty,
+            tx_hash=None,
+            success=closed,
+            error=None if closed else "Position close update failed",
+        )
+        if closed:
+            position.exit_price = exit_price
+            position.realized_pnl_usd = realized_pnl
+            position.close_reason = close_reason
+            cycle_result.positions_closed.append(position)
+            self._log(
+                "info",
+                f"Closed {position.symbol} ({close_reason}) "
+                f"PnL=${realized_pnl:.4f}",
+            )
+
+            # Warn when take_profit fires but actual PnL is negative (slippage/price inaccuracy)
+            if close_reason == "take_profit" and realized_pnl < 0:
+                logger.warning(
+                    "take_profit triggered for %s but realized PnL is negative "
+                    "(entry=$%.10f exit=$%.10f pnl=$%.4f) — likely sell-side slippage",
+                    position.symbol, position.entry_price, exit_price, realized_pnl,
+                )
+
+            # Track negative stop losses for skip phases
+            if close_reason == "stop_loss" and realized_pnl < 0:
+                count = await self.db.increment_negative_sl_count(
+                    position.token_address, position.chain
+                )
+                if count >= 2:
+                    self._log(
+                        "info",
+                        f"{position.symbol} hit 2 negative stop losses - skipping next discovery cycle",
+                    )
 
     # ------------------------------------------------------------------
     # Price helpers
