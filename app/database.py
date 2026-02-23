@@ -322,31 +322,54 @@ class Database:
         new_notional: float,
         new_stop_price: float,
         new_highest_price: float,
+        new_take_price: Optional[float] = None,
     ) -> bool:
         """Reduce an open position after a partial sell.
 
-        Updates quantity, notional, and resets trailing stop while keeping
-        the position open so exit checks continue on the remainder.
+        Updates quantity, notional, resets trailing stop (and optionally
+        take_price) while keeping the position open so exit checks continue
+        on the remainder.
         """
         conn = await self._ensure_connected()
         async with self._lock:
-            cursor = await conn.execute(
-                """
-                UPDATE portfolio_positions
-                SET quantity_token = ?,
-                    notional_usd = ?,
-                    stop_price = ?,
-                    highest_price = ?
-                WHERE id = ? AND status = 'open'
-                """,
-                (
-                    new_quantity,
-                    new_notional,
-                    new_stop_price,
-                    new_highest_price,
-                    position_id,
-                ),
-            )
+            if new_take_price is not None:
+                cursor = await conn.execute(
+                    """
+                    UPDATE portfolio_positions
+                    SET quantity_token = ?,
+                        notional_usd = ?,
+                        stop_price = ?,
+                        highest_price = ?,
+                        take_price = ?
+                    WHERE id = ? AND status = 'open'
+                    """,
+                    (
+                        new_quantity,
+                        new_notional,
+                        new_stop_price,
+                        new_highest_price,
+                        new_take_price,
+                        position_id,
+                    ),
+                )
+            else:
+                cursor = await conn.execute(
+                    """
+                    UPDATE portfolio_positions
+                    SET quantity_token = ?,
+                        notional_usd = ?,
+                        stop_price = ?,
+                        highest_price = ?
+                    WHERE id = ? AND status = 'open'
+                    """,
+                    (
+                        new_quantity,
+                        new_notional,
+                        new_stop_price,
+                        new_highest_price,
+                        position_id,
+                    ),
+                )
             await conn.commit()
             return cursor.rowcount > 0
 

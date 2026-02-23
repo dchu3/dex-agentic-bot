@@ -468,13 +468,25 @@ class PortfolioStrategyEngine:
             sell_qty = position.quantity_token
             is_partial = False
 
-        # Use wallet balance when available for live trades
+        # Use wallet balance when available for live trades.
+        # Track whether balance capped the sell so we can adjust remaining qty.
+        wallet_balance_used = False
         if not self.config.dry_run:
             actual_balance = await self.execution.get_wallet_token_balance(
                 position.token_address,
             )
             if actual_balance is not None and actual_balance > 0:
-                sell_qty = min(sell_qty, actual_balance)
+                if actual_balance < sell_qty:
+                    sell_qty = actual_balance
+                    wallet_balance_used = True
+
+        # When wallet balance capped a partial sell, derive remaining from
+        # actual balance rather than stale DB quantity.
+        if is_partial and wallet_balance_used:
+            actual_remaining = actual_balance - sell_qty
+            if (actual_remaining * current_price) < 0.01:
+                sell_qty = actual_balance
+                is_partial = False
 
         requested_notional = current_price * sell_qty
 
@@ -497,11 +509,15 @@ class PortfolioStrategyEngine:
                 await self._reduce_position_after_partial_sell(
                     position, sell_qty, exit_price, realized_pnl,
                     close_reason, cycle_result,
+                    requested_notional=requested_notional,
+                    tx_hash=execution.tx_hash,
                 )
             else:
                 await self._fully_close_position(
                     position, sell_qty, exit_price, realized_pnl,
                     close_reason, cycle_result,
+                    requested_notional=requested_notional,
+                    tx_hash=execution.tx_hash,
                 )
         else:
             err = f"Sell failed for {position.symbol}: {execution.error}"
@@ -528,12 +544,23 @@ class PortfolioStrategyEngine:
         realized_pnl: float,
         close_reason: str,
         cycle_result: PortfolioExitCycleResult,
+        *,
+        requested_notional: float,
+        tx_hash: Optional[str] = None,
     ) -> None:
         """Reduce position after profitable partial sell, keeping it open."""
         new_qty = position.quantity_token - sell_qty
         new_notional = new_qty * position.entry_price
+        # Fresh trailing stop from exit price — don't keep old stop which may
+        # be above current market and trigger an immediate re-exit.
         new_stop = exit_price * (1 - self.config.trailing_stop_pct / 100)
-        new_stop = max(position.stop_price, new_stop)
+
+        # Bump take_price so we don't immediately re-trigger TP next cycle
+        if self.config.take_profit_pct == 0:
+            new_take_price = float("inf")
+        else:
+            new_take_price = exit_price * (1 + self.config.take_profit_pct / 100)
+            new_take_price = max(position.take_price, new_take_price)
 
         reduced = await self.db.reduce_portfolio_position(
             position_id=position.id,
@@ -541,6 +568,7 @@ class PortfolioStrategyEngine:
             new_notional=new_notional,
             new_stop_price=new_stop,
             new_highest_price=exit_price,
+            new_take_price=new_take_price,
         )
         await self.db.record_portfolio_execution(
             position_id=position.id,
@@ -548,10 +576,10 @@ class PortfolioStrategyEngine:
             symbol=position.symbol,
             chain=position.chain,
             action="sell",
-            requested_notional_usd=exit_price * sell_qty,
+            requested_notional_usd=requested_notional,
             executed_price=exit_price,
             quantity_token=sell_qty,
-            tx_hash=None,
+            tx_hash=tx_hash,
             success=reduced,
             error=None if reduced else "Position reduce update failed",
         )
@@ -572,6 +600,9 @@ class PortfolioStrategyEngine:
         realized_pnl: float,
         close_reason: str,
         cycle_result: PortfolioExitCycleResult,
+        *,
+        requested_notional: float,
+        tx_hash: Optional[str] = None,
     ) -> None:
         """Fully close a position."""
         closed = await self.db.close_portfolio_position(
@@ -586,10 +617,10 @@ class PortfolioStrategyEngine:
             symbol=position.symbol,
             chain=position.chain,
             action="sell",
-            requested_notional_usd=exit_price * sell_qty,
+            requested_notional_usd=requested_notional,
             executed_price=exit_price,
             quantity_token=sell_qty,
-            tx_hash=None,
+            tx_hash=tx_hash,
             success=closed,
             error=None if closed else "Position close update failed",
         )
