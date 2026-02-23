@@ -394,7 +394,7 @@ class PortfolioStrategyEngine:
         """Evaluate a position for trailing stop update or exit.
 
         Returns (exit_action, trailing_updated) where exit_action is one of
-        "closed", "reduced", or "none".
+        "closed", "reduced", "failed", or "none".
         """
         current_price = await self._fetch_current_price(
             position.token_address, position.chain
@@ -508,22 +508,22 @@ class PortfolioStrategyEngine:
             realized_pnl = (exit_price - position.entry_price) * sell_qty
 
             if is_partial:
-                await self._reduce_position_after_partial_sell(
+                ok = await self._reduce_position_after_partial_sell(
                     position, sell_qty, exit_price, realized_pnl,
                     close_reason, cycle_result,
                     requested_notional=requested_notional,
                     tx_hash=execution.tx_hash,
                     effective_total=effective_total,
                 )
-                return "reduced"
+                return "reduced" if ok else "failed"
             else:
-                await self._fully_close_position(
+                ok = await self._fully_close_position(
                     position, sell_qty, exit_price, realized_pnl,
                     close_reason, cycle_result,
                     requested_notional=requested_notional,
                     tx_hash=execution.tx_hash,
                 )
-                return "closed"
+                return "closed" if ok else "failed"
         else:
             err = f"Sell failed for {position.symbol}: {execution.error}"
             cycle_result.errors.append(err)
@@ -554,8 +554,11 @@ class PortfolioStrategyEngine:
         requested_notional: float,
         tx_hash: Optional[str] = None,
         effective_total: Optional[float] = None,
-    ) -> None:
-        """Reduce position after profitable partial sell, keeping it open."""
+    ) -> bool:
+        """Reduce position after profitable partial sell, keeping it open.
+
+        Returns True if the DB update succeeded.
+        """
         base_qty = effective_total if effective_total is not None else position.quantity_token
         new_qty = base_qty - sell_qty
         new_notional = new_qty * position.entry_price
@@ -604,6 +607,7 @@ class PortfolioStrategyEngine:
                 f"Failed to reduce position {position.id} "
                 f"for {position.symbol}: DB update returned reduced=False."
             )
+        return reduced
 
     async def _fully_close_position(
         self,
@@ -616,8 +620,11 @@ class PortfolioStrategyEngine:
         *,
         requested_notional: float,
         tx_hash: Optional[str] = None,
-    ) -> None:
-        """Fully close a position."""
+    ) -> bool:
+        """Fully close a position.
+
+        Returns True if the DB update succeeded.
+        """
         closed = await self.db.close_portfolio_position(
             position_id=position.id,
             exit_price=exit_price,
@@ -671,6 +678,7 @@ class PortfolioStrategyEngine:
                 f"Failed to close position {position.id} ({position.symbol}) "
                 "in database after trade execution."
             )
+        return closed
 
     # ------------------------------------------------------------------
     # Price helpers
