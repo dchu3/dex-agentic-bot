@@ -363,7 +363,7 @@ class PortfolioStrategyEngine:
 
         for position in positions:
             try:
-                action, trailing_updated = await self._evaluate_position(position, result, now)
+                _, trailing_updated = await self._evaluate_position(position, result, now)
                 if trailing_updated:
                     result.trailing_stops_updated += 1
             except (OSError, IOError):
@@ -476,13 +476,9 @@ class PortfolioStrategyEngine:
                 position.token_address,
             )
             if actual_balance is not None and actual_balance > 0:
-                effective_total = min(effective_total, actual_balance)
-                sell_qty = min(sell_qty, actual_balance)
-
-        # Recompute partial-sell qty from effective total (matters when
-        # wallet balance is lower than stored quantity).
-        if is_partial and effective_total != position.quantity_token:
-            sell_qty = effective_total * (self.config.sell_pct / 100.0)
+                # Wallet balance is the source of truth in live mode.
+                effective_total = actual_balance
+                sell_qty = effective_total * (self.config.sell_pct / 100.0) if is_partial else effective_total
 
         # Force full close when remaining value would be dust
         remaining_qty = effective_total - sell_qty
@@ -580,6 +576,7 @@ class PortfolioStrategyEngine:
             new_stop_price=new_stop,
             new_highest_price=exit_price,
             new_take_price=new_take_price,
+            partial_pnl_usd=realized_pnl,
         )
         await self.db.record_portfolio_execution(
             position_id=position.id,
@@ -595,6 +592,8 @@ class PortfolioStrategyEngine:
             error=None if reduced else "Position reduce update failed",
         )
         if reduced:
+            # Accumulate realized PnL in-memory so the final close records the total.
+            position.realized_pnl_usd = (position.realized_pnl_usd or 0.0) + realized_pnl
             cycle_result.positions_partially_sold += 1
             self._log(
                 "info",
@@ -646,13 +645,14 @@ class PortfolioStrategyEngine:
         )
         if closed:
             position.exit_price = exit_price
-            position.realized_pnl_usd = realized_pnl
+            # Accumulate: add this sell's PnL to any already-realized from partial sells.
+            position.realized_pnl_usd = (position.realized_pnl_usd or 0.0) + realized_pnl
             position.close_reason = close_reason
             cycle_result.positions_closed.append(position)
             self._log(
                 "info",
                 f"Closed {position.symbol} ({close_reason}) "
-                f"PnL=${realized_pnl:.4f}",
+                f"PnL=${position.realized_pnl_usd:.4f}",
             )
 
             # Warn when take_profit fires but actual PnL is negative (slippage/price inaccuracy)

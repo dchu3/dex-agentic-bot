@@ -505,6 +505,34 @@ class TestExitChecks:
         assert len(await db.list_open_portfolio_positions(chain="solana")) == 0
 
     @pytest.mark.asyncio
+    async def test_partial_sell_cumulative_pnl(self, db):
+        """realized_pnl_usd on final close includes PnL from all prior partial sells."""
+        await _insert_position(
+            db, entry_price=1.00, quantity_token=100.0, notional_usd=100.0,
+        )
+
+        # First: profitable partial sell at 1.20, sell 50%
+        # partial PnL = (1.20 - 1.00) * 50 = $10.00
+        engine = _make_engine(db, dex_price=1.20, trader_price=1.20, sell_pct=50.0)
+        result1 = await engine.run_exit_checks()
+        assert result1.positions_partially_sold == 1
+
+        # Second: remaining 50 tokens, price drops below stop → loss exit
+        # final PnL = (0.50 - 1.00) * 50 = -$25.00
+        engine2 = _make_engine(db, dex_price=0.50, trader_price=0.50, sell_pct=50.0)
+        result2 = await engine2.run_exit_checks()
+        assert len(result2.positions_closed) == 1
+
+        closed = result2.positions_closed[0]
+        # Total cumulative PnL = $10.00 + (-$25.00) = -$15.00
+        expected_total_pnl = (1.20 - 1.00) * 50 + (0.50 - 1.00) * 50
+        assert closed.realized_pnl_usd == pytest.approx(expected_total_pnl, abs=0.01)
+
+        # Verify the DB row also reflects the cumulative total
+        closed_positions = await db.list_closed_portfolio_positions()
+        assert closed_positions[0].realized_pnl_usd == pytest.approx(expected_total_pnl, abs=0.01)
+
+    @pytest.mark.asyncio
     async def test_partial_sell_dust_forces_full_close(self, db):
         """When remaining value after partial sell is dust (<$0.01), force full close."""
         # Tiny position: 10 tokens at $0.001 = $0.01 notional

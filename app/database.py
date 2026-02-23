@@ -201,7 +201,7 @@ class Database:
                 SET status = 'closed',
                     closed_at = ?,
                     exit_price = ?,
-                    realized_pnl_usd = ?,
+                    realized_pnl_usd = COALESCE(realized_pnl_usd, 0) + ?,
                     close_reason = ?
                 WHERE id = ? AND status = 'open'
                 """,
@@ -323,12 +323,13 @@ class Database:
         new_stop_price: float,
         new_highest_price: float,
         new_take_price: Optional[float] = None,
+        partial_pnl_usd: float = 0.0,
     ) -> bool:
         """Reduce an open position after a partial sell.
 
         Updates quantity, notional, resets trailing stop (and optionally
-        take_price) while keeping the position open so exit checks continue
-        on the remainder.
+        take_price), and accumulates realized PnL while keeping the position
+        open so exit checks continue on the remainder.
         """
         conn = await self._ensure_connected()
         async with self._lock:
@@ -340,7 +341,8 @@ class Database:
                         notional_usd = ?,
                         stop_price = ?,
                         highest_price = ?,
-                        take_price = ?
+                        take_price = ?,
+                        realized_pnl_usd = COALESCE(realized_pnl_usd, 0) + ?
                     WHERE id = ? AND status = 'open'
                     """,
                     (
@@ -349,6 +351,7 @@ class Database:
                         new_stop_price,
                         new_highest_price,
                         new_take_price,
+                        partial_pnl_usd,
                         position_id,
                     ),
                 )
@@ -359,7 +362,8 @@ class Database:
                     SET quantity_token = ?,
                         notional_usd = ?,
                         stop_price = ?,
-                        highest_price = ?
+                        highest_price = ?,
+                        realized_pnl_usd = COALESCE(realized_pnl_usd, 0) + ?
                     WHERE id = ? AND status = 'open'
                     """,
                     (
@@ -367,6 +371,7 @@ class Database:
                         new_notional,
                         new_stop_price,
                         new_highest_price,
+                        partial_pnl_usd,
                         position_id,
                     ),
                 )
