@@ -533,6 +533,33 @@ class TestExitChecks:
         assert closed_positions[0].realized_pnl_usd == pytest.approx(expected_total_pnl, abs=0.01)
 
     @pytest.mark.asyncio
+    async def test_stop_loss_with_positive_cumulative_pnl_does_not_increment_negative_sl_count(self, db):
+        """Negative SL counter should use cumulative PnL after partial-sell sequences."""
+        await _insert_position(
+            db, entry_price=1.00, quantity_token=100.0, notional_usd=100.0,
+        )
+
+        # First: profitable partial sell, realize +$30.00 on 50 tokens.
+        engine = _make_engine(db, dex_price=1.60, trader_price=1.60, sell_pct=50.0)
+        first = await engine.run_exit_checks()
+        assert first.positions_partially_sold == 1
+
+        # Second: stop-loss close on remaining 50 at $0.60 realizes -$20.00.
+        # Cumulative PnL remains positive (+$10.00), so negative SL count should not increment.
+        engine2 = _make_engine(db, dex_price=0.60, trader_price=0.60, sell_pct=50.0)
+        second = await engine2.run_exit_checks()
+        assert len(second.positions_closed) == 1
+        assert second.positions_closed[0].close_reason == "stop_loss"
+        assert second.positions_closed[0].realized_pnl_usd == pytest.approx(10.0, abs=0.01)
+
+        skip = await db.get_skip_phases("TestToken111111111111111111111111111111111", "solana")
+        assert skip == 0
+        count_after = await db.increment_negative_sl_count(
+            "TestToken111111111111111111111111111111111", "solana"
+        )
+        assert count_after == 1
+
+    @pytest.mark.asyncio
     async def test_partial_sell_dust_forces_full_close(self, db):
         """When remaining value after partial sell is dust (<$0.01), force full close."""
         # Tiny position: 10 tokens at $0.001 = $0.01 notional

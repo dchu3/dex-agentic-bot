@@ -457,18 +457,12 @@ class PortfolioStrategyEngine:
 
         Returns "closed", "reduced", or "failed".
         """
+        # In live mode, use wallet balance as the authoritative token count
+        # so that partial-sell math (remaining qty) isn't based on a stale DB value.
         # Only hold back a percentage when the position is profitable.
         # If at a loss, always sell the full quantity.
         is_profitable = current_price > position.entry_price
         is_partial = is_profitable and self.config.sell_pct < 100.0
-
-        if is_profitable:
-            sell_qty = position.quantity_token * (self.config.sell_pct / 100.0)
-        else:
-            sell_qty = position.quantity_token
-
-        # In live mode, use wallet balance as the authoritative token count
-        # so that partial-sell math (remaining qty) isn't based on a stale DB value.
         effective_total = position.quantity_token
         actual_balance: Optional[float] = None
         if not self.config.dry_run:
@@ -478,7 +472,11 @@ class PortfolioStrategyEngine:
             if actual_balance is not None and actual_balance > 0:
                 # Wallet balance is the source of truth in live mode.
                 effective_total = actual_balance
-                sell_qty = effective_total * (self.config.sell_pct / 100.0) if is_partial else effective_total
+        sell_qty = (
+            effective_total * (self.config.sell_pct / 100.0)
+            if is_partial
+            else effective_total
+        )
 
         # Force full close when remaining value would be dust
         remaining_qty = effective_total - sell_qty
@@ -655,16 +653,18 @@ class PortfolioStrategyEngine:
                 f"PnL=${position.realized_pnl_usd:.4f}",
             )
 
-            # Warn when take_profit fires but actual PnL is negative (slippage/price inaccuracy)
-            if close_reason == "take_profit" and realized_pnl < 0:
+            cumulative_pnl = position.realized_pnl_usd or 0.0
+
+            # Warn when take_profit fires but cumulative PnL is negative.
+            if close_reason == "take_profit" and cumulative_pnl < 0:
                 logger.warning(
-                    "take_profit triggered for %s but realized PnL is negative "
-                    "(entry=$%.10f exit=$%.10f pnl=$%.4f) — likely sell-side slippage",
-                    position.symbol, position.entry_price, exit_price, realized_pnl,
+                    "take_profit triggered for %s but cumulative realized PnL is negative "
+                    "(entry=$%.10f exit=$%.10f cumulative_pnl=$%.4f) — likely sell-side slippage",
+                    position.symbol, position.entry_price, exit_price, cumulative_pnl,
                 )
 
-            # Track negative stop losses for skip phases
-            if close_reason == "stop_loss" and realized_pnl < 0:
+            # Track negative stop losses for skip phases based on cumulative PnL.
+            if close_reason == "stop_loss" and cumulative_pnl < 0:
                 count = await self.db.increment_negative_sl_count(
                     position.token_address, position.chain
                 )
