@@ -363,7 +363,7 @@ class PortfolioStrategyEngine:
 
         for position in positions:
             try:
-                closed, trailing_updated = await self._evaluate_position(position, result, now)
+                action, trailing_updated = await self._evaluate_position(position, result, now)
                 if trailing_updated:
                     result.trailing_stops_updated += 1
             except (OSError, IOError):
@@ -390,10 +390,11 @@ class PortfolioStrategyEngine:
         position: PortfolioPosition,
         cycle_result: PortfolioExitCycleResult,
         now: datetime,
-    ) -> tuple[bool, bool]:
+    ) -> tuple[str, bool]:
         """Evaluate a position for trailing stop update or exit.
 
-        Returns (was_closed, trailing_updated).
+        Returns (exit_action, trailing_updated) where exit_action is one of
+        "closed", "reduced", or "none".
         """
         current_price = await self._fetch_current_price(
             position.token_address, position.chain
@@ -423,11 +424,11 @@ class PortfolioStrategyEngine:
         # Check exit conditions
         close_reason = self._exit_reason(position, current_price, now)
         if close_reason is None:
-            return False, trailing_updated
+            return "none", trailing_updated
 
-        # Execute sell
-        await self._close_position(position, current_price, close_reason, cycle_result)
-        return True, trailing_updated
+        # Execute sell (may fully close or partially reduce)
+        action = await self._close_position(position, current_price, close_reason, cycle_result)
+        return action, trailing_updated
 
     def _exit_reason(
         self,
@@ -451,8 +452,11 @@ class PortfolioStrategyEngine:
         current_price: float,
         close_reason: str,
         cycle_result: PortfolioExitCycleResult,
-    ) -> None:
-        """Execute sell and close (or reduce) position."""
+    ) -> str:
+        """Execute sell and close (or reduce) position.
+
+        Returns "closed", "reduced", or "failed".
+        """
         # Only hold back a percentage when the position is profitable.
         # If at a loss, always sell the full quantity.
         is_profitable = current_price > position.entry_price
@@ -511,6 +515,7 @@ class PortfolioStrategyEngine:
                     tx_hash=execution.tx_hash,
                     effective_total=effective_total,
                 )
+                return "reduced"
             else:
                 await self._fully_close_position(
                     position, sell_qty, exit_price, realized_pnl,
@@ -518,6 +523,7 @@ class PortfolioStrategyEngine:
                     requested_notional=requested_notional,
                     tx_hash=execution.tx_hash,
                 )
+                return "closed"
         else:
             err = f"Sell failed for {position.symbol}: {execution.error}"
             cycle_result.errors.append(err)
@@ -534,6 +540,7 @@ class PortfolioStrategyEngine:
                 success=False,
                 error=execution.error,
             )
+            return "failed"
 
     async def _reduce_position_after_partial_sell(
         self,
