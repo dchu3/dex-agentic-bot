@@ -22,6 +22,7 @@ LogCallback = Callable[[str, str, Optional[Dict[str, Any]]], None]
 
 _ERROR_SKIP_SECONDS = 300
 _NATIVE_PRICE_STALE_SECONDS = 120
+_DUST_NOTIONAL_USD = 0.01
 
 
 @dataclass
@@ -462,32 +463,28 @@ class PortfolioStrategyEngine:
         else:
             sell_qty = position.quantity_token
 
-        # Force full close when remaining value would be dust
-        remaining_qty = position.quantity_token - sell_qty
-        if is_partial and (remaining_qty * current_price) < 0.01:
-            sell_qty = position.quantity_token
-            is_partial = False
-
-        # Use wallet balance when available for live trades.
-        # Track whether balance capped the sell so we can adjust remaining qty.
-        wallet_balance_used = False
+        # In live mode, use wallet balance as the authoritative token count
+        # so that partial-sell math (remaining qty) isn't based on a stale DB value.
+        effective_total = position.quantity_token
         actual_balance: Optional[float] = None
         if not self.config.dry_run:
             actual_balance = await self.execution.get_wallet_token_balance(
                 position.token_address,
             )
             if actual_balance is not None and actual_balance > 0:
-                if actual_balance < sell_qty:
-                    sell_qty = actual_balance
-                    wallet_balance_used = True
+                effective_total = min(effective_total, actual_balance)
+                sell_qty = min(sell_qty, actual_balance)
 
-        # When wallet balance capped a partial sell, derive remaining from
-        # actual balance rather than stale DB quantity.
-        if is_partial and wallet_balance_used:
-            actual_remaining = actual_balance - sell_qty
-            if (actual_remaining * current_price) < 0.01:
-                sell_qty = actual_balance
-                is_partial = False
+        # Recompute partial-sell qty from effective total (matters when
+        # wallet balance is lower than stored quantity).
+        if is_partial and effective_total != position.quantity_token:
+            sell_qty = effective_total * (self.config.sell_pct / 100.0)
+
+        # Force full close when remaining value would be dust
+        remaining_qty = effective_total - sell_qty
+        if is_partial and (remaining_qty * current_price) < _DUST_NOTIONAL_USD:
+            sell_qty = effective_total
+            is_partial = False
 
         requested_notional = current_price * sell_qty
 
@@ -512,6 +509,7 @@ class PortfolioStrategyEngine:
                     close_reason, cycle_result,
                     requested_notional=requested_notional,
                     tx_hash=execution.tx_hash,
+                    effective_total=effective_total,
                 )
             else:
                 await self._fully_close_position(
@@ -548,9 +546,11 @@ class PortfolioStrategyEngine:
         *,
         requested_notional: float,
         tx_hash: Optional[str] = None,
+        effective_total: Optional[float] = None,
     ) -> None:
         """Reduce position after profitable partial sell, keeping it open."""
-        new_qty = position.quantity_token - sell_qty
+        base_qty = effective_total if effective_total is not None else position.quantity_token
+        new_qty = base_qty - sell_qty
         new_notional = new_qty * position.entry_price
         # Fresh trailing stop from exit price — don't keep old stop which may
         # be above current market and trigger an immediate re-exit.

@@ -459,7 +459,7 @@ class TestExitChecks:
     @pytest.mark.asyncio
     async def test_partial_sell_continues_trailing_stop(self, db):
         """After partial sell, remaining position keeps trailing stop and can exit again."""
-        pos = await _insert_position(
+        await _insert_position(
             db, entry_price=1.00, quantity_token=100.0, notional_usd=100.0,
         )
 
