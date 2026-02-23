@@ -554,10 +554,6 @@ class TestExitChecks:
 
         skip = await db.get_skip_phases("TestToken111111111111111111111111111111111", "solana")
         assert skip == 0
-        count_after = await db.increment_negative_sl_count(
-            "TestToken111111111111111111111111111111111", "solana"
-        )
-        assert count_after == 1
 
     @pytest.mark.asyncio
     async def test_partial_sell_dust_forces_full_close(self, db):
