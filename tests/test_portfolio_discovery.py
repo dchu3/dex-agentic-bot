@@ -445,6 +445,47 @@ class TestParseDecision:
         buy, _ = PortfolioDiscovery._parse_decision("")
         assert buy is False
 
+    def test_parses_nested_json_in_code_fence(self):
+        """Fence regex captures full content including nested objects."""
+        text = (
+            "Here is my analysis:\n"
+            "```json\n"
+            '{"buy": true, "reasoning": "Strong metrics", "metadata": {"score": 85, "confidence": "high"}}\n'
+            "```"
+        )
+        buy, reasoning = PortfolioDiscovery._parse_decision(text)
+        assert buy is True
+        assert reasoning == "Strong metrics"
+
+    def test_parses_deeply_nested_json(self):
+        """JSONDecoder handles multiple nesting levels correctly."""
+        text = (
+            'After analysis: '
+            '{"buy": false, "reasoning": "Weak", "details": {"risks": [{"type": "rug", "level": 3}], "scores": {"safety": 20}}}'
+        )
+        buy, reasoning = PortfolioDiscovery._parse_decision(text)
+        assert buy is False
+        assert reasoning == "Weak"
+
+    def test_parses_json_with_array_values(self):
+        """JSONDecoder handles JSON containing arrays with objects."""
+        text = '{"buy": true, "reasoning": "Good", "tokens": [{"symbol": "SOL"}, {"symbol": "USDC"}]}'
+        buy, reasoning = PortfolioDiscovery._parse_decision(text)
+        assert buy is True
+        assert reasoning == "Good"
+
+    def test_fence_with_nested_braces_not_truncated(self):
+        """Regression: old regex with .*? stopped at first }, truncating nested JSON."""
+        text = (
+            "```json\n"
+            '{"buy": true, "reasoning": "Volume looks great", "extra": {"nested": {"deep": true}}}\n'
+            "```\n"
+            "That's my final answer."
+        )
+        buy, reasoning = PortfolioDiscovery._parse_decision(text)
+        assert buy is True
+        assert reasoning == "Volume looks great"
+
 
 # ---------------------------------------------------------------------------
 # Agentic decision (_ai_decide) — heuristic fallback path

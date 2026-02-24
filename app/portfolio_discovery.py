@@ -598,7 +598,7 @@ class PortfolioDiscovery:
         """
         # Try markdown code fences first (most reliable)
         fence_matches = list(re.finditer(
-            r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL
+            r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL
         ))
         for match in reversed(fence_matches):
             try:

@@ -252,6 +252,40 @@ class TestTokenAnalyzer:
             report = await analyzer.analyze("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263")
             assert report.token_data.chain == "solana"
 
+    @pytest.mark.asyncio
+    async def test_non_dict_pair_data_handled_gracefully(self, mock_mcp_manager):
+        """Non-dict elements in pairs array should produce error, not crash."""
+        # Override dexscreener to return pairs with non-dict elements
+        dexscreener = mock_mcp_manager.get_client("dexscreener")
+        dexscreener.call_tool = AsyncMock(return_value={
+            "pairs": ["not-a-dict", None, 42]
+        })
+
+        with patch("app.token_analyzer.genai") as mock_genai:
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_content = MagicMock()
+            mock_part = MagicMock()
+            mock_part.text = "Analysis complete."
+            mock_content.parts = [mock_part]
+            mock_candidate.content = mock_content
+            mock_response.candidates = [mock_candidate]
+
+            mock_client = MagicMock()
+            mock_client.models.generate_content = MagicMock(return_value=mock_response)
+            mock_genai.Client.return_value = mock_client
+
+            analyzer = TokenAnalyzer(
+                api_key="test-key",
+                mcp_manager=mock_mcp_manager,
+            )
+
+            report = await analyzer.analyze(
+                "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+                "ethereum",
+            )
+            assert any("Invalid pair data" in e for e in report.token_data.errors)
+
 
 class TestTelegramReportFormatting:
     """Tests for Telegram report formatting."""

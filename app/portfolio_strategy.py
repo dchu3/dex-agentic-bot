@@ -417,10 +417,10 @@ class PortfolioStrategyEngine:
                     position.stop_price = new_stop
                     position.highest_price = new_highest
                     trailing_updated = True
-                logger.debug(
-                    "Trailing stop updated %s: stop=$%.10f highest=$%.10f",
-                    position.symbol, new_stop, new_highest,
-                )
+                    logger.debug(
+                        "Trailing stop updated %s: stop=$%.10f highest=$%.10f",
+                        position.symbol, new_stop, new_highest,
+                    )
 
         # Check exit conditions
         close_reason = self._exit_reason(position, current_price, now)
