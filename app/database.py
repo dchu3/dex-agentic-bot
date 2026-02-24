@@ -64,9 +64,6 @@ CREATE TABLE IF NOT EXISTS portfolio_executions (
 CREATE INDEX IF NOT EXISTS idx_portfolio_positions_status
 ON portfolio_positions(status, chain);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_portfolio_positions_unique_open
-ON portfolio_positions(token_address, chain) WHERE status = 'open';
-
 CREATE INDEX IF NOT EXISTS idx_portfolio_executions_position
 ON portfolio_executions(position_id);
 
@@ -142,6 +139,15 @@ class Database:
                   WHERE status = 'open'
                   GROUP BY LOWER(token_address), chain
               )
+            """
+        )
+
+        # Create the unique partial index after dedup to avoid failure on
+        # databases that already contain duplicate open positions.
+        await self._connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_portfolio_positions_unique_open
+            ON portfolio_positions(token_address, chain) WHERE status = 'open'
             """
         )
 
