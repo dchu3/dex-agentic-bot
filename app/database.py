@@ -144,10 +144,11 @@ class Database:
 
         # Create the unique partial index after dedup to avoid failure on
         # databases that already contain duplicate open positions.
+        # Use LOWER(token_address) to match case-insensitive dedup/query logic.
         await self._connection.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_portfolio_positions_unique_open
-            ON portfolio_positions(token_address, chain) WHERE status = 'open'
+            ON portfolio_positions(LOWER(token_address), chain) WHERE status = 'open'
             """
         )
 

@@ -1,5 +1,6 @@
 """Tests for /portfolio reset command and delete_closed_portfolio_data()."""
 
+import sqlite3
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -277,14 +278,24 @@ class TestDuplicateOpenPositionMigration:
             assert len(closed) == 2
 
             # Verify the unique index prevents future duplicates.
-            import sqlite3
-            with pytest.raises(Exception):
+            with pytest.raises(sqlite3.IntegrityError):
                 await conn.execute(
                     """
                     INSERT INTO portfolio_positions
                         (token_address, symbol, chain, entry_price, quantity_token,
                          notional_usd, stop_price, take_price, highest_price, status)
                     VALUES ('0xabc', 'DUP', 'solana', 3.0, 10.0, 10.0, 2.7, 3.5, 3.0, 'open')
+                    """,
+                )
+
+            # Verify case-insensitive uniqueness for token address.
+            with pytest.raises(sqlite3.IntegrityError):
+                await conn.execute(
+                    """
+                    INSERT INTO portfolio_positions
+                        (token_address, symbol, chain, entry_price, quantity_token,
+                         notional_usd, stop_price, take_price, highest_price, status)
+                    VALUES ('0xABC', 'DUP', 'solana', 3.1, 10.0, 10.0, 2.8, 3.6, 3.1, 'open')
                     """,
                 )
         finally:
