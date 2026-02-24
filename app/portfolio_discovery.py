@@ -516,13 +516,16 @@ class PortfolioDiscovery:
             ),
         )
 
-        response = chat.send_message(initial_message)
+        response = await asyncio.to_thread(chat.send_message, initial_message)
 
         for _ in range(max_iterations):
             # Collect any function calls in this response
             function_calls = []
             if response.candidates:
-                for part in response.candidates[0].content.parts:
+                candidate = response.candidates[0]
+                if not candidate.content or not candidate.content.parts:
+                    break
+                for part in candidate.content.parts:
                     if hasattr(part, "function_call") and part.function_call:
                         function_calls.append(part.function_call)
 
@@ -560,14 +563,16 @@ class PortfolioDiscovery:
                 )
                 self._log("debug", f"Tool call: {fc.name}({args}) → {result_str[:120]}…")
 
-            response = chat.send_message(tool_results)
+            response = await asyncio.to_thread(chat.send_message, tool_results)
 
         # Exhausted iterations — parse whatever we have
         text = ""
         if response.candidates:
-            for part in response.candidates[0].content.parts:
-                if hasattr(part, "text") and part.text:
-                    text += part.text
+            candidate = response.candidates[0]
+            if candidate.content and candidate.content.parts:
+                for part in candidate.content.parts:
+                    if hasattr(part, "text") and part.text:
+                        text += part.text
         return self._parse_decision(text)
 
     # DexScreener MCP uses camelCase parameter names. The model sometimes
@@ -591,16 +596,36 @@ class PortfolioDiscovery:
         Expected format (last JSON block in text):
           { "buy": true/false, "reasoning": "..." }
         """
-        # Find the last JSON block in the text
-        matches = list(re.finditer(r'\{[^{}]*"buy"[^{}]*\}', text, re.DOTALL))
-        for match in reversed(matches):
+        # Try markdown code fences first (most reliable)
+        fence_matches = list(re.finditer(
+            r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL
+        ))
+        for match in reversed(fence_matches):
             try:
-                data = json.loads(match.group())
-                buy = bool(data.get("buy", False))
-                reasoning = str(data.get("reasoning", "")).strip()
-                return buy, reasoning
+                data = json.loads(match.group(1))
+                if "buy" in data:
+                    return bool(data["buy"]), str(data.get("reasoning", "")).strip()
             except (json.JSONDecodeError, ValueError):
                 continue
+
+        # Use JSONDecoder to handle nested braces correctly
+        decoder = json.JSONDecoder()
+        last_match = None
+        idx = 0
+        while idx < len(text):
+            idx = text.find('{', idx)
+            if idx == -1:
+                break
+            try:
+                data, end_idx = decoder.raw_decode(text, idx)
+                if isinstance(data, dict) and "buy" in data:
+                    last_match = data
+                idx = end_idx
+            except (json.JSONDecodeError, ValueError):
+                idx += 1
+
+        if last_match is not None:
+            return bool(last_match["buy"]), str(last_match.get("reasoning", "")).strip()
 
         # Fallback: look for bare true/false near "buy" keyword
         lower = text.lower()

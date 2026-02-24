@@ -261,6 +261,9 @@ class TokenAnalyzer:
             
             # Get data from first/best pair
             best_pair = pairs[0]
+            if not isinstance(best_pair, dict):
+                token_data.errors.append("Invalid pair data format")
+                return
             
             # Update chain from actual result (important for EVM auto-detection)
             actual_chain = best_pair.get("chainId")
@@ -429,7 +432,8 @@ class TokenAnalyzer:
         context = self._build_analysis_context(token_data)
         
         try:
-            response = self.client.models.generate_content(
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
                 model=self.model_name,
                 contents=context,
                 config=types.GenerateContentConfig(
@@ -522,7 +526,8 @@ class TokenAnalyzer:
         context = self._build_analysis_context(token_data)
         
         try:
-            response = self.client.models.generate_content(
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
                 model=self.model_name,
                 contents=context,
                 config=types.GenerateContentConfig(

@@ -121,6 +121,37 @@ class Database:
 
         await self._connection.execute("PRAGMA foreign_keys = ON")
         await self._connection.executescript(SCHEMA)
+
+        # Deduplicate open positions before unique index is enforced.
+        # Keeps the oldest open row per (token_address, chain) and closes
+        # any newer duplicates so the UNIQUE partial index can be created
+        # safely on databases that pre-date this constraint.
+        await self._connection.execute(
+            """
+            UPDATE portfolio_positions
+            SET status = 'closed',
+                close_reason = 'duplicate_cleanup',
+                closed_at = CURRENT_TIMESTAMP
+            WHERE status = 'open'
+              AND id NOT IN (
+                  SELECT MIN(id)
+                  FROM portfolio_positions
+                  WHERE status = 'open'
+                  GROUP BY LOWER(token_address), chain
+              )
+            """
+        )
+
+        # Create the unique partial index after dedup to avoid failure on
+        # databases that already contain duplicate open positions.
+        # Use LOWER(token_address) to match case-insensitive dedup/query logic.
+        await self._connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_portfolio_positions_unique_open
+            ON portfolio_positions(LOWER(token_address), chain) WHERE status = 'open'
+            """
+        )
+
         await self._connection.commit()
 
     async def close(self) -> None:

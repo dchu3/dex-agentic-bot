@@ -408,18 +408,19 @@ class PortfolioStrategyEngine:
             new_stop = max(position.stop_price, new_trail_stop)
 
             if new_stop > position.stop_price or new_highest > position.highest_price:
-                await self.db.update_portfolio_trailing_stop(
+                updated = await self.db.update_portfolio_trailing_stop(
                     position_id=position.id,
                     new_stop_price=new_stop,
                     new_highest_price=new_highest,
                 )
-                position.stop_price = new_stop
-                position.highest_price = new_highest
-                trailing_updated = True
-                logger.debug(
-                    "Trailing stop updated %s: stop=$%.10f highest=$%.10f",
-                    position.symbol, new_stop, new_highest,
-                )
+                if updated:
+                    position.stop_price = new_stop
+                    position.highest_price = new_highest
+                    trailing_updated = True
+                    logger.debug(
+                        "Trailing stop updated %s: stop=$%.10f highest=$%.10f",
+                        position.symbol, new_stop, new_highest,
+                    )
 
         # Check exit conditions
         close_reason = self._exit_reason(position, current_price, now)

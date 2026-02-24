@@ -216,9 +216,9 @@ class MCPClient:
             return
 
         msg_id = msg.get("id")
-        if msg_id and msg_id in self._pending:
-            future = self._pending.pop(msg_id)
-            if not future.done():
+        if msg_id:
+            future = self._pending.pop(msg_id, None)
+            if future is not None and not future.done():
                 if "error" in msg:
                     future.set_exception(RuntimeError(str(msg["error"])))
                 else:
