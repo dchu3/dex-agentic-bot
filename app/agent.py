@@ -252,13 +252,13 @@ class AgenticPlanner:
         max_malformed_retries = 2
         
         try:
-            response = chat.send_message(message)
+            response = await asyncio.to_thread(chat.send_message, message)
         except Exception as e:
             if "MALFORMED_FUNCTION_CALL" in str(e):
                 self._log("error", f"Malformed function call: {str(e)}")
                 ctx.malformed_retries += 1
                 recovery_msg = self._build_recovery_message(ctx.original_query, ctx.malformed_retries)
-                response = chat.send_message(recovery_msg)
+                response = await asyncio.to_thread(chat.send_message, recovery_msg)
             else:
                 raise
 
@@ -275,7 +275,7 @@ class AgenticPlanner:
                     self._log("info", f"Recovery attempt {ctx.malformed_retries}/{max_malformed_retries}")
                     recovery_msg = self._build_recovery_message(ctx.original_query, ctx.malformed_retries)
                     try:
-                        response = chat.send_message(recovery_msg)
+                        response = await asyncio.to_thread(chat.send_message, recovery_msg)
                         continue  # Re-enter loop with new response
                     except Exception as e:
                         self._log("error", f"Recovery failed: {str(e)}")
@@ -327,14 +327,14 @@ class AgenticPlanner:
 
             # Send results back to model, handle malformed function calls
             try:
-                response = chat.send_message(tool_results)
+                response = await asyncio.to_thread(chat.send_message, tool_results)
             except Exception as e:
                 if "MALFORMED_FUNCTION_CALL" in str(e):
                     self._log("error", f"Malformed function call on retry: {str(e)}")
                     ctx.malformed_retries += 1
                     if ctx.malformed_retries <= max_malformed_retries:
                         recovery_msg = self._build_recovery_message(ctx.original_query, ctx.malformed_retries)
-                        response = chat.send_message(recovery_msg)
+                        response = await asyncio.to_thread(chat.send_message, recovery_msg)
                     else:
                         return PlannerResult(
                             message=(
