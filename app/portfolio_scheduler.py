@@ -190,6 +190,7 @@ class PortfolioScheduler:
             for pos in result.positions_opened:
                 reasoning = pos.discovery_reasoning or ""
                 lines.append(f"• {pos.symbol}: entry {format_price(pos.entry_price)}")
+                lines.append(f"  📋 <code>{pos.token_address}</code>")
                 if reasoning:
                     lines.append(f"  💬 {reasoning}")
             lines.append("")
