@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.database import PortfolioPosition
 from app.portfolio_scheduler import PortfolioScheduler
 from app.portfolio_strategy import (
     PortfolioDiscoveryCycleResult,
@@ -188,3 +189,51 @@ class TestSchedulerLoops:
 
         assert engine.discovery_calls >= 1
         assert engine.exit_calls >= 1
+
+
+class TestDiscoveryNotification:
+    @pytest.mark.asyncio
+    async def test_discovery_notification_includes_token_address(self):
+        """Telegram discovery alert should contain the token contract address."""
+        token_addr = "TestToken111111111111111111111111111111111"
+        pos = PortfolioPosition(
+            id=1,
+            token_address=token_addr,
+            symbol="TEST",
+            chain="solana",
+            entry_price=0.01,
+            quantity_token=500.0,
+            notional_usd=5.0,
+            stop_price=0.0092,
+            take_price=0.0115,
+            highest_price=0.01,
+            opened_at=datetime.now(timezone.utc),
+            discovery_reasoning="looks good",
+        )
+
+        result = PortfolioDiscoveryCycleResult(
+            timestamp=datetime.now(timezone.utc),
+            candidates_found=1,
+            positions_opened=[pos],
+        )
+
+        engine = MockPortfolioEngine()
+        engine.run_discovery_cycle = AsyncMock(return_value=result)
+
+        mock_telegram = AsyncMock()
+        mock_telegram.is_configured = True
+
+        scheduler = PortfolioScheduler(
+            engine=engine,
+            discovery_interval_seconds=3600,
+            exit_check_interval_seconds=60,
+            telegram=mock_telegram,
+        )
+
+        await scheduler.run_discovery_now()
+
+        mock_telegram.send_message.assert_called_once()
+        message = mock_telegram.send_message.call_args[0][0]
+        assert token_addr in message
+        assert "<code>" in message
+        assert "TEST" in message
