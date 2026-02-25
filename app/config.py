@@ -181,6 +181,13 @@ class Settings(BaseSettings):
     portfolio_slippage_probe_max_slippage_pct: float = Field(
         default=5.0, alias="PORTFOLIO_SLIPPAGE_PROBE_MAX_SLIPPAGE_PCT", ge=0.1, le=100.0
     )
+    # SOL trend gate: skip discovery when SOL drops too fast
+    portfolio_sol_dump_threshold_pct: float = Field(
+        default=-5.0, alias="PORTFOLIO_SOL_DUMP_THRESHOLD_PCT", le=0.0
+    )
+    portfolio_sol_trend_lookback_mins: int = Field(
+        default=60, alias="PORTFOLIO_SOL_TREND_LOOKBACK_MINS", ge=5, le=1440
+    )
 
 
 @lru_cache(maxsize=1)

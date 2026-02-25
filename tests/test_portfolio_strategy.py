@@ -906,3 +906,141 @@ class TestSlippageProbeInOpenPosition:
             await engine._open_position(self._candidate())
 
         mock_probe.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# SOL trend gate tests
+# ---------------------------------------------------------------------------
+
+
+def _async_return(value):
+    """Create an async function that returns a fixed value."""
+    async def _inner(*args, **kwargs):
+        return value
+    return _inner
+
+
+class TestSolTrendGate:
+    """Tests for the SOL market trend gate in discovery cycle."""
+
+    @pytest.mark.asyncio
+    async def test_discovery_skipped_when_sol_dumping(self, db):
+        """Discovery should be skipped when SOL price drops beyond threshold."""
+        engine = _make_engine(db, sol_dump_threshold_pct=-5.0, sol_trend_lookback_mins=60)
+
+        # Simulate price history: SOL dropped from 200 to 185 (-7.5%)
+        now = datetime.now(timezone.utc)
+        engine._native_price_history.append((now - timedelta(minutes=50), 200.0))
+        engine._native_price_history.append((now - timedelta(minutes=30), 195.0))
+        engine._native_price_history.append((now - timedelta(minutes=1), 185.0))
+        engine._native_price_usd = 185.0
+        engine._native_price_updated_at = now
+
+        result = await engine.run_discovery_cycle()
+        assert "SOL trend" in result.summary
+        assert "-7.5%" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_discovery_allowed_when_sol_sideways(self, db):
+        """Discovery should proceed when SOL is moving sideways."""
+        engine = _make_engine(db, sol_dump_threshold_pct=-5.0, sol_trend_lookback_mins=60)
+        engine.discovery.discover = _async_return([])
+
+        now = datetime.now(timezone.utc)
+        engine._native_price_history.append((now - timedelta(minutes=50), 200.0))
+        engine._native_price_history.append((now - timedelta(minutes=1), 198.0))
+        engine._native_price_usd = 198.0
+        engine._native_price_updated_at = now
+
+        result = await engine.run_discovery_cycle()
+        # Should pass trend gate — summary should NOT mention SOL trend
+        assert "SOL trend" not in result.summary
+
+    @pytest.mark.asyncio
+    async def test_discovery_allowed_when_sol_rising(self, db):
+        """Discovery should proceed when SOL is trending up."""
+        engine = _make_engine(db, sol_dump_threshold_pct=-5.0, sol_trend_lookback_mins=60)
+        engine.discovery.discover = _async_return([])
+
+        now = datetime.now(timezone.utc)
+        engine._native_price_history.append((now - timedelta(minutes=50), 200.0))
+        engine._native_price_history.append((now - timedelta(minutes=1), 220.0))
+        engine._native_price_usd = 220.0
+        engine._native_price_updated_at = now
+
+        result = await engine.run_discovery_cycle()
+        assert "SOL trend" not in result.summary
+
+    @pytest.mark.asyncio
+    async def test_discovery_allowed_with_insufficient_history(self, db):
+        """Discovery should proceed (fail-open) when not enough price data."""
+        engine = _make_engine(db, sol_dump_threshold_pct=-5.0, sol_trend_lookback_mins=60)
+        engine.discovery.discover = _async_return([])
+
+        # Only one data point — insufficient for trend calculation
+        now = datetime.now(timezone.utc)
+        engine._native_price_history.append((now - timedelta(minutes=1), 200.0))
+        engine._native_price_usd = 200.0
+        engine._native_price_updated_at = now
+
+        result = await engine.run_discovery_cycle()
+        assert "SOL trend" not in result.summary
+
+    @pytest.mark.asyncio
+    async def test_custom_threshold_respected(self, db):
+        """A stricter threshold (-3%) should trigger skip on a smaller drop."""
+        engine = _make_engine(db, sol_dump_threshold_pct=-3.0, sol_trend_lookback_mins=60)
+
+        now = datetime.now(timezone.utc)
+        # SOL dropped from 200 to 192 (-4%)
+        engine._native_price_history.append((now - timedelta(minutes=50), 200.0))
+        engine._native_price_history.append((now - timedelta(minutes=1), 192.0))
+        engine._native_price_usd = 192.0
+        engine._native_price_updated_at = now
+
+        result = await engine.run_discovery_cycle()
+        assert "SOL trend" in result.summary
+        assert "threshold -3.0%" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_threshold_boundary_not_triggered(self, db):
+        """A drop exactly at the threshold should NOT trigger skip (< not <=)."""
+        engine = _make_engine(db, sol_dump_threshold_pct=-5.0, sol_trend_lookback_mins=60)
+        engine.discovery.discover = _async_return([])
+
+        now = datetime.now(timezone.utc)
+        # SOL dropped from 200 to 190 = exactly -5.0%
+        engine._native_price_history.append((now - timedelta(minutes=50), 200.0))
+        engine._native_price_history.append((now - timedelta(minutes=1), 190.0))
+        engine._native_price_usd = 190.0
+        engine._native_price_updated_at = now
+
+        result = await engine.run_discovery_cycle()
+        # Exactly at threshold — should NOT skip
+        assert "SOL trend" not in result.summary
+
+    @pytest.mark.asyncio
+    async def test_exits_still_run_during_sol_dump(self, db):
+        """Exit checks should always run regardless of SOL trend."""
+        engine = _make_engine(db, sol_dump_threshold_pct=-5.0, sol_trend_lookback_mins=60)
+
+        now = datetime.now(timezone.utc)
+        # Simulate a dump
+        engine._native_price_history.append((now - timedelta(minutes=50), 200.0))
+        engine._native_price_history.append((now - timedelta(minutes=1), 180.0))
+        engine._native_price_usd = 180.0
+        engine._native_price_updated_at = now
+
+        result = await engine.run_exit_checks()
+        # Should complete normally — no "SOL trend" skip
+        assert result.summary is None or "SOL trend" not in (result.summary or "")
+
+    @pytest.mark.asyncio
+    async def test_price_history_recorded_on_refresh(self, db):
+        """_refresh_native_price should append to the price history deque."""
+        engine = _make_engine(db, native_price=185.0)
+
+        assert len(engine._native_price_history) == 0
+        await engine._refresh_native_price()
+        assert len(engine._native_price_history) == 1
+        assert engine._native_price_history[0][1] == 185.0

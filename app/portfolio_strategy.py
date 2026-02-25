@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from app.execution import TraderExecutionService
 from app.portfolio_discovery import DiscoveryCandidate, PortfolioDiscovery
@@ -57,6 +58,8 @@ class PortfolioStrategyConfig:
     slippage_probe_enabled: bool = False
     slippage_probe_usd: float = 0.50
     slippage_probe_max_slippage_pct: float = 5.0
+    sol_dump_threshold_pct: float = -5.0
+    sol_trend_lookback_mins: int = 60
 
 
 @dataclass
@@ -131,12 +134,23 @@ class PortfolioStrategyEngine:
 
         self._native_price_usd: Optional[float] = None
         self._native_price_updated_at: Optional[datetime] = None
+        self._native_price_history: Deque[Tuple[datetime, float]] = deque()
         self._ref_price_cache: Optional[PriceCache] = None
         self._skip_until: Dict[str, datetime] = {}
 
     def _log(self, level: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
         if self.verbose and self.log_callback:
             self.log_callback(level, message, data)
+
+    def _check_sol_trend(self) -> Optional[float]:
+        """Return SOL % change over the lookback window, or *None* if insufficient data."""
+        if len(self._native_price_history) < 2:
+            return None
+        oldest_price = self._native_price_history[0][1]
+        newest_price = self._native_price_history[-1][1]
+        if oldest_price <= 0:
+            return None
+        return ((newest_price - oldest_price) / oldest_price) * 100.0
 
     # ------------------------------------------------------------------
     # Discovery cycle
@@ -156,6 +170,16 @@ class PortfolioStrategyEngine:
             if self._native_price_usd is None:
                 result.summary = "Skipped: native token price unavailable"
                 result.errors.append("Native token price is None")
+                return result
+
+            # Check SOL trend — skip discovery if SOL is dumping
+            sol_change = self._check_sol_trend()
+            if sol_change is not None and sol_change < self.config.sol_dump_threshold_pct:
+                result.summary = (
+                    f"Skipped: SOL trend {sol_change:+.1f}% "
+                    f"(threshold {self.config.sol_dump_threshold_pct}%)"
+                )
+                self._log("info", result.summary)
                 return result
 
             # Check available slots
@@ -729,6 +753,18 @@ class PortfolioStrategyEngine:
             if price and price > 0:
                 self._native_price_usd = price
                 self._native_price_updated_at = datetime.now(timezone.utc)
+                self._native_price_history.append(
+                    (self._native_price_updated_at, price)
+                )
+                # Prune entries older than the lookback window
+                cutoff = self._native_price_updated_at - timedelta(
+                    minutes=self.config.sol_trend_lookback_mins
+                )
+                while (
+                    self._native_price_history
+                    and self._native_price_history[0][0] < cutoff
+                ):
+                    self._native_price_history.popleft()
         except Exception as exc:
             logger.warning("Failed to fetch native token price: %s", exc)
 

@@ -870,6 +870,8 @@ Examples:
             slippage_probe_enabled=settings.portfolio_slippage_probe_enabled,
             slippage_probe_usd=settings.portfolio_slippage_probe_usd,
             slippage_probe_max_slippage_pct=settings.portfolio_slippage_probe_max_slippage_pct,
+            sol_dump_threshold_pct=settings.portfolio_sol_dump_threshold_pct,
+            sol_trend_lookback_mins=settings.portfolio_sol_trend_lookback_mins,
         )
         portfolio_engine = PortfolioStrategyEngine(
             db=db,
