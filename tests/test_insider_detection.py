@@ -128,8 +128,8 @@ def _build_rpc_mock(
         if method == "getSignaturesForAddress":
             address = params[0] if params else ""
             opts = params[1] if len(params) > 1 else {}
-            # First sig request is for the mint (limit=1)
-            if opts.get("limit") == 1:
+            # First sig request is for the mint (limit=1000)
+            if opts.get("limit") == 1000:
                 return first_sig
             # Subsequent are for holders
             idx = call_count["getSignaturesForAddress_holder"]

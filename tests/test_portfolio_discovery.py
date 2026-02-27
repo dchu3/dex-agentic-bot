@@ -928,3 +928,23 @@ class TestInsiderCheckIntegration:
 
         assert len(result) == 1
         assert result[0].insider_analysis is None
+
+    @pytest.mark.asyncio
+    async def test_insider_check_skips_non_solana_chain(self):
+        """Insider check should skip for non-Solana chains even when enabled."""
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+            chain="ethereum",
+            insider_check_enabled=True,
+            verbose=True, log_callback=lambda *a: None,
+        )
+        candidates = [
+            DiscoveryCandidate(
+                token_address="0xabc123",
+                symbol="ETH_TOKEN", chain="ethereum", price_usd=1.0,
+                volume_24h=100000.0, liquidity_usd=50000.0,
+            ),
+        ]
+        result = await discovery._insider_check(candidates)
+        assert len(result) == 1
+        assert result[0].insider_analysis is None

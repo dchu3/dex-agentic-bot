@@ -57,7 +57,7 @@ DECISION_SYSTEM_PROMPT = """You are an autonomous crypto investment analyst deci
 
 ## Decision Criteria
 - **Buy** if: strong volume surge (volume/liquidity ratio > 1.5), positive price momentum, adequate liquidity (>$25k), safe or only mildly risky rugcheck status, and no severe insider red flags.
-- **No-buy** if: negative price momentum, low volume relative to liquidity, dangerous rugcheck risks, high insider/sniper concentration (top holders holding >40% of supply), creator wallet still holding large share and actively trading, or insufficient data to confirm safety.
+- **No-buy** if: negative price momentum, low volume relative to liquidity, dangerous rugcheck risks, insider_analysis risk marked as REJECT or WARN (high top-holder concentration or creator still holding a large share and actively trading), or insufficient data to confirm safety.
 
 ## CRITICAL: Final Response Format
 When you have finished investigating, you MUST end your response with ONLY this JSON block and nothing else after it:
@@ -490,6 +490,10 @@ class PortfolioDiscovery:
         """
         if not self.insider_check_enabled:
             self._log("info", "Insider check disabled — skipping")
+            return candidates
+
+        if self.chain != "solana":
+            self._log("info", f"Insider check not supported for chain '{self.chain}' — skipping")
             return candidates
 
         passed: List[DiscoveryCandidate] = []
