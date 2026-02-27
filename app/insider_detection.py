@@ -6,7 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -15,7 +15,9 @@ logger = logging.getLogger(__name__)
 _DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com"
 _RPC_TIMEOUT = 15
 _RPC_MAX_RETRY_DELAY = 30.0
+_RPC_CONCURRENCY = 3
 _TOP_HOLDERS_TO_ANALYSE = 10
+_DUMP_CHECK_COUNT = 5
 
 
 class InsiderRisk(str, Enum):
@@ -115,38 +117,25 @@ async def _get_token_supply(
     return None
 
 
-async def _get_signatures(
-    client: httpx.AsyncClient,
-    address: str,
-    rpc_url: str,
-    limit: int = 10,
-) -> List[Dict[str, Any]]:
-    """Fetch recent transaction signatures for an address."""
-    result = await _rpc_call(
-        client, rpc_url, "getSignaturesForAddress", [address, {"limit": limit}]
-    )
-    if isinstance(result, list):
-        return result
-    return []
-
-
 async def _get_mint_first_signature(
     client: httpx.AsyncClient,
     mint: str,
     rpc_url: str,
 ) -> Optional[str]:
-    """Get the earliest signature on the mint account (token creation tx)."""
+    """Get the earliest signature on the mint account (token creation tx).
+
+    getSignaturesForAddress returns newest-first, so we fetch a large batch
+    and take the last element (oldest in the batch).  For tokens with >1000
+    mint-account signatures the result may not be the true creation tx, but
+    it is a reasonable heuristic.
+    """
     result = await _rpc_call(
         client,
         rpc_url,
         "getSignaturesForAddress",
-        [mint, {"limit": 1, "commitment": "finalized"}],
+        [mint, {"limit": 1000, "commitment": "finalized"}],
     )
     if isinstance(result, list) and result:
-        # getSignaturesForAddress returns newest-first; with limit=1 on a
-        # mint account that has very few direct sigs this is typically the
-        # creation tx.  For a more robust approach we'd page backwards, but
-        # this is a pragmatic heuristic.
         return result[-1].get("signature")
     return None
 
@@ -184,10 +173,10 @@ def _extract_creator_from_tx(tx: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _holder_has_recent_sells(
+def _holder_is_actively_trading(
     signatures: List[Dict[str, Any]],
 ) -> bool:
-    """Heuristic: check if recent transactions suggest selling activity.
+    """Heuristic: check if a top holder is actively trading.
 
     We look for transactions with no errors (successful) — a high volume of
     recent activity from a top holder often indicates trading/dumping.
@@ -213,6 +202,12 @@ async def analyse_insiders(
     creator holding %, and dump-behaviour signals.
     """
     analysis = InsiderAnalysis()
+
+    sem = asyncio.Semaphore(_RPC_CONCURRENCY)
+
+    async def _bounded_rpc(method: str, params: list) -> Optional[Any]:
+        async with sem:
+            return await _rpc_call(client, rpc_url, method, params)
 
     async with httpx.AsyncClient(timeout=_RPC_TIMEOUT) as client:
         # --- Step 1: fetch top holders + total supply in parallel ---
@@ -248,23 +243,12 @@ async def analyse_insiders(
                 creator = _extract_creator_from_tx(tx)
                 if creator:
                     analysis.creator_address = creator
-                    # Check if creator is among top holders
-                    for h in holders:
-                        holder_addr = h.get("address", "")
-                        # Token accounts are owned by wallets; we can't
-                        # directly match the wallet address to the token
-                        # account address without another RPC call.  As a
-                        # pragmatic approximation we'll check the token
-                        # account owner in a batched call below.
-                        pass
 
         # --- Step 3b: resolve token account owners for creator matching ---
         creator_pct = 0.0
         if analysis.creator_address and top_n:
             owner_tasks = [
-                _rpc_call(
-                    client,
-                    rpc_url,
+                _bounded_rpc(
                     "getAccountInfo",
                     [h.get("address", ""), {"encoding": "jsonParsed"}],
                 )
@@ -293,16 +277,19 @@ async def analyse_insiders(
         analysis.creator_holding_pct = creator_pct
 
         # --- Step 4: detect dump behaviour from top holders ---
-        # Check recent tx activity for top 5 holders
-        dump_check_holders = top_n[:5]
+        dump_check_holders = top_n[:_DUMP_CHECK_COUNT]
         sig_tasks = [
-            _get_signatures(client, h.get("address", ""), rpc_url, limit=10)
+            _bounded_rpc(
+                "getSignaturesForAddress",
+                [h.get("address", ""), {"limit": 10}],
+            )
             for h in dump_check_holders
         ]
         sig_results = await asyncio.gather(*sig_tasks)
         dumping = 0
         for sigs in sig_results:
-            if _holder_has_recent_sells(sigs):
+            parsed = sigs if isinstance(sigs, list) else []
+            if _holder_is_actively_trading(parsed):
                 dumping += 1
         analysis.dumping_holders = dumping
 

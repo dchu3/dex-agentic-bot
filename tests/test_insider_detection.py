@@ -12,7 +12,7 @@ from app.insider_detection import (
     InsiderAnalysis,
     InsiderRisk,
     _extract_creator_from_tx,
-    _holder_has_recent_sells,
+    _holder_is_actively_trading,
     analyse_insiders,
 )
 
@@ -86,21 +86,21 @@ class TestExtractCreatorFromTx:
         assert _extract_creator_from_tx({"transaction": {"message": {"accountKeys": []}}}) is None
 
 
-class TestHolderHasRecentSells:
+class TestHolderIsActivelyTrading:
     def test_active_trader(self):
         sigs = _make_signatures(8, errors=1)  # 7 successful
-        assert _holder_has_recent_sells(sigs) is True
+        assert _holder_is_actively_trading(sigs) is True
 
     def test_quiet_holder(self):
         sigs = _make_signatures(3, errors=0)  # 3 successful
-        assert _holder_has_recent_sells(sigs) is False
+        assert _holder_is_actively_trading(sigs) is False
 
     def test_mostly_errors(self):
         sigs = _make_signatures(10, errors=8)  # only 2 successful
-        assert _holder_has_recent_sells(sigs) is False
+        assert _holder_is_actively_trading(sigs) is False
 
     def test_empty(self):
-        assert _holder_has_recent_sells([]) is False
+        assert _holder_is_actively_trading([]) is False
 
 
 # ---------------------------------------------------------------------------
