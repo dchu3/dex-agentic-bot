@@ -872,6 +872,11 @@ Examples:
             slippage_probe_max_slippage_pct=settings.portfolio_slippage_probe_max_slippage_pct,
             sol_dump_threshold_pct=settings.portfolio_sol_dump_threshold_pct,
             sol_trend_lookback_mins=settings.portfolio_sol_trend_lookback_mins,
+            insider_check_enabled=settings.portfolio_insider_check_enabled,
+            insider_max_concentration_pct=settings.portfolio_insider_max_concentration_pct,
+            insider_max_creator_pct=settings.portfolio_insider_max_creator_pct,
+            insider_warn_concentration_pct=settings.portfolio_insider_warn_concentration_pct,
+            insider_warn_creator_pct=settings.portfolio_insider_warn_creator_pct,
         )
         portfolio_engine = PortfolioStrategyEngine(
             db=db,

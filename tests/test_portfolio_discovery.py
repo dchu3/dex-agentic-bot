@@ -802,3 +802,149 @@ class TestScanTrendingIntegration:
         )
         pairs = await discovery._scan_trending()
         assert len(pairs) == 1
+
+
+# ---------------------------------------------------------------------------
+# Insider check integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestInsiderCheckIntegration:
+    """Tests for the _insider_check step in the discovery pipeline."""
+
+    @pytest.mark.asyncio
+    async def test_insider_check_disabled(self):
+        """When disabled, all candidates pass through unchanged."""
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+            insider_check_enabled=False,
+            verbose=True, log_callback=lambda *a: None,
+        )
+        candidates = [
+            DiscoveryCandidate(
+                token_address="A1111111111111111111111111111111111111111",
+                symbol="A", chain="solana", price_usd=1.0,
+                volume_24h=100000.0, liquidity_usd=50000.0,
+            ),
+        ]
+        result = await discovery._insider_check(candidates)
+        assert len(result) == 1
+        assert result[0].insider_analysis is None
+
+    @pytest.mark.asyncio
+    async def test_insider_check_reject_filters_candidate(self):
+        """Candidates with REJECT risk should be filtered out."""
+        from unittest.mock import patch, AsyncMock
+        from app.insider_detection import InsiderAnalysis, InsiderRisk
+
+        reject_analysis = InsiderAnalysis(
+            risk=InsiderRisk.REJECT,
+            top_holder_concentration_pct=65.0,
+            summary="top-10 hold 65.0% (>50%)",
+        )
+
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+            insider_check_enabled=True,
+            verbose=True, log_callback=lambda *a: None,
+        )
+        candidates = [
+            DiscoveryCandidate(
+                token_address="REJECT111111111111111111111111111111111111",
+                symbol="BAD", chain="solana", price_usd=1.0,
+                volume_24h=100000.0, liquidity_usd=50000.0,
+            ),
+        ]
+
+        with patch(
+            "app.portfolio_discovery.analyse_insiders",
+            new_callable=AsyncMock,
+            return_value=reject_analysis,
+        ):
+            result = await discovery._insider_check(candidates)
+
+        assert len(result) == 0
+
+    @pytest.mark.asyncio
+    async def test_insider_check_warn_passes_with_data(self):
+        """WARN candidates should pass through with insider data attached."""
+        from unittest.mock import patch, AsyncMock
+        from app.insider_detection import InsiderAnalysis, InsiderRisk
+
+        warn_analysis = InsiderAnalysis(
+            risk=InsiderRisk.WARN,
+            top_holder_concentration_pct=35.0,
+            summary="top-10 hold 35.0% (>30%)",
+        )
+
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+            insider_check_enabled=True,
+            verbose=True, log_callback=lambda *a: None,
+        )
+        candidates = [
+            DiscoveryCandidate(
+                token_address="WARN1111111111111111111111111111111111111",
+                symbol="MEH", chain="solana", price_usd=1.0,
+                volume_24h=100000.0, liquidity_usd=50000.0,
+            ),
+        ]
+
+        with patch(
+            "app.portfolio_discovery.analyse_insiders",
+            new_callable=AsyncMock,
+            return_value=warn_analysis,
+        ):
+            result = await discovery._insider_check(candidates)
+
+        assert len(result) == 1
+        assert result[0].insider_analysis is not None
+        assert result[0].insider_analysis.risk == InsiderRisk.WARN
+
+    @pytest.mark.asyncio
+    async def test_insider_check_error_fails_open(self):
+        """RPC errors should not block candidates (fail-open)."""
+        from unittest.mock import patch, AsyncMock
+
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+            insider_check_enabled=True,
+            verbose=True, log_callback=lambda *a: None,
+        )
+        candidates = [
+            DiscoveryCandidate(
+                token_address="ERR11111111111111111111111111111111111111",
+                symbol="ERR", chain="solana", price_usd=1.0,
+                volume_24h=100000.0, liquidity_usd=50000.0,
+            ),
+        ]
+
+        with patch(
+            "app.portfolio_discovery.analyse_insiders",
+            new_callable=AsyncMock,
+            side_effect=Exception("RPC timeout"),
+        ):
+            result = await discovery._insider_check(candidates)
+
+        assert len(result) == 1
+        assert result[0].insider_analysis is None
+
+    @pytest.mark.asyncio
+    async def test_insider_check_skips_non_solana_chain(self):
+        """Insider check should skip for non-Solana chains even when enabled."""
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+            chain="ethereum",
+            insider_check_enabled=True,
+            verbose=True, log_callback=lambda *a: None,
+        )
+        candidates = [
+            DiscoveryCandidate(
+                token_address="0xabc123",
+                symbol="ETH_TOKEN", chain="ethereum", price_usd=1.0,
+                volume_24h=100000.0, liquidity_usd=50000.0,
+            ),
+        ]
+        result = await discovery._insider_check(candidates)
+        assert len(result) == 1
+        assert result[0].insider_analysis is None

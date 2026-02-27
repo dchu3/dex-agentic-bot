@@ -60,6 +60,11 @@ class PortfolioStrategyConfig:
     slippage_probe_max_slippage_pct: float = 5.0
     sol_dump_threshold_pct: float = -5.0
     sol_trend_lookback_mins: int = 60
+    insider_check_enabled: bool = True
+    insider_max_concentration_pct: float = 50.0
+    insider_max_creator_pct: float = 30.0
+    insider_warn_concentration_pct: float = 30.0
+    insider_warn_creator_pct: float = 10.0
 
 
 @dataclass
@@ -130,6 +135,12 @@ class PortfolioStrategyEngine:
             chain=config.chain,
             verbose=verbose,
             log_callback=log_callback,
+            rpc_url=config.rpc_url,
+            insider_check_enabled=config.insider_check_enabled,
+            insider_max_concentration_pct=config.insider_max_concentration_pct,
+            insider_max_creator_pct=config.insider_max_creator_pct,
+            insider_warn_concentration_pct=config.insider_warn_concentration_pct,
+            insider_warn_creator_pct=config.insider_warn_creator_pct,
         )
 
         self._native_price_usd: Optional[float] = None

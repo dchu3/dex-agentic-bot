@@ -13,6 +13,8 @@ from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 from google import genai
 from google.genai import types
 
+from app.insider_detection import InsiderAnalysis, InsiderRisk, analyse_insiders
+
 if TYPE_CHECKING:
     from app.mcp_client import MCPManager
     from app.database import Database
@@ -39,6 +41,7 @@ class DiscoveryCandidate:
     momentum_score: float = 0.0
     reasoning: str = ""
     buy_decision: Optional[bool] = None
+    insider_analysis: Optional[InsiderAnalysis] = None
 
 
 DECISION_SYSTEM_PROMPT = """You are an autonomous crypto investment analyst deciding whether to buy a Solana token for a live trading portfolio.
@@ -53,8 +56,8 @@ DECISION_SYSTEM_PROMPT = """You are an autonomous crypto investment analyst deci
 - **rugcheck** — Solana token safety summary (uses snake_case params: `token_address`)
 
 ## Decision Criteria
-- **Buy** if: strong volume surge (volume/liquidity ratio > 1.5), positive price momentum, adequate liquidity (>$25k), safe or only mildly risky rugcheck status.
-- **No-buy** if: negative price momentum, low volume relative to liquidity, dangerous rugcheck risks, or insufficient data to confirm safety.
+- **Buy** if: strong volume surge (volume/liquidity ratio > 1.5), positive price momentum, adequate liquidity (>$25k), safe or only mildly risky rugcheck status, and no severe insider red flags.
+- **No-buy** if: negative price momentum, low volume relative to liquidity, dangerous rugcheck risks, insider_analysis risk marked as REJECT or WARN (high top-holder concentration or creator still holding a large share and actively trading), or insufficient data to confirm safety.
 
 ## CRITICAL: Final Response Format
 When you have finished investigating, you MUST end your response with ONLY this JSON block and nothing else after it:
@@ -86,6 +89,12 @@ class PortfolioDiscovery:
         chain: str = "solana",
         verbose: bool = False,
         log_callback: Optional[LogCallback] = None,
+        rpc_url: str = "https://api.mainnet-beta.solana.com",
+        insider_check_enabled: bool = True,
+        insider_max_concentration_pct: float = 50.0,
+        insider_max_creator_pct: float = 30.0,
+        insider_warn_concentration_pct: float = 30.0,
+        insider_warn_creator_pct: float = 10.0,
     ) -> None:
         self.mcp_manager = mcp_manager
         self.api_key = api_key
@@ -109,6 +118,12 @@ class PortfolioDiscovery:
         self.chain = chain
         self.verbose = verbose
         self.log_callback = log_callback
+        self.rpc_url = rpc_url
+        self.insider_check_enabled = insider_check_enabled
+        self.insider_max_concentration_pct = insider_max_concentration_pct
+        self.insider_max_creator_pct = insider_max_creator_pct
+        self.insider_warn_concentration_pct = insider_warn_concentration_pct
+        self.insider_warn_creator_pct = insider_warn_creator_pct
 
     def _log(self, level: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
         if self.verbose and self.log_callback:
@@ -147,9 +162,16 @@ class PortfolioDiscovery:
             return []
         self._log("info", f"{len(safe_candidates)} candidates passed safety")
 
-        # Step 5: Per-candidate agentic buy decision
+        # Step 5: Insider / sniper detection
+        insider_checked = await self._insider_check(safe_candidates)
+        if not insider_checked:
+            self._log("info", "No candidates passed insider checks")
+            return []
+        self._log("info", f"{len(insider_checked)} candidates passed insider checks")
+
+        # Step 6: Per-candidate agentic buy decision
         approved: List[DiscoveryCandidate] = []
-        for candidate in safe_candidates:
+        for candidate in insider_checked:
             if len(approved) >= max_candidates:
                 break
             # Populate heuristic score for reference regardless of AI outcome
@@ -458,6 +480,56 @@ class PortfolioDiscovery:
         else:
             return "Dangerous", score
 
+    async def _insider_check(
+        self, candidates: List[DiscoveryCandidate]
+    ) -> List[DiscoveryCandidate]:
+        """Run insider/sniper detection on candidates (Solana only).
+
+        REJECT-level candidates are filtered out. Others proceed with
+        insider_analysis attached for AI enrichment.
+        """
+        if not self.insider_check_enabled:
+            self._log("info", "Insider check disabled — skipping")
+            return candidates
+
+        if self.chain != "solana":
+            self._log("info", f"Insider check not supported for chain '{self.chain}' — skipping")
+            return candidates
+
+        passed: List[DiscoveryCandidate] = []
+        for candidate in candidates:
+            try:
+                analysis = await analyse_insiders(
+                    mint=candidate.token_address,
+                    rpc_url=self.rpc_url,
+                    max_concentration_pct=self.insider_max_concentration_pct,
+                    max_creator_pct=self.insider_max_creator_pct,
+                    warn_concentration_pct=self.insider_warn_concentration_pct,
+                    warn_creator_pct=self.insider_warn_creator_pct,
+                )
+                candidate.insider_analysis = analysis
+
+                if analysis.risk == InsiderRisk.REJECT:
+                    self._log(
+                        "info",
+                        f"Rejected {candidate.symbol}: insider={analysis.summary}",
+                    )
+                    continue
+
+                if analysis.risk == InsiderRisk.WARN:
+                    self._log(
+                        "info",
+                        f"Warning {candidate.symbol}: insider={analysis.summary}",
+                    )
+
+                passed.append(candidate)
+            except Exception as exc:
+                self._log("warning", f"Insider check failed for {candidate.symbol}: {exc}")
+                # Fail-open: proceed without insider data
+                passed.append(candidate)
+
+        return passed
+
     async def _ai_decide(self, candidate: DiscoveryCandidate) -> tuple[bool, str]:
         """Run a per-candidate agentic loop to make a binary buy/no-buy decision.
 
@@ -479,6 +551,18 @@ class PortfolioDiscovery:
             f"- Safety: {candidate.safety_status}"
             + (f" (score {candidate.safety_score:.0f})" if candidate.safety_score is not None else "")
         )
+
+        # Enrich with insider analysis if available
+        if candidate.insider_analysis:
+            ia = candidate.insider_analysis
+            initial_message += (
+                f"\n\nInsider Analysis ({ia.risk.value}):\n"
+                f"- Top-10 holder concentration: {ia.top_holder_concentration_pct:.1f}%\n"
+                f"- Creator holding: {ia.creator_holding_pct:.1f}%"
+                + (f" ({ia.creator_address[:8]}…)" if ia.creator_address else "")
+                + f"\n- Active trading holders: {ia.dumping_holders}/{ia.total_top_holders_checked}\n"
+                f"- Assessment: {ia.summary}"
+            )
 
         try:
             return await asyncio.wait_for(
