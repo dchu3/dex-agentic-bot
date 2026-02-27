@@ -75,17 +75,33 @@ async def _rpc_call(
             if resp.status_code == 429:
                 if attempt < retries:
                     delay = _rpc_retry_delay(resp, attempt)
+                    logger.debug(
+                        "RPC rate limited for %s (attempt %s/%s), retrying in %.1fs",
+                        method,
+                        attempt + 1,
+                        retries + 1,
+                        delay,
+                    )
                     await asyncio.sleep(delay)
                     continue
                 return None
             resp.raise_for_status()
             data = resp.json()
             return data.get("result")
-        except Exception:
+        except Exception as exc:
             if attempt < retries:
                 delay = _rpc_retry_delay(resp, attempt)
+                logger.debug(
+                    "RPC call failed for %s (attempt %s/%s): %s; retrying in %.1fs",
+                    method,
+                    attempt + 1,
+                    retries + 1,
+                    exc,
+                    delay,
+                )
                 await asyncio.sleep(delay)
                 continue
+            logger.warning("RPC call failed for %s after retries: %s", method, exc)
             return None
     return None
 
@@ -209,10 +225,14 @@ async def analyse_insiders(
         async with sem:
             return await _rpc_call(client, rpc_url, method, params)
 
+    async def _bounded_call(coro: Any) -> Any:
+        async with sem:
+            return await coro
+
     async with httpx.AsyncClient(timeout=_RPC_TIMEOUT) as client:
         # --- Step 1: fetch top holders + total supply in parallel ---
-        holders_task = _get_token_largest_accounts(client, mint, rpc_url)
-        supply_task = _get_token_supply(client, mint, rpc_url)
+        holders_task = _bounded_call(_get_token_largest_accounts(client, mint, rpc_url))
+        supply_task = _bounded_call(_get_token_supply(client, mint, rpc_url))
         holders, total_supply = await asyncio.gather(holders_task, supply_task)
 
         if not holders or not total_supply or total_supply <= 0:
@@ -236,9 +256,9 @@ async def analyse_insiders(
         analysis.total_top_holders_checked = len(top_n)
 
         # --- Step 3: detect creator wallet ---
-        first_sig = await _get_mint_first_signature(client, mint, rpc_url)
+        first_sig = await _bounded_call(_get_mint_first_signature(client, mint, rpc_url))
         if first_sig:
-            tx = await _get_transaction(client, first_sig, rpc_url)
+            tx = await _bounded_call(_get_transaction(client, first_sig, rpc_url))
             if tx:
                 creator = _extract_creator_from_tx(tx)
                 if creator:
