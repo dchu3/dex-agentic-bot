@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -204,6 +204,24 @@ class Settings(BaseSettings):
     portfolio_insider_warn_creator_pct: float = Field(
         default=10.0, alias="PORTFOLIO_INSIDER_WARN_CREATOR_PCT", ge=0, le=100
     )
+
+    @model_validator(mode="after")
+    def _validate_insider_thresholds(self) -> "Settings":
+        """Ensure insider WARN thresholds remain below MAX thresholds."""
+        if (
+            self.portfolio_insider_warn_concentration_pct
+            >= self.portfolio_insider_max_concentration_pct
+        ):
+            raise ValueError(
+                "PORTFOLIO_INSIDER_WARN_CONCENTRATION_PCT must be lower than "
+                "PORTFOLIO_INSIDER_MAX_CONCENTRATION_PCT"
+            )
+        if self.portfolio_insider_warn_creator_pct >= self.portfolio_insider_max_creator_pct:
+            raise ValueError(
+                "PORTFOLIO_INSIDER_WARN_CREATOR_PCT must be lower than "
+                "PORTFOLIO_INSIDER_MAX_CREATOR_PCT"
+            )
+        return self
 
 
 @lru_cache(maxsize=1)
