@@ -188,6 +188,22 @@ class Settings(BaseSettings):
     portfolio_sol_trend_lookback_mins: int = Field(
         default=60, alias="PORTFOLIO_SOL_TREND_LOOKBACK_MINS", ge=5, le=1440
     )
+    # Insider / sniper detection: analyse top holders before buying
+    portfolio_insider_check_enabled: bool = Field(
+        default=True, alias="PORTFOLIO_INSIDER_CHECK_ENABLED"
+    )
+    portfolio_insider_max_concentration_pct: float = Field(
+        default=50.0, alias="PORTFOLIO_INSIDER_MAX_CONCENTRATION_PCT", ge=0, le=100
+    )
+    portfolio_insider_max_creator_pct: float = Field(
+        default=30.0, alias="PORTFOLIO_INSIDER_MAX_CREATOR_PCT", ge=0, le=100
+    )
+    portfolio_insider_warn_concentration_pct: float = Field(
+        default=30.0, alias="PORTFOLIO_INSIDER_WARN_CONCENTRATION_PCT", ge=0, le=100
+    )
+    portfolio_insider_warn_creator_pct: float = Field(
+        default=10.0, alias="PORTFOLIO_INSIDER_WARN_CREATOR_PCT", ge=0, le=100
+    )
 
 
 @lru_cache(maxsize=1)
