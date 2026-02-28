@@ -89,7 +89,7 @@ class PortfolioDiscovery:
         chain: str = "solana",
         verbose: bool = False,
         log_callback: Optional[LogCallback] = None,
-        rpc_url: str = "https://api.mainnet-beta.solana.com",
+        rpc_url: str = "",
         insider_check_enabled: bool = True,
         insider_max_concentration_pct: float = 50.0,
         insider_max_creator_pct: float = 30.0,

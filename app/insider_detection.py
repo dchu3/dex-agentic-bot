@@ -12,7 +12,6 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com"
 _RPC_TIMEOUT = 15
 _RPC_MAX_RETRY_DELAY = 30.0
 _RPC_CONCURRENCY = 3
@@ -206,7 +205,7 @@ def _holder_is_actively_trading(
 
 async def analyse_insiders(
     mint: str,
-    rpc_url: str = _DEFAULT_RPC_URL,
+    rpc_url: str,
     max_concentration_pct: float = 50.0,
     max_creator_pct: float = 30.0,
     warn_concentration_pct: float = 30.0,

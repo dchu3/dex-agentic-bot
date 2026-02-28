@@ -15,9 +15,6 @@ logger = logging.getLogger(__name__)
 # Native SOL mint address used by Jupiter / DexScreener
 SOL_NATIVE_MINT = "So11111111111111111111111111111111111111112"
 
-# Default Solana RPC endpoint
-_DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com"
-
 # In-memory cache: mint address → decimals (immutable on-chain, safe to cache forever)
 _decimals_cache: Dict[str, int] = {
     SOL_NATIVE_MINT: 9,
@@ -52,7 +49,7 @@ def _rpc_retry_delay(
 
 async def get_token_decimals(
     mint_address: str,
-    rpc_url: str = _DEFAULT_RPC_URL,
+    rpc_url: str,
     retries: int = 2,
     retry_delay_seconds: float = 5.0,
 ) -> int:
@@ -118,7 +115,7 @@ async def get_token_decimals(
 
 async def verify_transaction_success(
     tx_hash: str,
-    rpc_url: str = _DEFAULT_RPC_URL,
+    rpc_url: str,
     retries: int = 3,
     retry_delay_seconds: float = 5.0,
 ) -> Optional[bool]:
@@ -251,7 +248,7 @@ class TraderExecutionService:
         quote_method_override: str = "",
         execute_method_override: str = "",
         quote_mint: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-        rpc_url: str = _DEFAULT_RPC_URL,
+        rpc_url: str = "",
     ) -> None:
         self.mcp_manager = mcp_manager
         self.chain = chain.lower()

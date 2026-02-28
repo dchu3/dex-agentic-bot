@@ -221,7 +221,7 @@ class TestVerifyTransactionSuccess:
             mock_client.post = AsyncMock(return_value=mock_response)
             mock_client_cls.return_value = mock_client
 
-            result = await verify_transaction_success("tx123", retries=0)
+            result = await verify_transaction_success("tx123", rpc_url="https://test-rpc", retries=0)
 
         assert result is True
 
@@ -242,7 +242,7 @@ class TestVerifyTransactionSuccess:
             mock_client.post = AsyncMock(return_value=mock_response)
             mock_client_cls.return_value = mock_client
 
-            result = await verify_transaction_success("tx123", retries=0)
+            result = await verify_transaction_success("tx123", rpc_url="https://test-rpc", retries=0)
 
         assert result is False
 
@@ -263,7 +263,7 @@ class TestVerifyTransactionSuccess:
             mock_client.post = AsyncMock(return_value=mock_response)
             mock_client_cls.return_value = mock_client
 
-            result = await verify_transaction_success("tx123", retries=0)
+            result = await verify_transaction_success("tx123", rpc_url="https://test-rpc", retries=0)
 
         assert result is None
 
@@ -294,7 +294,7 @@ class TestVerifyTransactionSuccess:
             mock_client.post = _post
             mock_client_cls.return_value = mock_client
 
-            result = await verify_transaction_success("tx123", retries=2, retry_delay_seconds=0.0)
+            result = await verify_transaction_success("tx123", rpc_url="https://test-rpc", retries=2, retry_delay_seconds=0.0)
 
         assert result is True
         assert call_count == 2
@@ -314,7 +314,7 @@ class TestVerifyTransactionSuccess:
             mock_client.post = AsyncMock(side_effect=ConnectionError("RPC down"))
             mock_client_cls.return_value = mock_client
 
-            result = await verify_transaction_success("tx123", retries=2, retry_delay_seconds=0.0)
+            result = await verify_transaction_success("tx123", rpc_url="https://test-rpc", retries=2, retry_delay_seconds=0.0)
 
         assert result is None
 
@@ -343,7 +343,7 @@ class TestVerifyTransactionSuccess:
             mock_client.post = AsyncMock(side_effect=lambda *a, **kw: next(responses))
             mock_client_cls.return_value = mock_client
 
-            result = await verify_transaction_success("tx123", retries=2, retry_delay_seconds=5.0)
+            result = await verify_transaction_success("tx123", rpc_url="https://test-rpc", retries=2, retry_delay_seconds=5.0)
 
         assert result is True
         mock_sleep.assert_called_once_with(7.0)
@@ -374,7 +374,7 @@ class TestVerifyTransactionSuccess:
             mock_client_cls.return_value = mock_client
 
             # attempt=0, base=5.0 → delay = min(5.0 * 2^0, 30) = 5.0
-            result = await verify_transaction_success("tx123", retries=2, retry_delay_seconds=5.0)
+            result = await verify_transaction_success("tx123", rpc_url="https://test-rpc", retries=2, retry_delay_seconds=5.0)
 
         assert result is True
         mock_sleep.assert_called_once_with(5.0)
@@ -397,7 +397,7 @@ class TestVerifyTransactionSuccess:
             mock_client.post = AsyncMock(return_value=rate_limited)
             mock_client_cls.return_value = mock_client
 
-            result = await verify_transaction_success("tx123", retries=2, retry_delay_seconds=0.0)
+            result = await verify_transaction_success("tx123", rpc_url="https://test-rpc", retries=2, retry_delay_seconds=0.0)
 
         assert result is None
 
@@ -521,7 +521,7 @@ class TestGetTokenDecimals:
             mock_client.post = AsyncMock(side_effect=lambda *a, **kw: next(responses))
             mock_client_cls.return_value = mock_client
 
-            result = await get_token_decimals("FakeMint_429A", retries=2, retry_delay_seconds=5.0)
+            result = await get_token_decimals("FakeMint_429A", rpc_url="https://test-rpc", retries=2, retry_delay_seconds=5.0)
 
         assert result == 6
         mock_sleep.assert_called_once_with(4.0)
@@ -543,7 +543,7 @@ class TestGetTokenDecimals:
             mock_client.post = AsyncMock(return_value=rate_limited)
             mock_client_cls.return_value = mock_client
 
-            result = await get_token_decimals("FakeMint_429B", retries=2, retry_delay_seconds=0.0)
+            result = await get_token_decimals("FakeMint_429B", rpc_url="https://test-rpc", retries=2, retry_delay_seconds=0.0)
 
         assert result == _SPL_DEFAULT_DECIMALS
 
@@ -572,7 +572,7 @@ class TestGetTokenDecimals:
             mock_client.post = _post
             mock_client_cls.return_value = mock_client
 
-            result = await get_token_decimals("FakeMint_429C", retries=2, retry_delay_seconds=5.0)
+            result = await get_token_decimals("FakeMint_429C", rpc_url="https://test-rpc", retries=2, retry_delay_seconds=5.0)
 
         assert result == 9
         assert call_count == 2
