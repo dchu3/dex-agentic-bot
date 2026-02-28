@@ -61,6 +61,9 @@ async def get_token_decimals(
     if mint_address in _decimals_cache:
         return _decimals_cache[mint_address]
 
+    if not rpc_url:
+        raise ValueError("rpc_url is required for on-chain decimal lookups")
+
     async with httpx.AsyncClient(timeout=10) as client:
         for attempt in range(retries + 1):
             resp = None
@@ -126,6 +129,9 @@ async def verify_transaction_success(
     or ``None`` if the status could not be determined (RPC error,
     transaction not yet found, etc.).
     """
+    if not rpc_url:
+        raise ValueError("rpc_url is required for transaction verification")
+
     async with httpx.AsyncClient(timeout=15) as client:
         for attempt in range(retries + 1):
             resp = None

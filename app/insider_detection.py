@@ -218,6 +218,9 @@ async def analyse_insiders(
     """
     analysis = InsiderAnalysis()
 
+    if not rpc_url:
+        raise ValueError("rpc_url is required for insider analysis")
+
     sem = asyncio.Semaphore(_RPC_CONCURRENCY)
 
     async def _bounded_rpc(method: str, params: list) -> Optional[Any]:

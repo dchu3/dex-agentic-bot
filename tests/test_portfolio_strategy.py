@@ -169,6 +169,7 @@ def _config(**overrides: Any) -> PortfolioStrategyConfig:
         cooldown_seconds=300,
         min_momentum_score=50.0,
         max_slippage_bps=300,
+        rpc_url="https://test-rpc",
     )
     for key, value in overrides.items():
         setattr(base, key, value)

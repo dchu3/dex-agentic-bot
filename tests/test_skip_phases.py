@@ -146,6 +146,7 @@ def _make_config(**overrides) -> PortfolioStrategyConfig:
         "cooldown_seconds": 300,
         "min_momentum_score": 50.0,
         "max_slippage_bps": 500,
+        "rpc_url": "https://test-rpc",
     }
     defaults.update(overrides)
     return PortfolioStrategyConfig(**defaults)
