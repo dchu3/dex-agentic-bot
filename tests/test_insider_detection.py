@@ -166,7 +166,7 @@ class TestAnalyseInsiders:
         )
 
         with patch("app.insider_detection._rpc_call", side_effect=mock):
-            result = await analyse_insiders("MINT_ADDR")
+            result = await analyse_insiders("MINT_ADDR", rpc_url="https://test-rpc")
 
         assert result.risk == InsiderRisk.CLEAN
         assert result.top_holder_concentration_pct == pytest.approx(10.0)
@@ -187,7 +187,7 @@ class TestAnalyseInsiders:
         )
 
         with patch("app.insider_detection._rpc_call", side_effect=mock):
-            result = await analyse_insiders("MINT_ADDR")
+            result = await analyse_insiders("MINT_ADDR", rpc_url="https://test-rpc")
 
         assert result.risk == InsiderRisk.REJECT
         assert result.top_holder_concentration_pct == pytest.approx(60.0)
@@ -229,7 +229,7 @@ class TestAnalyseInsiders:
         )
 
         with patch("app.insider_detection._rpc_call", side_effect=mock):
-            result = await analyse_insiders("MINT_ADDR")
+            result = await analyse_insiders("MINT_ADDR", rpc_url="https://test-rpc")
 
         assert result.risk == InsiderRisk.REJECT
         assert result.creator_holding_pct == pytest.approx(35.0)
@@ -249,7 +249,7 @@ class TestAnalyseInsiders:
         )
 
         with patch("app.insider_detection._rpc_call", side_effect=mock):
-            result = await analyse_insiders("MINT_ADDR")
+            result = await analyse_insiders("MINT_ADDR", rpc_url="https://test-rpc")
 
         assert result.risk == InsiderRisk.WARN
         assert 30.0 < result.top_holder_concentration_pct < 50.0
@@ -268,7 +268,7 @@ class TestAnalyseInsiders:
         )
 
         with patch("app.insider_detection._rpc_call", side_effect=mock):
-            result = await analyse_insiders("MINT_ADDR")
+            result = await analyse_insiders("MINT_ADDR", rpc_url="https://test-rpc")
 
         assert result.risk == InsiderRisk.WARN
         assert result.dumping_holders >= 3
@@ -279,7 +279,7 @@ class TestAnalyseInsiders:
         mock = _build_rpc_mock(holders=None, supply=None)
 
         with patch("app.insider_detection._rpc_call", side_effect=mock):
-            result = await analyse_insiders("MINT_ADDR")
+            result = await analyse_insiders("MINT_ADDR", rpc_url="https://test-rpc")
 
         assert result.risk == InsiderRisk.CLEAN
         assert len(result.errors) > 0
@@ -301,6 +301,7 @@ class TestAnalyseInsiders:
         with patch("app.insider_detection._rpc_call", side_effect=mock):
             result = await analyse_insiders(
                 "MINT_ADDR",
+                rpc_url="https://test-rpc",
                 warn_concentration_pct=20.0,
             )
 
@@ -314,7 +315,12 @@ class TestAnalyseInsiders:
         mock = _build_rpc_mock(holders=holders, supply=supply)
 
         with patch("app.insider_detection._rpc_call", side_effect=mock):
-            result = await analyse_insiders("MINT_ADDR")
+            result = await analyse_insiders("MINT_ADDR", rpc_url="https://test-rpc")
 
         assert result.risk == InsiderRisk.CLEAN
         assert len(result.errors) > 0
+
+    @pytest.mark.asyncio
+    async def test_raises_value_error_when_rpc_url_blank(self):
+        with pytest.raises(ValueError, match="rpc_url is required"):
+            await analyse_insiders("MINT_ADDR", rpc_url="   ")

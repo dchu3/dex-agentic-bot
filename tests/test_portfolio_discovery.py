@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -812,6 +813,16 @@ class TestScanTrendingIntegration:
 class TestInsiderCheckIntegration:
     """Tests for the _insider_check step in the discovery pipeline."""
 
+    def test_insider_check_enabled_without_rpc_url_disables_with_warning(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.portfolio_discovery"):
+            discovery = PortfolioDiscovery(
+                mcp_manager=MockMCPManager(),
+                api_key="x",
+                insider_check_enabled=True,
+            )
+        assert discovery.insider_check_enabled is False
+        assert "Insider check disabled" in caplog.text
+
     @pytest.mark.asyncio
     async def test_insider_check_disabled(self):
         """When disabled, all candidates pass through unchanged."""
@@ -846,6 +857,7 @@ class TestInsiderCheckIntegration:
         discovery = PortfolioDiscovery(
             mcp_manager=MockMCPManager(), api_key="x",
             insider_check_enabled=True,
+            rpc_url="https://test-rpc",
             verbose=True, log_callback=lambda *a: None,
         )
         candidates = [
@@ -880,6 +892,7 @@ class TestInsiderCheckIntegration:
         discovery = PortfolioDiscovery(
             mcp_manager=MockMCPManager(), api_key="x",
             insider_check_enabled=True,
+            rpc_url="https://test-rpc",
             verbose=True, log_callback=lambda *a: None,
         )
         candidates = [
@@ -909,6 +922,7 @@ class TestInsiderCheckIntegration:
         discovery = PortfolioDiscovery(
             mcp_manager=MockMCPManager(), api_key="x",
             insider_check_enabled=True,
+            rpc_url="https://test-rpc",
             verbose=True, log_callback=lambda *a: None,
         )
         candidates = [

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shlex
 import sys
 import uuid
@@ -38,6 +39,7 @@ class MCPClient:
         command: str,
         call_timeout: float = 90.0,
         retry_on_timeout: bool = True,
+        extra_env: Optional[Dict[str, str]] = None,
     ) -> None:
         self.name = name
         self.command = command
@@ -50,6 +52,7 @@ class MCPClient:
         self._command_repr = " ".join(self._command_args)
         self._call_timeout = call_timeout
         self._retry_on_timeout = retry_on_timeout
+        self._extra_env = extra_env
         self._cwd = self._resolve_cwd()
         self.process: Optional[Process] = None
         self._reader_task: Optional[asyncio.Task[None]] = None
@@ -97,12 +100,14 @@ class MCPClient:
             return
 
         print(f"  Starting MCP server: {self.name}")
+        env = {**os.environ, **self._extra_env} if self._extra_env else None
         self.process = await asyncio.create_subprocess_exec(
             *self._command_args,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=self._cwd,
+            env=env,
         )
         if self.process and self.process.returncode is not None:
             code = self.process.returncode
@@ -369,12 +374,14 @@ class MCPManager:
         blockscout_cmd: str = "",
         trader_cmd: str = "",
         call_timeout: float = 90.0,
+        solana_rpc_url: str = "",
     ) -> None:
         self.dexscreener = MCPClient("dexscreener", dexscreener_cmd, call_timeout=call_timeout)
         self.dexpaprika = MCPClient("dexpaprika", dexpaprika_cmd, call_timeout=call_timeout)
         self.honeypot = MCPClient("honeypot", honeypot_cmd, call_timeout=call_timeout) if honeypot_cmd else None
         self.rugcheck = MCPClient("rugcheck", rugcheck_cmd, call_timeout=call_timeout) if rugcheck_cmd else None
-        self.solana = MCPClient("solana", solana_rpc_cmd, call_timeout=call_timeout) if solana_rpc_cmd else None
+        solana_extra_env = {"SOLANA_RPC_URL": solana_rpc_url} if solana_rpc_url else None
+        self.solana = MCPClient("solana", solana_rpc_cmd, call_timeout=call_timeout, extra_env=solana_extra_env) if solana_rpc_cmd else None
         self.blockscout = MCPClient("blockscout", blockscout_cmd, call_timeout=call_timeout) if blockscout_cmd else None
         # retry_on_timeout=False: trader executes swaps; retrying on timeout risks a double submission.
         self.trader = MCPClient("trader", trader_cmd, call_timeout=call_timeout, retry_on_timeout=False) if trader_cmd else None

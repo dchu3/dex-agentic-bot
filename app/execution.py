@@ -15,9 +15,6 @@ logger = logging.getLogger(__name__)
 # Native SOL mint address used by Jupiter / DexScreener
 SOL_NATIVE_MINT = "So11111111111111111111111111111111111111112"
 
-# Default Solana RPC endpoint
-_DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com"
-
 # In-memory cache: mint address → decimals (immutable on-chain, safe to cache forever)
 _decimals_cache: Dict[str, int] = {
     SOL_NATIVE_MINT: 9,
@@ -52,17 +49,23 @@ def _rpc_retry_delay(
 
 async def get_token_decimals(
     mint_address: str,
-    rpc_url: str = _DEFAULT_RPC_URL,
+    rpc_url: str,
     retries: int = 2,
     retry_delay_seconds: float = 5.0,
 ) -> int:
     """Fetch SPL token decimals from Solana RPC with in-memory caching.
 
     Decimals are immutable after mint creation, so results are cached forever.
-    Falls back to 9 (the SPL default) on any failure.
+    Falls back to 9 (the SPL default) on RPC/response failures.
+    Raises ``ValueError`` when an on-chain lookup is required (cache miss)
+    and ``rpc_url`` is missing or whitespace-only.
     """
     if mint_address in _decimals_cache:
         return _decimals_cache[mint_address]
+
+    if not rpc_url or not rpc_url.strip():
+        raise ValueError("rpc_url is required for on-chain decimal lookups")
+    rpc_url = rpc_url.strip()
 
     async with httpx.AsyncClient(timeout=10) as client:
         for attempt in range(retries + 1):
@@ -118,7 +121,7 @@ async def get_token_decimals(
 
 async def verify_transaction_success(
     tx_hash: str,
-    rpc_url: str = _DEFAULT_RPC_URL,
+    rpc_url: str,
     retries: int = 3,
     retry_delay_seconds: float = 5.0,
 ) -> Optional[bool]:
@@ -128,7 +131,12 @@ async def verify_transaction_success(
     ``False`` if the transaction failed (e.g. slippage exceeded),
     or ``None`` if the status could not be determined (RPC error,
     transaction not yet found, etc.).
+    Raises ``ValueError`` when ``rpc_url`` is missing or whitespace-only.
     """
+    if not rpc_url or not rpc_url.strip():
+        raise ValueError("rpc_url is required for transaction verification")
+    rpc_url = rpc_url.strip()
+
     async with httpx.AsyncClient(timeout=15) as client:
         for attempt in range(retries + 1):
             resp = None
@@ -251,15 +259,19 @@ class TraderExecutionService:
         quote_method_override: str = "",
         execute_method_override: str = "",
         quote_mint: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-        rpc_url: str = _DEFAULT_RPC_URL,
+        rpc_url: str = "",
     ) -> None:
         self.mcp_manager = mcp_manager
-        self.chain = chain.lower()
+        self.chain = chain.strip().lower()
+        if self.chain != "solana":
+            raise ValueError("TraderExecutionService currently supports only solana chain")
+        if not rpc_url or not rpc_url.strip():
+            raise ValueError("rpc_url is required for solana trade execution")
         self.max_slippage_bps = max_slippage_bps
         self.quote_method_override = quote_method_override.strip()
         self.execute_method_override = execute_method_override.strip()
         self.quote_mint = quote_mint
-        self.rpc_url = rpc_url
+        self.rpc_url = rpc_url.strip()
         self._method_cache: Optional[TraderMethodSet] = None
 
     def _get_trader_client(self) -> Any:

@@ -89,7 +89,7 @@ class PortfolioDiscovery:
         chain: str = "solana",
         verbose: bool = False,
         log_callback: Optional[LogCallback] = None,
-        rpc_url: str = "https://api.mainnet-beta.solana.com",
+        rpc_url: str = "",
         insider_check_enabled: bool = True,
         insider_max_concentration_pct: float = 50.0,
         insider_max_creator_pct: float = 30.0,
@@ -118,8 +118,17 @@ class PortfolioDiscovery:
         self.chain = chain
         self.verbose = verbose
         self.log_callback = log_callback
-        self.rpc_url = rpc_url
+        self.rpc_url = rpc_url.strip()
         self.insider_check_enabled = insider_check_enabled
+        if (
+            self.chain.lower() == "solana"
+            and self.insider_check_enabled
+            and not self.rpc_url
+        ):
+            logger.warning(
+                "Insider check disabled: rpc_url is not configured for Solana discovery."
+            )
+            self.insider_check_enabled = False
         self.insider_max_concentration_pct = insider_max_concentration_pct
         self.insider_max_creator_pct = insider_max_creator_pct
         self.insider_warn_concentration_pct = insider_warn_concentration_pct
