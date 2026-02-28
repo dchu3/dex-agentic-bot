@@ -319,3 +319,8 @@ class TestAnalyseInsiders:
 
         assert result.risk == InsiderRisk.CLEAN
         assert len(result.errors) > 0
+
+    @pytest.mark.asyncio
+    async def test_raises_value_error_when_rpc_url_blank(self):
+        with pytest.raises(ValueError, match="rpc_url is required"):
+            await analyse_insiders("MINT_ADDR", rpc_url="   ")

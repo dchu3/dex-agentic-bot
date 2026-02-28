@@ -218,8 +218,9 @@ async def analyse_insiders(
     """
     analysis = InsiderAnalysis()
 
-    if not rpc_url:
+    if not rpc_url or not str(rpc_url).strip():
         raise ValueError("rpc_url is required for insider analysis")
+    rpc_url = rpc_url.strip()
 
     sem = asyncio.Semaphore(_RPC_CONCURRENCY)
 

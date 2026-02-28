@@ -59,12 +59,26 @@ def _make_service(price: float = 0.01) -> TraderExecutionService:
         mcp_manager=manager,
         chain="solana",
         max_slippage_bps=300,
+        rpc_url="https://test-rpc",
     )
 
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+class TestTraderExecutionServiceInit:
+    def test_requires_rpc_url_for_solana(self):
+        trader = _MockTraderClient(price=0.01)
+        manager = _MockMCPManager(trader=trader)
+        with pytest.raises(ValueError, match="rpc_url is required"):
+            TraderExecutionService(
+                mcp_manager=manager,
+                chain="solana",
+                max_slippage_bps=300,
+                rpc_url="   ",
+            )
 
 
 class TestProbeSlippage:
@@ -401,6 +415,13 @@ class TestVerifyTransactionSuccess:
 
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_raises_value_error_when_rpc_url_blank(self):
+        from app.execution import verify_transaction_success
+
+        with pytest.raises(ValueError, match="rpc_url is required"):
+            await verify_transaction_success("tx123", rpc_url="   ", retries=0)
+
 
 # ---------------------------------------------------------------------------
 # _rpc_retry_delay unit tests
@@ -577,3 +598,10 @@ class TestGetTokenDecimals:
         assert result == 9
         assert call_count == 2
         mock_sleep.assert_called_once_with(5.0)  # base * 2^0 = 5.0
+
+    @pytest.mark.asyncio
+    async def test_raises_value_error_when_rpc_url_blank(self):
+        from app.execution import get_token_decimals
+
+        with pytest.raises(ValueError, match="rpc_url is required"):
+            await get_token_decimals("FakeMint", rpc_url="   ")

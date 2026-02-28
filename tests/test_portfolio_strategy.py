@@ -150,30 +150,34 @@ async def db(temp_db_path):
 
 
 def _config(**overrides: Any) -> PortfolioStrategyConfig:
-    base = PortfolioStrategyConfig(
-        enabled=True,
-        dry_run=True,
-        chain="solana",
-        max_positions=5,
-        position_size_usd=5.0,
-        take_profit_pct=15.0,
-        stop_loss_pct=8.0,
-        trailing_stop_pct=5.0,
-        max_hold_hours=24,
-        discovery_interval_mins=30,
-        price_check_seconds=60,
-        daily_loss_limit_usd=50.0,
-        min_volume_usd=10000.0,
-        min_liquidity_usd=5000.0,
-        min_market_cap_usd=250000.0,
-        cooldown_seconds=300,
-        min_momentum_score=50.0,
-        max_slippage_bps=300,
-        rpc_url="https://test-rpc",
-    )
-    for key, value in overrides.items():
-        setattr(base, key, value)
-    return base
+    defaults = {
+        "enabled": True,
+        "dry_run": True,
+        "chain": "solana",
+        "max_positions": 5,
+        "position_size_usd": 5.0,
+        "take_profit_pct": 15.0,
+        "stop_loss_pct": 8.0,
+        "trailing_stop_pct": 5.0,
+        "max_hold_hours": 24,
+        "discovery_interval_mins": 30,
+        "price_check_seconds": 60,
+        "daily_loss_limit_usd": 50.0,
+        "min_volume_usd": 10000.0,
+        "min_liquidity_usd": 5000.0,
+        "min_market_cap_usd": 250000.0,
+        "cooldown_seconds": 300,
+        "min_momentum_score": 50.0,
+        "max_slippage_bps": 300,
+        "rpc_url": "https://test-rpc",
+    }
+    defaults.update(overrides)
+    return PortfolioStrategyConfig(**defaults)
+
+
+def test_config_requires_rpc_url_for_solana():
+    with pytest.raises(ValueError, match="rpc_url is required"):
+        _config(rpc_url="   ")
 
 
 def _make_engine(

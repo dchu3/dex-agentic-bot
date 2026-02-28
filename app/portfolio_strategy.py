@@ -66,6 +66,12 @@ class PortfolioStrategyConfig:
     insider_warn_concentration_pct: float = 30.0
     insider_warn_creator_pct: float = 10.0
 
+    def __post_init__(self) -> None:
+        """Validate configuration consistency."""
+        self.rpc_url = self.rpc_url.strip()
+        if self.chain.lower() == "solana" and not self.rpc_url:
+            raise ValueError("rpc_url is required when chain is solana")
+
 
 @dataclass
 class PortfolioDiscoveryCycleResult:
