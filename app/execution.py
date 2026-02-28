@@ -262,8 +262,10 @@ class TraderExecutionService:
         rpc_url: str = "",
     ) -> None:
         self.mcp_manager = mcp_manager
-        self.chain = chain.lower()
-        if self.chain == "solana" and (not rpc_url or not rpc_url.strip()):
+        self.chain = chain.strip().lower()
+        if self.chain != "solana":
+            raise ValueError("TraderExecutionService currently supports only solana chain")
+        if not rpc_url or not rpc_url.strip():
             raise ValueError("rpc_url is required for solana trade execution")
         self.max_slippage_bps = max_slippage_bps
         self.quote_method_override = quote_method_override.strip()

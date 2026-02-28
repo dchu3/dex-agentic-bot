@@ -180,6 +180,11 @@ def test_config_requires_rpc_url_for_solana():
         _config(rpc_url="   ")
 
 
+def test_config_normalizes_chain_whitespace():
+    cfg = _config(chain=" Solana ")
+    assert cfg.chain == "solana"
+
+
 def _make_engine(
     db: Database,
     dex_price: float = 0.01,

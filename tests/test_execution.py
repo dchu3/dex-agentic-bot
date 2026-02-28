@@ -80,6 +80,17 @@ class TestTraderExecutionServiceInit:
                 rpc_url="   ",
             )
 
+    def test_rejects_non_solana_chain(self):
+        trader = _MockTraderClient(price=0.01)
+        manager = _MockMCPManager(trader=trader)
+        with pytest.raises(ValueError, match="supports only solana"):
+            TraderExecutionService(
+                mcp_manager=manager,
+                chain="ethereum",
+                max_slippage_bps=300,
+                rpc_url="https://test-rpc",
+            )
+
 
 class TestProbeSlippage:
     """Unit tests for TraderExecutionService.probe_slippage()."""

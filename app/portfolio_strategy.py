@@ -68,8 +68,9 @@ class PortfolioStrategyConfig:
 
     def __post_init__(self) -> None:
         """Validate configuration consistency."""
+        self.chain = self.chain.strip().lower()
         self.rpc_url = self.rpc_url.strip()
-        if self.chain.lower() == "solana" and not self.rpc_url:
+        if self.chain == "solana" and not self.rpc_url:
             raise ValueError("rpc_url is required when chain is solana")
 
 
