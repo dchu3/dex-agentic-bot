@@ -520,6 +520,37 @@ def test_mcp_manager_call_timeout_applied_to_all_clients():
         assert client._call_timeout == 120.0
 
 
+@pytest.mark.asyncio
+async def test_mcp_client_start_passes_merged_extra_env():
+    client = MCPClient(
+        "solana",
+        "echo solana",
+        extra_env={"SOLANA_RPC_URL": "https://rpc.example"},
+    )
+
+    process = AsyncMock()
+    process.returncode = None
+    process.stdout = type("S", (), {"_limit": 0})()
+    process.stderr = type("S", (), {"_limit": 0})()
+
+    with (
+        patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=process)) as mock_spawn,
+        patch.object(client, "_ensure_initialized", new=AsyncMock()),
+        patch("asyncio.create_task") as mock_create_task,
+    ):
+        def _consume_coro(coro):
+            coro.close()
+            return AsyncMock()
+
+        mock_create_task.side_effect = _consume_coro
+        await client.start()
+
+    kwargs = mock_spawn.call_args.kwargs
+    assert "env" in kwargs
+    assert kwargs["env"] is not None
+    assert kwargs["env"]["SOLANA_RPC_URL"] == "https://rpc.example"
+
+
 def test_mcp_manager_trader_retry_on_timeout_disabled():
     """MCPManager creates the trader client with retry_on_timeout=False to prevent double trades."""
     manager = MCPManager(

@@ -57,7 +57,8 @@ async def get_token_decimals(
 
     Decimals are immutable after mint creation, so results are cached forever.
     Falls back to 9 (the SPL default) on RPC/response failures.
-    Raises ``ValueError`` when ``rpc_url`` is missing or whitespace-only.
+    Raises ``ValueError`` when an on-chain lookup is required (cache miss)
+    and ``rpc_url`` is missing or whitespace-only.
     """
     if mint_address in _decimals_cache:
         return _decimals_cache[mint_address]
