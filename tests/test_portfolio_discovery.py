@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -813,7 +814,7 @@ class TestInsiderCheckIntegration:
     """Tests for the _insider_check step in the discovery pipeline."""
 
     def test_insider_check_enabled_without_rpc_url_disables_with_warning(self, caplog):
-        with caplog.at_level("WARNING"):
+        with caplog.at_level(logging.WARNING, logger="app.portfolio_discovery"):
             discovery = PortfolioDiscovery(
                 mcp_manager=MockMCPManager(),
                 api_key="x",
