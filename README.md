@@ -42,6 +42,8 @@ Key settings in `.env`:
 ```env
 # Required
 GEMINI_API_KEY=your-gemini-api-key
+
+# Optional (defaults shown)
 GEMINI_MODEL=gemini-2.5-flash
 
 # MCP Servers (token data sources)
@@ -121,8 +123,8 @@ Send any token address to your bot:
 | `/analyze <address>` | Analyze a token |
 | `/help` | Show help message |
 | `/status` | Check bot status |
-| `/subscribe` | Subscribe to discovery alerts |
-| `/unsubscribe` | Unsubscribe from discovery alerts |
+| `/subscribe` | Subscribe to price alerts for watched tokens |
+| `/unsubscribe` | Unsubscribe from price alerts |
 
 ### Interactive CLI Commands
 
