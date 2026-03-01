@@ -474,59 +474,28 @@ class TestDiscoverPipeline:
         assert result[0].symbol == "GOOD1"
 
     @pytest.mark.asyncio
-    async def test_parallel_decisions_respect_max_candidates(self, monkeypatch):
+    async def test_parallel_decisions_cap_ai_launches_relative_to_max_candidates(self, monkeypatch):
         discovery = PortfolioDiscovery(
             mcp_manager=MockMCPManager(), api_key="x", min_momentum_score=40.0,
         )
+        symbols = list("ABCDEFGH")
         candidates = [
             DiscoveryCandidate(
-                token_address="AddrA111111111111111111111111111111111111",
-                symbol="A",
+                token_address=f"Addr{symbol}{idx:02d}111111111111111111111111111111111111",
+                symbol=symbol,
                 chain="solana",
                 price_usd=0.01,
-                volume_24h=110000.0,
+                volume_24h=110000.0 - (idx * 2000.0),
                 liquidity_usd=50000.0,
-                price_change_24h=12.0,
+                price_change_24h=16.0 - idx,
                 safety_status="Safe",
-            ),
-            DiscoveryCandidate(
-                token_address="AddrB111111111111111111111111111111111111",
-                symbol="B",
-                chain="solana",
-                price_usd=0.01,
-                volume_24h=100000.0,
-                liquidity_usd=50000.0,
-                price_change_24h=11.0,
-                safety_status="Safe",
-            ),
-            DiscoveryCandidate(
-                token_address="AddrC111111111111111111111111111111111111",
-                symbol="C",
-                chain="solana",
-                price_usd=0.01,
-                volume_24h=100000.0,
-                liquidity_usd=50000.0,
-                price_change_24h=10.0,
-                safety_status="Safe",
-            ),
-            DiscoveryCandidate(
-                token_address="AddrD111111111111111111111111111111111111",
-                symbol="D",
-                chain="solana",
-                price_usd=0.01,
-                volume_24h=100000.0,
-                liquidity_usd=50000.0,
-                price_change_24h=9.0,
-                safety_status="Safe",
-            ),
+            )
+            for idx, symbol in enumerate(symbols)
         ]
         decisions = {
-            "A": (True, "approve A"),
-            "B": (False, "reject B"),
-            "C": (True, "approve C"),
-            "D": (True, "approve D"),
+            symbol: (symbol in {"A", "C", "H"}, f"decision {symbol}")
+            for symbol in symbols
         }
-        delays = {"A": 0.03, "B": 0.0, "C": 0.01, "D": 0.0}
         called_symbols: List[str] = []
 
         async def _scan_trending() -> List[Dict[str, Any]]:
@@ -552,7 +521,6 @@ class TestDiscoverPipeline:
 
         async def _ai_decide(candidate: DiscoveryCandidate) -> tuple[bool, str]:
             called_symbols.append(candidate.symbol)
-            await asyncio.sleep(delays[candidate.symbol])
             return decisions[candidate.symbol]
 
         monkeypatch.setattr(discovery, "_scan_trending", _scan_trending)
@@ -564,7 +532,8 @@ class TestDiscoverPipeline:
 
         result = await discovery.discover(MockDatabase(), max_candidates=2)
 
-        assert sorted(called_symbols) == ["A", "B", "C", "D"]
+        assert sorted(called_symbols) == ["A", "B", "C", "D", "E", "F"]
+        assert len(called_symbols) == 6
         assert [c.symbol for c in result] == ["A", "C"]
 
 

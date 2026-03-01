@@ -182,7 +182,10 @@ class AgenticPlanner:
         if isinstance(result, (dict, list)):
             if self._should_truncate_structured_result(result):
                 return self._build_truncated_preview(result)
-            serialized = json.dumps(result)
+            try:
+                serialized = json.dumps(result, default=str)
+            except (TypeError, ValueError):
+                return self._build_truncated_preview(result)
             if len(serialized) > _MAX_TOOL_RESULT_CHARS:
                 return self._build_truncated_preview(result)
         return result
@@ -204,7 +207,10 @@ class AgenticPlanner:
         if sampled_count == 0:
             return False
 
-        sample_size = len(json.dumps(sample, default=str))
+        try:
+            sample_size = len(json.dumps(sample, default=str))
+        except (TypeError, ValueError):
+            return True
         if sample_size > _MAX_TOOL_RESULT_CHARS:
             return True
 

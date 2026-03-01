@@ -155,3 +155,17 @@ class TestTruncateResult:
         assert "_preview" in truncated
 
         json.dumps(truncated)
+
+    def test_problematic_structured_payloads_return_preview_without_raising(self):
+        """Circular and non-serializable payloads should not break truncation."""
+        circular_payload = {}
+        circular_payload["self"] = circular_payload
+        non_serializable_payload = {f"key{i}": object() for i in range(400)}
+
+        for payload in (circular_payload, non_serializable_payload):
+            truncated = self.planner._truncate_result(payload)
+
+            assert truncated["_truncated"] is True
+            assert truncated["_type"] == "dict"
+            assert "_preview" in truncated
+            json.dumps(truncated)

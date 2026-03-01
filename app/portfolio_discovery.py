@@ -211,6 +211,19 @@ class PortfolioDiscovery:
             self._log("info", "No candidates passed heuristic pre-filter")
             return []
 
+        decision_pool_size = max(0, max_candidates) * 3
+        decision_pool = sorted(
+            pre_filtered,
+            key=lambda c: c.momentum_score,
+            reverse=True,
+        )[:decision_pool_size]
+        if len(decision_pool) < len(pre_filtered):
+            self._log(
+                "info",
+                f"Capped AI decision pool to {len(decision_pool)} candidates "
+                f"(from {len(pre_filtered)})",
+            )
+
         # Step 6: Per-candidate agentic buy decision (parallel with bounded concurrency)
         sem = asyncio.Semaphore(3)
 
@@ -228,7 +241,7 @@ class PortfolioDiscovery:
                 )
                 return candidate
 
-        decided = await asyncio.gather(*[_decide(c) for c in pre_filtered])
+        decided = await asyncio.gather(*[_decide(c) for c in decision_pool])
         approved = [c for c in decided if c.buy_decision][:max_candidates]
 
         if not approved:
