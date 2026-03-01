@@ -39,7 +39,7 @@ class AgenticContext:
     original_query: str = ""  # Store original query for recovery context
 
 
-_MAX_TOOL_RESULT_CHARS = 8000
+from app.types import MAX_TOOL_RESULT_CHARS as _MAX_TOOL_RESULT_CHARS
 _TOOL_RESULT_SAMPLE_ITEMS = 25
 _TOOL_RESULT_PREVIEW_ITEMS = 5
 _TOOL_RESULT_PREVIEW_STRING_CHARS = 200

@@ -14,6 +14,7 @@ from google import genai
 from google.genai import types
 
 from app.insider_detection import InsiderAnalysis, InsiderRisk, analyse_insiders
+from app.types import MAX_TOOL_RESULT_CHARS
 
 if TYPE_CHECKING:
     from app.mcp_client import MCPManager
@@ -735,7 +736,7 @@ class PortfolioDiscovery:
                         text += part.text
         return self._parse_decision(text)
 
-    _MAX_TOOL_RESULT_PAYLOAD_CHARS = 8000
+    _MAX_TOOL_RESULT_PAYLOAD_CHARS = MAX_TOOL_RESULT_CHARS
 
     @staticmethod
     def _parse_optional_float(value: Any, default: float = 0.0) -> float:

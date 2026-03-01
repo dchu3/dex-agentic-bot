@@ -24,6 +24,7 @@ LogCallback = Callable[[str, str, Optional[Dict[str, Any]]], None]
 _ERROR_SKIP_SECONDS = 300
 _NATIVE_PRICE_STALE_SECONDS = 120
 _DUST_NOTIONAL_USD = 0.01
+_PRICE_DEVIATION_WARN_PCT = 5.0
 
 
 @dataclass
@@ -333,7 +334,7 @@ class PortfolioStrategyEngine:
         # Log warning if execution price deviates significantly from quote
         if execution.success and quote and quote.price > 0 and executed_price > 0:
             deviation_pct = abs(executed_price - quote.price) / quote.price * 100
-            if deviation_pct > 5.0:
+            if deviation_pct > _PRICE_DEVIATION_WARN_PCT:
                 logger.warning(
                     "Price deviation %.1f%% on %s buy: quoted=$%.10f executed=$%.10f",
                     deviation_pct, candidate.symbol, quote.price, executed_price,
