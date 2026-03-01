@@ -253,6 +253,22 @@ class TestApplyFilters:
         assert candidate.price_change_6h == 3.5
         assert candidate.price_change_24h == 7.5
 
+    def test_defaults_invalid_price_change_windows_in_dict(self):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+        )
+        pair = _make_pair(address="PriceBad1111111111111111111111111111111111")
+        pair["priceChange"] = {"m5": "bad", "h1": None, "h6": "3.5", "h24": "invalid"}
+
+        result = discovery._apply_filters([pair])
+
+        assert len(result) == 1
+        candidate = result[0]
+        assert candidate.price_change_5m == 0.0
+        assert candidate.price_change_1h == 0.0
+        assert candidate.price_change_6h == 3.5
+        assert candidate.price_change_24h == 0.0
+
     @pytest.mark.parametrize("price_change_value", [None, "invalid"])
     def test_handles_null_or_non_dict_price_change(self, price_change_value):
         discovery = PortfolioDiscovery(
@@ -802,6 +818,15 @@ class TestNormalizeDexscreenerArgs:
         args = {"token_address": "t", "chain_id": "solana", "pair_address": "p"}
         result = PortfolioDiscovery._normalize_dexscreener_args(args)
         assert result == {"tokenAddress": "t", "chainId": "solana", "pairAddress": "p"}
+
+
+class TestSerializeToolResultForResponse:
+    def test_truncates_long_result_payload(self):
+        result = {"blob": "x" * 9000}
+        serialized = PortfolioDiscovery._serialize_tool_result_for_response(result)
+
+        assert len(serialized) == 8000
+        assert serialized.startswith('{"blob": "')
 
 
 

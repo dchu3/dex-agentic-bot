@@ -395,10 +395,10 @@ class PortfolioDiscovery:
                 price_change_data = pair.get("priceChange", {})
                 if not isinstance(price_change_data, dict):
                     price_change_data = {}
-                price_change = float(price_change_data.get("h24", 0))
-                price_change_1h = float(price_change_data.get("h1", 0))
-                price_change_6h = float(price_change_data.get("h6", 0))
-                price_change_5m = float(price_change_data.get("m5", 0))
+                price_change = self._parse_optional_float(price_change_data.get("h24", 0))
+                price_change_1h = self._parse_optional_float(price_change_data.get("h1", 0))
+                price_change_6h = self._parse_optional_float(price_change_data.get("h6", 0))
+                price_change_5m = self._parse_optional_float(price_change_data.get("m5", 0))
                 market_cap_usd = float(pair.get("marketCap", pair.get("fdv", 0)))
                 pair_created_at_ms = float(pair.get("pairCreatedAt") or 0)
             except (TypeError, ValueError):
@@ -696,7 +696,7 @@ class PortfolioDiscovery:
                     mcp_client = self.mcp_manager.get_client(client_name)
                     if mcp_client:
                         result = await mcp_client.call_tool(method, args)
-                        result_str = json.dumps(result) if not isinstance(result, str) else result
+                        result_str = self._serialize_tool_result_for_response(result)
                     else:
                         result_str = f"Client '{client_name}' not available"
                 except Exception as exc:
@@ -721,6 +721,28 @@ class PortfolioDiscovery:
                     if hasattr(part, "text") and part.text:
                         text += part.text
         return self._parse_decision(text)
+
+    _MAX_TOOL_RESULT_PAYLOAD_CHARS = 8000
+
+    @staticmethod
+    def _parse_optional_float(value: Any, default: float = 0.0) -> float:
+        """Parse a value as float, returning default when invalid."""
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @classmethod
+    def _serialize_tool_result_for_response(cls, result: Any) -> str:
+        """Serialize tool results with a bounded payload size."""
+        if isinstance(result, str):
+            result_str = result
+        else:
+            try:
+                result_str = json.dumps(result, default=str)
+            except (TypeError, ValueError):
+                result_str = str(result)
+        return result_str[:cls._MAX_TOOL_RESULT_PAYLOAD_CHARS]
 
     # DexScreener MCP uses camelCase parameter names. The model sometimes
     # generates snake_case (influenced by rugcheck's schema). Normalize before
