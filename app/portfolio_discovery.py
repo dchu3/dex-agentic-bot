@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 
 LogCallback = Callable[[str, str, Optional[Dict[str, Any]]], None]
 
+_AI_DECISION_POOL_MULTIPLIER = 3
+_AI_DECISION_CONCURRENCY = 3
+
 
 @dataclass
 class DiscoveryCandidate:
@@ -212,7 +215,7 @@ class PortfolioDiscovery:
             self._log("info", "No candidates passed heuristic pre-filter")
             return []
 
-        decision_pool_size = max(0, max_candidates) * 3
+        decision_pool_size = max(0, max_candidates) * _AI_DECISION_POOL_MULTIPLIER
         decision_pool = sorted(
             pre_filtered,
             key=lambda c: c.momentum_score,
@@ -226,7 +229,7 @@ class PortfolioDiscovery:
             )
 
         # Step 6: Per-candidate agentic buy decision (parallel with bounded concurrency)
-        sem = asyncio.Semaphore(3)
+        sem = asyncio.Semaphore(_AI_DECISION_CONCURRENCY)
 
         async def _decide(candidate: DiscoveryCandidate) -> DiscoveryCandidate:
             async with sem:
