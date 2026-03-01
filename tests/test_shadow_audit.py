@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -245,6 +244,39 @@ class TestDecisionLabels:
 
 class TestApplyFiltersWithLabels:
     """Test that _apply_filters_with_labels returns labeled rejects."""
+
+    def test_chain_reject_labeled(self):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+        )
+        pair = _make_pair(chain="ethereum")
+        passed, rejects = discovery._apply_filters_with_labels([pair])
+        assert len(passed) == 0
+        assert len(rejects) == 1
+        assert rejects[0][1] == DecisionLabel.FILTER_CHAIN
+
+    def test_missing_identity_reject_labeled(self):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+        )
+        pair = _make_pair()
+        pair["baseToken"] = {"address": "", "symbol": ""}
+        passed, rejects = discovery._apply_filters_with_labels([pair])
+        assert len(passed) == 0
+        assert len(rejects) == 1
+        assert rejects[0][1] == DecisionLabel.FILTER_PARSE
+
+    def test_duplicate_address_reject_labeled(self):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+            min_volume_usd=0, min_liquidity_usd=0, min_market_cap_usd=0,
+        )
+        pair = _make_pair(address="Dup111111111111111111111111111111111111")
+        pair_dup = _make_pair(address="Dup111111111111111111111111111111111111")
+        passed, rejects = discovery._apply_filters_with_labels([pair, pair_dup])
+        assert len(passed) == 1
+        assert len(rejects) == 1
+        assert rejects[0][1] == DecisionLabel.FILTER_PARSE
 
     def test_volume_reject_labeled(self):
         discovery = PortfolioDiscovery(
@@ -497,6 +529,18 @@ class TestDatabaseDecisionLog:
         assert labels == {"filter_volume", "ai_approve"}
 
     @pytest.mark.asyncio
+    async def test_batch_insert_normalizes_fields(self, db):
+        batch = [
+            ("cycle002b", "0xABCDEF", "test", "SoLaNa", "ai_approve", 0.01, 10, 10, 10, 1.0, "ok", {"k": "v"}),
+        ]
+        await db.record_discovery_decisions_batch(batch)
+        rows = await db.get_discovery_decisions(cycle_id="cycle002b")
+        assert len(rows) == 1
+        assert rows[0]["token_address"] == "0xabcdef"
+        assert rows[0]["chain"] == "solana"
+        assert rows[0]["symbol"] == "TEST"
+
+    @pytest.mark.asyncio
     async def test_query_by_token_address(self, db):
         await db.record_discovery_decision(
             cycle_id="cycle003",
@@ -584,6 +628,27 @@ class TestDatabaseShadowPositions:
         assert summary["winners"] == 1
         assert summary["losers"] == 1
         assert summary["avg_pnl_pct"] == -5.0  # (10 + -20) / 2
+
+    @pytest.mark.asyncio
+    async def test_shadow_summary_respects_limit(self, db):
+        s1 = await db.add_shadow_position(
+            token_address="0xL1", symbol="L1", chain="solana",
+            entry_price=1.0, notional_usd=10.0, check_after_minutes=0,
+        )
+        s2 = await db.add_shadow_position(
+            token_address="0xL2", symbol="L2", chain="solana",
+            entry_price=1.0, notional_usd=10.0, check_after_minutes=0,
+        )
+        s3 = await db.add_shadow_position(
+            token_address="0xL3", symbol="L3", chain="solana",
+            entry_price=1.0, notional_usd=10.0, check_after_minutes=0,
+        )
+        await db.resolve_shadow_position(s1, 1.1, 10.0)
+        await db.resolve_shadow_position(s2, 1.2, 20.0)
+        await db.resolve_shadow_position(s3, 1.3, 30.0)
+
+        summary = await db.get_shadow_summary(limit=2)
+        assert summary["total"] == 2
 
     @pytest.mark.asyncio
     async def test_resolve_idempotent(self, db):

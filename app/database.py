@@ -716,6 +716,44 @@ class Database:
         """
         if not decisions:
             return
+        normalized: List[tuple] = []
+        for decision in decisions:
+            if len(decision) != 12:
+                raise ValueError("Each discovery decision tuple must contain 12 fields")
+            (
+                cycle_id,
+                token_address,
+                symbol,
+                chain,
+                decision_label,
+                price_usd,
+                volume_24h,
+                liquidity_usd,
+                market_cap_usd,
+                momentum_score,
+                reasoning,
+                metadata_json,
+            ) = decision
+            if isinstance(metadata_json, (dict, list)):
+                metadata_json = json.dumps(metadata_json, default=str)
+            elif metadata_json is None:
+                metadata_json = "{}"
+            normalized.append(
+                (
+                    str(cycle_id),
+                    str(token_address).lower(),
+                    _normalize_symbol(str(symbol)),
+                    str(chain).lower(),
+                    str(decision_label),
+                    price_usd,
+                    volume_24h,
+                    liquidity_usd,
+                    market_cap_usd,
+                    momentum_score,
+                    reasoning,
+                    metadata_json,
+                )
+            )
         conn = await self._ensure_connected()
         async with self._lock:
             await conn.executemany(
@@ -727,7 +765,7 @@ class Database:
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                decisions,
+                normalized,
             )
             await conn.commit()
 
@@ -851,10 +889,13 @@ class Database:
                 AVG(pnl_pct) AS avg_pnl_pct,
                 MIN(pnl_pct) AS min_pnl_pct,
                 MAX(pnl_pct) AS max_pnl_pct
-            FROM shadow_positions
-            WHERE status = 'checked'
-            ORDER BY checked_at DESC
-            LIMIT ?
+            FROM (
+                SELECT pnl_pct
+                FROM shadow_positions
+                WHERE status = 'checked'
+                ORDER BY checked_at DESC
+                LIMIT ?
+            ) AS recent_checked
             """,
             (limit,),
         )

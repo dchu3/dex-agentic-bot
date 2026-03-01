@@ -880,32 +880,27 @@ class PortfolioStrategyEngine:
             return 0
 
         resolved = 0
-        client = self.mcp_manager.get_client("dexscreener")
-        if not client:
-            self._log("warning", "DexScreener not available — cannot check shadow positions")
-            return 0
-
         for shadow in pending:
             token_address = shadow["token_address"]
             entry_price = shadow["entry_price"]
             try:
-                result = await client.call_tool(
-                    "get_token_pools",
-                    {"chainId": shadow["chain"], "tokenAddress": token_address},
+                current_price = await self._fetch_current_price(
+                    token_address=token_address,
+                    chain=shadow["chain"],
                 )
-                current_price, _ = self._parse_reference_result(result)
                 pnl_pct = ((current_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
-                await self.db.resolve_shadow_position(
+                updated = await self.db.resolve_shadow_position(
                     shadow_id=shadow["id"],
                     price_at_check=current_price,
                     pnl_pct=pnl_pct,
                 )
-                self._log(
-                    "info",
-                    f"Shadow {shadow['symbol']}: entry=${entry_price:.10f} "
-                    f"now=${current_price:.10f} pnl={pnl_pct:+.1f}%",
-                )
-                resolved += 1
+                if updated:
+                    self._log(
+                        "info",
+                        f"Shadow {shadow['symbol']}: entry=${entry_price:.10f} "
+                        f"now=${current_price:.10f} pnl={pnl_pct:+.1f}%",
+                    )
+                    resolved += 1
             except Exception as exc:
                 self._log("warning", f"Shadow check failed for {shadow.get('symbol', '?')}: {exc}")
 

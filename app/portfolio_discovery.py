@@ -217,8 +217,9 @@ class PortfolioDiscovery:
         # Step 4: Safety check via rugcheck
         before_safety = {c.token_address.lower(): c for c in filtered}
         safe_candidates = await self._safety_check(filtered)
+        safe_set = {sc.token_address.lower() for sc in safe_candidates}
         for addr, c in before_safety.items():
-            if addr not in {sc.token_address.lower() for sc in safe_candidates}:
+            if addr not in safe_set:
                 _record(c, DecisionLabel.SAFETY_REJECTED, f"safety={c.safety_status}")
         if not safe_candidates:
             self._log("info", "No candidates passed safety checks")
@@ -229,8 +230,9 @@ class PortfolioDiscovery:
         # Step 5: Insider / sniper detection
         before_insider = {c.token_address.lower(): c for c in safe_candidates}
         insider_checked = await self._insider_check(safe_candidates)
+        insider_set = {ic.token_address.lower() for ic in insider_checked}
         for addr, c in before_insider.items():
-            if addr not in {ic.token_address.lower() for ic in insider_checked}:
+            if addr not in insider_set:
                 _record(c, DecisionLabel.INSIDER_REJECTED, "insider risk")
         if not insider_checked:
             self._log("info", "No candidates passed insider checks")
@@ -276,12 +278,13 @@ class PortfolioDiscovery:
             return []
 
         decision_pool_size = max_candidates * _AI_DECISION_POOL_MULTIPLIER
-        decision_pool = sorted(
+        sorted_pre_filtered = sorted(
             pre_filtered,
             key=lambda c: c.momentum_score,
             reverse=True,
-        )[:decision_pool_size]
-        for c in pre_filtered[decision_pool_size:] if len(pre_filtered) > decision_pool_size else []:
+        )
+        decision_pool = sorted_pre_filtered[:decision_pool_size]
+        for c in sorted_pre_filtered[decision_pool_size:]:
             _record(c, DecisionLabel.AI_POOL_CAP, "outside decision pool")
         if len(decision_pool) < len(pre_filtered):
             self._log(
@@ -588,17 +591,52 @@ class PortfolioDiscovery:
         for pair in pairs:
             chain_id = (pair.get("chainId") or "").lower()
             chain_counts[chain_id] = chain_counts.get(chain_id, 0) + 1
+            base_token = pair.get("baseToken", {})
+            if not isinstance(base_token, dict):
+                base_token = {}
+            address = str(base_token.get("address", "") or "")
+            symbol = str(base_token.get("symbol", "") or "")
             if chain_id != self.chain:
+                c = DiscoveryCandidate(
+                    token_address=address,
+                    symbol=symbol,
+                    chain=chain_id or self.chain,
+                    price_usd=0.0,
+                    volume_24h=0.0,
+                    liquidity_usd=0.0,
+                )
+                rejects.append(
+                    (
+                        c,
+                        DecisionLabel.FILTER_CHAIN,
+                        f"chain mismatch: '{chain_id}' != '{self.chain}'",
+                    )
+                )
                 continue
 
-            base_token = pair.get("baseToken", {})
-            address = base_token.get("address", "")
-            symbol = base_token.get("symbol", "")
             if not address or not symbol:
+                c = DiscoveryCandidate(
+                    token_address=address,
+                    symbol=symbol,
+                    chain=self.chain,
+                    price_usd=0.0,
+                    volume_24h=0.0,
+                    liquidity_usd=0.0,
+                )
+                rejects.append((c, DecisionLabel.FILTER_PARSE, "missing address or symbol"))
                 continue
 
             addr_lower = address.lower()
             if addr_lower in seen_addresses:
+                c = DiscoveryCandidate(
+                    token_address=address,
+                    symbol=symbol,
+                    chain=self.chain,
+                    price_usd=0.0,
+                    volume_24h=0.0,
+                    liquidity_usd=0.0,
+                )
+                rejects.append((c, DecisionLabel.FILTER_PARSE, "duplicate token address"))
                 continue
             seen_addresses.add(addr_lower)
 
