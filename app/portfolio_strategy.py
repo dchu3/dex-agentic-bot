@@ -301,7 +301,7 @@ class PortfolioStrategyEngine:
             )
             if should_abort:
                 self._log(
-                    "warn",
+                    "warning",
                     f"Skipping {candidate.symbol}: {reason}",
                 )
                 return None
