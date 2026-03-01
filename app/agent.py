@@ -177,7 +177,13 @@ class AgenticPlanner:
     def _truncate_result(self, result: Any) -> Any:
         """Truncate large tool results to conserve context window tokens."""
         if isinstance(result, str) and len(result) > _MAX_TOOL_RESULT_CHARS:
-            return result[:_MAX_TOOL_RESULT_CHARS] + f"\n... [truncated {len(result) - _MAX_TOOL_RESULT_CHARS} chars]"
+            content_budget = _MAX_TOOL_RESULT_CHARS
+            omitted = len(result) - content_budget
+            suffix = f"\n... [truncated {omitted} chars]"
+            content_budget = max(0, _MAX_TOOL_RESULT_CHARS - len(suffix))
+            omitted = len(result) - content_budget
+            suffix = f"\n... [truncated {omitted} chars]"
+            return result[:content_budget] + suffix
         if isinstance(result, (dict, list)):
             if self._should_truncate_structured_result(result):
                 return self._build_truncated_preview(result)

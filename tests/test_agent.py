@@ -134,7 +134,9 @@ class TestTruncateResult:
         long_string = "x" * (_MAX_TOOL_RESULT_CHARS + 25)
         truncated = self.planner._truncate_result(long_string)
 
-        assert truncated == ("x" * _MAX_TOOL_RESULT_CHARS) + "\n... [truncated 25 chars]"
+        assert len(truncated) <= _MAX_TOOL_RESULT_CHARS
+        assert truncated.endswith(" chars]")
+        assert "\n... [truncated " in truncated
 
     @pytest.mark.parametrize(
         ("payload", "payload_type"),

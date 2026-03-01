@@ -8,6 +8,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
+from itertools import islice
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from google import genai
@@ -768,7 +769,7 @@ class PortfolioDiscovery:
         # whether to serialize fully or just return a preview.
         if isinstance(result, (dict, list)) and len(result) > 50:
             if isinstance(result, dict):
-                sample = dict(list(result.items())[:20])
+                sample = dict(islice(result.items(), 20))
             else:
                 sample = result[:20]
             try:
