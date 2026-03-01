@@ -776,10 +776,20 @@ class PortfolioDiscovery:
             estimated_total = (len(sample_str) / sample_count) * len(result) if sample_count else 0
 
             if estimated_total > max_chars:
-                # Likely too large — return the sample preview
-                if len(sample_str) <= max_chars:
-                    return sample_str
-                return cls._build_truncation_wrapper(sample_str, max_chars)
+                # Likely too large — return a wrapper with truncation metadata
+                wrapper: Dict[str, Any] = {
+                    "truncated": True,
+                    "total_items": len(result),
+                    "preview_items": sample_count,
+                    "preview": sample,
+                }
+                try:
+                    wrapper_str = json.dumps(wrapper, default=str)
+                except (TypeError, ValueError):
+                    wrapper_str = str(wrapper)
+                if len(wrapper_str) <= max_chars:
+                    return wrapper_str
+                return cls._build_truncation_wrapper(wrapper_str, max_chars)
             # Estimated to fit — fall through to full serialization
 
         # Small containers: serialize fully

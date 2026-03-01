@@ -812,13 +812,16 @@ class TestSerializeToolResultForResponse:
         assert len(parsed) == 100
 
     def test_large_container_with_big_items_returns_preview(self):
-        """Large containers estimated to exceed limit should return a preview slice."""
-        result = {f"key{i}": "x" * 500 for i in range(200)}
+        """Large containers estimated to exceed limit should return a wrapper with metadata."""
+        result = {f"key{i}": "x" * 80 for i in range(200)}
         serialized = PortfolioDiscovery._serialize_tool_result_for_response(result)
 
         assert len(serialized) <= 8000
         parsed = json.loads(serialized)
-        assert len(parsed) <= 20
+        assert parsed["truncated"] is True
+        assert parsed["total_items"] == 200
+        assert "preview_items" in parsed
+        assert "preview" in parsed
 
     def test_string_truncation_produces_valid_json(self):
         long_string = "x" * 10000
