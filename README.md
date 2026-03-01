@@ -193,7 +193,7 @@ Pauses discovery when the SOL price is dropping to avoid buying into a market-wi
 
 **Insider / sniper detection (configurable via `.env`):**
 
-Analyses top token holders via Solana RPC before buying. Tokens with suspicious concentration are rejected or flagged for AI review:
+Analyzes top token holders via Solana RPC before buying. Tokens with suspicious concentration are rejected or flagged for AI review:
 - `PORTFOLIO_INSIDER_CHECK_ENABLED` — Enable the check (default: `true`)
 - `PORTFOLIO_INSIDER_MAX_CONCENTRATION_PCT` — Hard-reject if top-holder concentration exceeds this % (default: 50)
 - `PORTFOLIO_INSIDER_MAX_CREATOR_PCT` — Hard-reject if creator holds more than this % (default: 30)
@@ -204,7 +204,7 @@ Analyses top token holders via Solana RPC before buying. Tokens with suspicious 
 
 Observability features for evaluating the discovery pipeline alongside normal trading behavior:
 - `PORTFOLIO_SHADOW_AUDIT_ENABLED` — Record approved candidates as `shadow_positions` for an additional audit log, in parallel with normal portfolio execution (to avoid real trades, keep `PORTFOLIO_DRY_RUN=true` and do not pass `--portfolio-live`; default: `false`)
-- `PORTFOLIO_SHADOW_CHECK_MINUTES` — Interval to check shadow position prices (default: 30)
+- `PORTFOLIO_SHADOW_CHECK_MINUTES` — Delay (in minutes) after a shadow position is created before it becomes eligible for a one-time price check (default: 30)
 - `PORTFOLIO_DECISION_LOG_ENABLED` — Persist per-candidate reason codes for pipeline analysis (default: `false`)
 
 ### Example Report
