@@ -744,7 +744,7 @@ class Database:
                     str(token_address).lower(),
                     _normalize_symbol(str(symbol)),
                     str(chain).lower(),
-                    str(decision_label),
+                    str(decision_label).lower(),
                     price_usd,
                     volume_24h,
                     liquidity_usd,
@@ -773,6 +773,7 @@ class Database:
         self,
         cycle_id: Optional[str] = None,
         token_address: Optional[str] = None,
+        chain: Optional[str] = None,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
         """Query discovery decisions with optional filters."""
@@ -783,8 +784,11 @@ class Database:
             conditions.append("cycle_id = ?")
             params.append(cycle_id)
         if token_address:
-            conditions.append("LOWER(token_address) = LOWER(?)")
-            params.append(token_address)
+            conditions.append("token_address = ?")
+            params.append(token_address.lower())
+        if chain:
+            conditions.append("chain = ?")
+            params.append(chain.lower())
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         cursor = await conn.execute(
             f"""
@@ -901,7 +905,14 @@ class Database:
         )
         row = await cursor.fetchone()
         if not row or row["total"] == 0:
-            return {"total": 0, "winners": 0, "losers": 0, "avg_pnl_pct": 0.0}
+            return {
+                "total": 0,
+                "winners": 0,
+                "losers": 0,
+                "avg_pnl_pct": 0.0,
+                "min_pnl_pct": 0.0,
+                "max_pnl_pct": 0.0,
+            }
         return {
             "total": row["total"],
             "winners": row["winners"] or 0,

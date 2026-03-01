@@ -241,6 +241,40 @@ class TestDecisionLabels:
         skip_decisions = [d for d in db.recorded_decisions if d[4] == DecisionLabel.HEURISTIC_SKIP.value]
         assert len(skip_decisions) == 1
 
+    @pytest.mark.asyncio
+    async def test_held_token_logs_original_candidate_context(self, monkeypatch):
+        """Held-token decisions should keep original candidate symbol/metrics."""
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", min_momentum_score=10.0,
+        )
+        candidate = DiscoveryCandidate(
+            token_address="Held111111111111111111111111111111111111111",
+            symbol="HELD",
+            chain="solana",
+            price_usd=0.123,
+            volume_24h=98765,
+            liquidity_usd=54321,
+        )
+
+        async def _scan_trending():
+            return [{"pair": "x"}]
+
+        def _apply_filters_with_labels(_pairs):
+            return [candidate], []
+
+        monkeypatch.setattr(discovery, "_scan_trending", _scan_trending)
+        monkeypatch.setattr(discovery, "_apply_filters_with_labels", _apply_filters_with_labels)
+
+        db = MockDatabase(held_addresses={candidate.token_address})
+        result = await discovery.discover(db, max_candidates=5, decision_log_enabled=True)
+
+        assert result == []
+        assert len(db.recorded_decisions) == 1
+        row = db.recorded_decisions[0]
+        assert row[4] == DecisionLabel.HELD_TOKEN.value
+        assert row[2] == "HELD"
+        assert row[5] == candidate.price_usd
+
 
 class TestApplyFiltersWithLabels:
     """Test that _apply_filters_with_labels returns labeled rejects."""
@@ -254,6 +288,17 @@ class TestApplyFiltersWithLabels:
         assert len(passed) == 0
         assert len(rejects) == 1
         assert rejects[0][1] == DecisionLabel.FILTER_CHAIN
+
+    def test_missing_chain_reject_labeled_as_parse(self):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+        )
+        pair = _make_pair()
+        pair.pop("chainId", None)
+        passed, rejects = discovery._apply_filters_with_labels([pair])
+        assert len(passed) == 0
+        assert len(rejects) == 1
+        assert rejects[0][1] == DecisionLabel.FILTER_PARSE
 
     def test_missing_identity_reject_labeled(self):
         discovery = PortfolioDiscovery(
@@ -531,7 +576,7 @@ class TestDatabaseDecisionLog:
     @pytest.mark.asyncio
     async def test_batch_insert_normalizes_fields(self, db):
         batch = [
-            ("cycle002b", "0xABCDEF", "test", "SoLaNa", "ai_approve", 0.01, 10, 10, 10, 1.0, "ok", {"k": "v"}),
+            ("cycle002b", "0xABCDEF", "test", "SoLaNa", "AI_APPROVE", 0.01, 10, 10, 10, 1.0, "ok", {"k": "v"}),
         ]
         await db.record_discovery_decisions_batch(batch)
         rows = await db.get_discovery_decisions(cycle_id="cycle002b")
@@ -539,6 +584,7 @@ class TestDatabaseDecisionLog:
         assert rows[0]["token_address"] == "0xabcdef"
         assert rows[0]["chain"] == "solana"
         assert rows[0]["symbol"] == "TEST"
+        assert rows[0]["decision_label"] == "ai_approve"
 
     @pytest.mark.asyncio
     async def test_query_by_token_address(self, db):
@@ -559,6 +605,26 @@ class TestDatabaseDecisionLog:
         rows = await db.get_discovery_decisions(token_address="0xTOKEN1")
         assert len(rows) == 1
         assert rows[0]["symbol"] == "T1"
+
+    @pytest.mark.asyncio
+    async def test_query_by_token_address_and_chain(self, db):
+        await db.record_discovery_decision(
+            cycle_id="cycle004",
+            token_address="0xSAME",
+            symbol="SOL",
+            chain="solana",
+            decision_label="ai_approve",
+        )
+        await db.record_discovery_decision(
+            cycle_id="cycle004",
+            token_address="0xSAME",
+            symbol="ETH",
+            chain="ethereum",
+            decision_label="ai_reject",
+        )
+        rows = await db.get_discovery_decisions(token_address="0xSAME", chain="solana")
+        assert len(rows) == 1
+        assert rows[0]["chain"] == "solana"
 
 
 class TestDatabaseShadowPositions:
@@ -608,6 +674,8 @@ class TestDatabaseShadowPositions:
     async def test_shadow_summary_no_data(self, db):
         summary = await db.get_shadow_summary()
         assert summary["total"] == 0
+        assert summary["min_pnl_pct"] == 0.0
+        assert summary["max_pnl_pct"] == 0.0
 
     @pytest.mark.asyncio
     async def test_shadow_summary_with_data(self, db):

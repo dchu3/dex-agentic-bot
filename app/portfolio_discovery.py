@@ -203,12 +203,12 @@ class PortfolioDiscovery:
         self._log("info", f"{len(filtered)} candidates passed filters")
 
         # Step 3: Exclude already-held tokens
-        before_held = set(c.token_address.lower() for c in filtered)
+        before_held = {c.token_address.lower(): c for c in filtered}
         filtered = await self._exclude_held_tokens(filtered, db)
-        for addr in before_held - set(c.token_address.lower() for c in filtered):
-            held_c = DiscoveryCandidate(token_address=addr, symbol="?", chain=self.chain,
-                                        price_usd=0, volume_24h=0, liquidity_usd=0)
-            _record(held_c, DecisionLabel.HELD_TOKEN, "already held")
+        remaining_held = {c.token_address.lower() for c in filtered}
+        for addr, original_c in before_held.items():
+            if addr not in remaining_held:
+                _record(original_c, DecisionLabel.HELD_TOKEN, "already held")
         if not filtered:
             self._log("info", "All candidates already held")
             await self._flush_decisions(db, decisions)
@@ -589,18 +589,30 @@ class PortfolioDiscovery:
         now_ms = time.time() * 1000
 
         for pair in pairs:
-            chain_id = (pair.get("chainId") or "").lower()
+            chain_raw = pair.get("chainId")
+            chain_id = str(chain_raw).lower() if chain_raw is not None else ""
             chain_counts[chain_id] = chain_counts.get(chain_id, 0) + 1
             base_token = pair.get("baseToken", {})
             if not isinstance(base_token, dict):
                 base_token = {}
             address = str(base_token.get("address", "") or "")
             symbol = str(base_token.get("symbol", "") or "")
+            if not chain_id:
+                c = DiscoveryCandidate(
+                    token_address=address,
+                    symbol=symbol,
+                    chain="unknown",
+                    price_usd=0.0,
+                    volume_24h=0.0,
+                    liquidity_usd=0.0,
+                )
+                rejects.append((c, DecisionLabel.FILTER_PARSE, "missing chainId"))
+                continue
             if chain_id != self.chain:
                 c = DiscoveryCandidate(
                     token_address=address,
                     symbol=symbol,
-                    chain=chain_id or self.chain,
+                    chain=chain_id,
                     price_usd=0.0,
                     volume_24h=0.0,
                     liquidity_usd=0.0,
