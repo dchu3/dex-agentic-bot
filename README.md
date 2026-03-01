@@ -203,7 +203,7 @@ Analyses top token holders via Solana RPC before buying. Tokens with suspicious 
 **Shadow audit & decision logging (configurable via `.env`):**
 
 Observability features for evaluating the discovery pipeline alongside normal trading behavior:
-- `PORTFOLIO_SHADOW_AUDIT_ENABLED` — Record approved candidates as `shadow_positions` for an additional audit log, in parallel with normal portfolio execution (to avoid real trades, use `PORTFOLIO_DRY_RUN=true` or omit `--portfolio-live`; default: `false`)
+- `PORTFOLIO_SHADOW_AUDIT_ENABLED` — Record approved candidates as `shadow_positions` for an additional audit log, in parallel with normal portfolio execution (to avoid real trades, keep `PORTFOLIO_DRY_RUN=true` and do not pass `--portfolio-live`; default: `false`)
 - `PORTFOLIO_SHADOW_CHECK_MINUTES` — Interval to check shadow position prices (default: 30)
 - `PORTFOLIO_DECISION_LOG_ENABLED` — Persist per-candidate reason codes for pipeline analysis (default: `false`)
 
