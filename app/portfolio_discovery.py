@@ -761,20 +761,26 @@ class PortfolioDiscovery:
                 return result
             return cls._build_truncation_wrapper(result, max_chars)
 
-        # For large containers, serialize only a preview slice to avoid
-        # full serialization cost on huge payloads.
+        # For large containers, estimate size from a sample before deciding
+        # whether to serialize fully or just return a preview.
         if isinstance(result, (dict, list)) and len(result) > 50:
             if isinstance(result, dict):
-                preview_data = dict(list(result.items())[:20])
+                sample = dict(list(result.items())[:20])
             else:
-                preview_data = result[:20]
+                sample = result[:20]
             try:
-                result_str = json.dumps(preview_data, default=str)
+                sample_str = json.dumps(sample, default=str)
             except (TypeError, ValueError):
-                result_str = str(preview_data)
-            if len(result_str) <= max_chars:
-                return result_str
-            return cls._build_truncation_wrapper(result_str, max_chars)
+                sample_str = str(sample)
+            sample_count = min(20, len(result))
+            estimated_total = (len(sample_str) / sample_count) * len(result) if sample_count else 0
+
+            if estimated_total > max_chars:
+                # Likely too large — return the sample preview
+                if len(sample_str) <= max_chars:
+                    return sample_str
+                return cls._build_truncation_wrapper(sample_str, max_chars)
+            # Estimated to fit — fall through to full serialization
 
         # Small containers: serialize fully
         try:
