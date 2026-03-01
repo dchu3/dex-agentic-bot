@@ -338,6 +338,17 @@ class PortfolioStrategyEngine:
                     "Price deviation %.1f%% on %s buy: quoted=$%.10f executed=$%.10f",
                     deviation_pct, candidate.symbol, quote.price, executed_price,
                 )
+                self._log(
+                    "warning",
+                    f"Price deviation {deviation_pct:.1f}% on {candidate.symbol} buy",
+                    {
+                        "deviation_pct": deviation_pct,
+                        "symbol": candidate.symbol,
+                        "quote_price": quote.price,
+                        "executed_price": executed_price,
+                        "token_address": candidate.token_address,
+                    },
+                )
 
         if not execution.success:
             await self.db.record_portfolio_execution(

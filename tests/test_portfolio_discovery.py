@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -236,6 +237,39 @@ class TestApplyFilters:
         result = discovery._apply_filters(pairs)
         assert len(result) == 1
 
+    def test_parses_price_change_windows(self):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+        )
+        pair = _make_pair(address="PriceWin1111111111111111111111111111111111")
+        pair["priceChange"] = {"m5": 0.5, "h1": 1.5, "h6": 3.5, "h24": 7.5}
+
+        result = discovery._apply_filters([pair])
+
+        assert len(result) == 1
+        candidate = result[0]
+        assert candidate.price_change_5m == 0.5
+        assert candidate.price_change_1h == 1.5
+        assert candidate.price_change_6h == 3.5
+        assert candidate.price_change_24h == 7.5
+
+    @pytest.mark.parametrize("price_change_value", [None, "invalid"])
+    def test_handles_null_or_non_dict_price_change(self, price_change_value):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+        )
+        pair = _make_pair(address="PriceNull111111111111111111111111111111111")
+        pair["priceChange"] = price_change_value
+
+        result = discovery._apply_filters([pair])
+
+        assert len(result) == 1
+        candidate = result[0]
+        assert candidate.price_change_5m == 0.0
+        assert candidate.price_change_1h == 0.0
+        assert candidate.price_change_6h == 0.0
+        assert candidate.price_change_24h == 0.0
+
 
 # ---------------------------------------------------------------------------
 # Max token age filter
@@ -340,6 +374,182 @@ class TestExcludeHeldTokens:
 
         assert len(result) == 1
         assert result[0].symbol == "FREE"
+
+
+# ---------------------------------------------------------------------------
+# Discovery pipeline behavior
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverPipeline:
+    @pytest.mark.asyncio
+    async def test_prefilter_skips_low_scores_and_dedupes_before_ai(self, monkeypatch):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", min_momentum_score=50.0,
+        )
+        strong_primary = DiscoveryCandidate(
+            token_address="DupAddr111111111111111111111111111111111111",
+            symbol="GOOD1",
+            chain="solana",
+            price_usd=0.01,
+            volume_24h=100000.0,
+            liquidity_usd=50000.0,
+            price_change_24h=10.0,
+            safety_status="Safe",
+        )
+        strong_duplicate = DiscoveryCandidate(
+            token_address="DupAddr111111111111111111111111111111111111",
+            symbol="GOOD2",
+            chain="solana",
+            price_usd=0.02,
+            volume_24h=120000.0,
+            liquidity_usd=60000.0,
+            price_change_24h=12.0,
+            safety_status="Safe",
+        )
+        weak = DiscoveryCandidate(
+            token_address="WeakAddr11111111111111111111111111111111111",
+            symbol="WEAK",
+            chain="solana",
+            price_usd=0.001,
+            volume_24h=1000.0,
+            liquidity_usd=20000.0,
+            price_change_24h=-5.0,
+            safety_status="Dangerous",
+        )
+        ai_called_symbols: List[str] = []
+
+        async def _scan_trending() -> List[Dict[str, Any]]:
+            return [{"pair": "placeholder"}]
+
+        def _apply_filters(_pairs: List[Dict[str, Any]]) -> List[DiscoveryCandidate]:
+            return [strong_primary, strong_duplicate, weak]
+
+        async def _exclude_held_tokens(
+            candidates: List[DiscoveryCandidate], _db: MockDatabase
+        ) -> List[DiscoveryCandidate]:
+            return candidates
+
+        async def _safety_check(
+            candidates: List[DiscoveryCandidate],
+        ) -> List[DiscoveryCandidate]:
+            return candidates
+
+        async def _insider_check(
+            candidates: List[DiscoveryCandidate],
+        ) -> List[DiscoveryCandidate]:
+            return candidates
+
+        async def _ai_decide(candidate: DiscoveryCandidate) -> tuple[bool, str]:
+            ai_called_symbols.append(candidate.symbol)
+            return True, "buy"
+
+        monkeypatch.setattr(discovery, "_scan_trending", _scan_trending)
+        monkeypatch.setattr(discovery, "_apply_filters", _apply_filters)
+        monkeypatch.setattr(discovery, "_exclude_held_tokens", _exclude_held_tokens)
+        monkeypatch.setattr(discovery, "_safety_check", _safety_check)
+        monkeypatch.setattr(discovery, "_insider_check", _insider_check)
+        monkeypatch.setattr(discovery, "_ai_decide", _ai_decide)
+
+        result = await discovery.discover(MockDatabase(), max_candidates=5)
+
+        assert ai_called_symbols == ["GOOD1"]
+        assert len(result) == 1
+        assert result[0].symbol == "GOOD1"
+
+    @pytest.mark.asyncio
+    async def test_parallel_decisions_respect_max_candidates(self, monkeypatch):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", min_momentum_score=40.0,
+        )
+        candidates = [
+            DiscoveryCandidate(
+                token_address="AddrA111111111111111111111111111111111111",
+                symbol="A",
+                chain="solana",
+                price_usd=0.01,
+                volume_24h=110000.0,
+                liquidity_usd=50000.0,
+                price_change_24h=12.0,
+                safety_status="Safe",
+            ),
+            DiscoveryCandidate(
+                token_address="AddrB111111111111111111111111111111111111",
+                symbol="B",
+                chain="solana",
+                price_usd=0.01,
+                volume_24h=100000.0,
+                liquidity_usd=50000.0,
+                price_change_24h=11.0,
+                safety_status="Safe",
+            ),
+            DiscoveryCandidate(
+                token_address="AddrC111111111111111111111111111111111111",
+                symbol="C",
+                chain="solana",
+                price_usd=0.01,
+                volume_24h=100000.0,
+                liquidity_usd=50000.0,
+                price_change_24h=10.0,
+                safety_status="Safe",
+            ),
+            DiscoveryCandidate(
+                token_address="AddrD111111111111111111111111111111111111",
+                symbol="D",
+                chain="solana",
+                price_usd=0.01,
+                volume_24h=100000.0,
+                liquidity_usd=50000.0,
+                price_change_24h=9.0,
+                safety_status="Safe",
+            ),
+        ]
+        decisions = {
+            "A": (True, "approve A"),
+            "B": (False, "reject B"),
+            "C": (True, "approve C"),
+            "D": (True, "approve D"),
+        }
+        delays = {"A": 0.03, "B": 0.0, "C": 0.01, "D": 0.0}
+        called_symbols: List[str] = []
+
+        async def _scan_trending() -> List[Dict[str, Any]]:
+            return [{"pair": "placeholder"}]
+
+        def _apply_filters(_pairs: List[Dict[str, Any]]) -> List[DiscoveryCandidate]:
+            return candidates
+
+        async def _exclude_held_tokens(
+            current: List[DiscoveryCandidate], _db: MockDatabase
+        ) -> List[DiscoveryCandidate]:
+            return current
+
+        async def _safety_check(
+            current: List[DiscoveryCandidate],
+        ) -> List[DiscoveryCandidate]:
+            return current
+
+        async def _insider_check(
+            current: List[DiscoveryCandidate],
+        ) -> List[DiscoveryCandidate]:
+            return current
+
+        async def _ai_decide(candidate: DiscoveryCandidate) -> tuple[bool, str]:
+            called_symbols.append(candidate.symbol)
+            await asyncio.sleep(delays[candidate.symbol])
+            return decisions[candidate.symbol]
+
+        monkeypatch.setattr(discovery, "_scan_trending", _scan_trending)
+        monkeypatch.setattr(discovery, "_apply_filters", _apply_filters)
+        monkeypatch.setattr(discovery, "_exclude_held_tokens", _exclude_held_tokens)
+        monkeypatch.setattr(discovery, "_safety_check", _safety_check)
+        monkeypatch.setattr(discovery, "_insider_check", _insider_check)
+        monkeypatch.setattr(discovery, "_ai_decide", _ai_decide)
+
+        result = await discovery.discover(MockDatabase(), max_candidates=2)
+
+        assert sorted(called_symbols) == ["A", "B", "C", "D"]
+        assert [c.symbol for c in result] == ["A", "C"]
 
 
 # ---------------------------------------------------------------------------

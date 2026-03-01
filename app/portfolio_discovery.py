@@ -393,6 +393,8 @@ class PortfolioDiscovery:
                 liquidity_data = pair.get("liquidity", {})
                 liquidity = float(liquidity_data.get("usd", 0)) if isinstance(liquidity_data, dict) else 0.0
                 price_change_data = pair.get("priceChange", {})
+                if not isinstance(price_change_data, dict):
+                    price_change_data = {}
                 price_change = float(price_change_data.get("h24", 0))
                 price_change_1h = float(price_change_data.get("h1", 0))
                 price_change_6h = float(price_change_data.get("h6", 0))
@@ -456,9 +458,15 @@ class PortfolioDiscovery:
         db: "Database",
     ) -> List[DiscoveryCandidate]:
         """Remove candidates that already have open portfolio positions."""
-        checks = await asyncio.gather(
-            *[db.get_open_portfolio_position(c.token_address, c.chain) for c in candidates]
-        )
+        sem = asyncio.Semaphore(10)
+
+        async def _check_one(candidate: DiscoveryCandidate) -> Any:
+            async with sem:
+                return await db.get_open_portfolio_position(
+                    candidate.token_address, candidate.chain
+                )
+
+        checks = await asyncio.gather(*[_check_one(c) for c in candidates])
         return [c for c, existing in zip(candidates, checks) if existing is None]
 
     async def _safety_check(
@@ -472,28 +480,31 @@ class PortfolioDiscovery:
                 c.safety_status = "unverified"
             return candidates
 
-        async def _check_one(candidate: DiscoveryCandidate) -> Optional[DiscoveryCandidate]:
-            try:
-                result = await client.call_tool(
-                    "get_token_summary",
-                    {"token_address": candidate.token_address},
-                )
-                status, score = self._parse_safety(result)
-                candidate.safety_status = status
-                candidate.safety_score = score
+        sem = asyncio.Semaphore(5)
 
-                if status in ("Safe", "Risky", "unverified"):
-                    return candidate
-                else:
-                    self._log(
-                        "info",
-                        f"Rejected {candidate.symbol}: safety={status}",
+        async def _check_one(candidate: DiscoveryCandidate) -> Optional[DiscoveryCandidate]:
+            async with sem:
+                try:
+                    result = await client.call_tool(
+                        "get_token_summary",
+                        {"token_address": candidate.token_address},
                     )
-                    return None
-            except Exception as exc:
-                self._log("warning", f"Safety check failed for {candidate.symbol}: {exc}")
-                candidate.safety_status = "unverified"
-                return candidate
+                    status, score = self._parse_safety(result)
+                    candidate.safety_status = status
+                    candidate.safety_score = score
+
+                    if status in ("Safe", "Risky", "unverified"):
+                        return candidate
+                    else:
+                        self._log(
+                            "info",
+                            f"Rejected {candidate.symbol}: safety={status}",
+                        )
+                        return None
+                except Exception as exc:
+                    self._log("warning", f"Safety check failed for {candidate.symbol}: {exc}")
+                    candidate.safety_status = "unverified"
+                    return candidate
 
         results = await asyncio.gather(*[_check_one(c) for c in candidates])
         return [c for c in results if c is not None]
