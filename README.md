@@ -43,6 +43,9 @@ Key settings in `.env`:
 # Required
 GEMINI_API_KEY=your-gemini-api-key
 
+# Optional (defaults shown)
+GEMINI_MODEL=gemini-2.5-flash
+
 # MCP Servers (token data sources)
 MCP_DEXSCREENER_CMD=node /path/to/dex-screener-mcp/dist/index.js
 MCP_DEXPAPRIKA_CMD=dexpaprika-mcp
@@ -51,6 +54,9 @@ MCP_RUGCHECK_CMD=node /path/to/dex-rugcheck-mcp/dist/index.js
 MCP_SOLANA_RPC_CMD=node /path/to/solana-rpc-mcp/dist/index.js
 MCP_BLOCKSCOUT_CMD=node /path/to/dex-blockscout-mcp/dist/index.js
 MCP_TRADER_CMD=node /path/to/dex-trader-mcp/dist/index.js
+
+# Timeout (seconds) for MCP tool calls (default: 90)
+MCP_CALL_TIMEOUT=90
 
 # Solana RPC (for token decimal lookups and tx verification)
 # The public endpoint is heavily rate-limited and blocks cloud IPs.
@@ -70,6 +76,7 @@ PORTFOLIO_MAX_POSITIONS=5
 PORTFOLIO_TAKE_PROFIT_PCT=15.0
 PORTFOLIO_STOP_LOSS_PCT=8.0
 PORTFOLIO_TRAILING_STOP_PCT=5.0
+PORTFOLIO_SELL_PCT=100.0
 ```
 
 > **Trader MCP — additional configuration required**
@@ -113,9 +120,12 @@ Send any token address to your bot:
 
 | Command | Description |
 |---------|-------------|
-| `/analyze <address>` | Analyze a token |
+| `/analyze <address>` | Analyze a token (quick summary) |
+| `/full <address>` | Detailed analysis report |
 | `/help` | Show help message |
 | `/status` | Check bot status |
+| `/subscribe` | Subscribe to price alerts (legacy, not shown in bot help) |
+| `/unsubscribe` | Unsubscribe from price alerts (legacy, not shown in bot help) |
 
 ### Interactive CLI Commands
 
@@ -146,9 +156,10 @@ Send any token address to your bot:
 The portfolio strategy autonomously discovers promising Solana tokens, buys small positions, and exits when take-profit, stop-loss, or trailing stop conditions are met.
 
 **How it works:**
-1. **Discovery** (every 30 min): DexScreener trending → volume/liquidity/market cap filter → rugcheck safety → Gemini AI momentum scoring → buy top candidates
-2. **Exit monitoring** (every 60s): Check TP/SL thresholds, update trailing stops, close expired positions
-3. **Risk guards**: Max positions cap, daily loss limit, cooldown after failures, duplicate prevention
+1. **SOL trend gate**: Skip discovery if SOL has dropped faster than the configured threshold in the lookback window
+2. **Discovery** (every 30 min): DexScreener trending → volume/liquidity/market cap filter → rugcheck safety → insider/sniper detection → heuristic momentum scoring → Gemini AI per-candidate buy/skip decision → buy approved candidates
+3. **Exit monitoring** (every 60s): Check TP/SL thresholds, update trailing stops, close expired positions
+4. **Risk guards**: Max positions cap, daily loss limit, cooldown after failures, duplicate prevention
 
 **Discovery filters (configurable via `.env`):**
 - `PORTFOLIO_MIN_VOLUME_USD` — Minimum 24h trading volume (default: 50k)
@@ -166,6 +177,35 @@ Before opening a position, optionally executes a tiny `buy_and_sell` round-trip 
 - `PORTFOLIO_SLIPPAGE_PROBE_MAX_SLIPPAGE_PCT` — Abort if real slippage deviates more than this % from quoted price (default: `5.0`)
 
 By default this runs in **dry-run mode** (`PORTFOLIO_DRY_RUN=true`).
+
+**Partial sell (configurable via `.env`):**
+
+Sell a percentage of the position on any **profitable** exit trigger (e.g. take-profit, trailing stop in profit), while keeping the remainder open with a continued trailing stop:
+- `PORTFOLIO_SELL_PCT` — Percentage of the position to sell on profitable exits (default: 100 = full exit)
+
+When set below 100 and the trade is in profit, the bot partially closes the position; the remaining size stays open and the trailing stop continues tracking the remaining balance. If an exit is not profitable (at or below entry), the bot closes 100% of the position regardless of this setting.
+
+**SOL trend gate (configurable via `.env`):**
+
+Pauses discovery when the SOL price is dropping to avoid buying into a market-wide dump:
+- `PORTFOLIO_SOL_DUMP_THRESHOLD_PCT` — Skip discovery if SOL dropped more than this % (default: -5.0)
+- `PORTFOLIO_SOL_TREND_LOOKBACK_MINS` — Lookback window for the trend check (default: 60)
+
+**Insider / sniper detection (configurable via `.env`):**
+
+Analyzes top token holders via Solana RPC before buying. Tokens with suspicious concentration are rejected or flagged for AI review:
+- `PORTFOLIO_INSIDER_CHECK_ENABLED` — Enable the check (default: `true`)
+- `PORTFOLIO_INSIDER_MAX_CONCENTRATION_PCT` — Hard-reject if top-holder concentration exceeds this % (default: 50)
+- `PORTFOLIO_INSIDER_MAX_CREATOR_PCT` — Hard-reject if creator holds more than this % (default: 30)
+- `PORTFOLIO_INSIDER_WARN_CONCENTRATION_PCT` — Soft-flag for AI review above this % (default: 30)
+- `PORTFOLIO_INSIDER_WARN_CREATOR_PCT` — Soft-flag for AI review above this % (default: 10)
+
+**Shadow audit & decision logging (configurable via `.env`):**
+
+Observability features for evaluating the discovery pipeline alongside normal trading behavior:
+- `PORTFOLIO_SHADOW_AUDIT_ENABLED` — Record approved candidates as `shadow_positions` for an additional audit log, in parallel with normal portfolio execution (to avoid real trades, keep `PORTFOLIO_DRY_RUN=true` and do not pass `--portfolio-live`; default: `false`)
+- `PORTFOLIO_SHADOW_CHECK_MINUTES` — Delay (in minutes) after a shadow position is created before it becomes eligible for a one-time price check (default: 30)
+- `PORTFOLIO_DECISION_LOG_ENABLED` — Persist per-candidate reason codes for pipeline analysis (default: `false`)
 
 ### Example Report
 
@@ -204,7 +244,7 @@ deep liquidity and no concerning tax mechanisms...
 |--------|-------------|
 | `-i, --interactive` | Start interactive CLI mode |
 | `-v, --verbose` | Show debug information |
-| `-o, --output` | Output format (`text`, `json`) |
+| `-o, --output` | Output format (`text`, `json`, `table`; default: `table`) |
 | `--stdin` | Read query from stdin |
 | `--telegram-only` | Run only the Telegram bot (no CLI) |
 | `--no-telegram` | Disable Telegram in interactive mode |
