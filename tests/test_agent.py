@@ -1,9 +1,11 @@
 """Tests for the AgenticPlanner class, especially malformed function call handling."""
 
+import json
 from unittest.mock import MagicMock, AsyncMock
 import pytest
 
 from app.agent import AgenticPlanner, AgenticContext
+from app.types import MAX_TOOL_RESULT_CHARS as _MAX_TOOL_RESULT_CHARS
 
 
 class MockCandidate:
@@ -117,3 +119,56 @@ class TestAgenticContext:
         assert ctx.malformed_retries == 1
         ctx.malformed_retries += 1
         assert ctx.malformed_retries == 2
+
+
+class TestTruncateResult:
+    """Tests for _truncate_result helper."""
+
+    def setup_method(self):
+        """Create a minimal planner for testing helper methods."""
+        self.planner = object.__new__(AgenticPlanner)
+        self.planner.verbose = False
+        self.planner.log_callback = None
+
+    def test_truncates_long_string_by_char_count(self):
+        """Long strings should still be truncated by character count."""
+        long_string = "x" * (_MAX_TOOL_RESULT_CHARS + 25)
+        truncated = self.planner._truncate_result(long_string)
+
+        assert len(truncated) <= _MAX_TOOL_RESULT_CHARS
+        assert truncated.endswith(" chars]")
+        assert "\n... [truncated " in truncated
+
+    @pytest.mark.parametrize(
+        ("payload", "payload_type"),
+        [
+            ({f"key{i}": "x" * 120 for i in range(300)}, "dict"),
+            (["x" * 120 for _ in range(300)], "list"),
+        ],
+    )
+    def test_large_structures_return_json_serializable_preview(self, payload, payload_type):
+        """Large dict/list payloads should return truncated JSON-safe preview objects."""
+        truncated = self.planner._truncate_result(payload)
+
+        assert truncated["_truncated"] is True
+        assert truncated["_type"] == payload_type
+        assert truncated["_total_items"] == len(payload)
+        assert truncated["_preview_items"] < truncated["_total_items"]
+        assert truncated["_omitted_items"] > 0
+        assert "_preview" in truncated
+
+        json.dumps(truncated)
+
+    def test_problematic_structured_payloads_return_preview_without_raising(self):
+        """Circular and non-serializable payloads should not break truncation."""
+        circular_payload = {}
+        circular_payload["self"] = circular_payload
+        non_serializable_payload = {f"key{i}": object() for i in range(400)}
+
+        for payload in (circular_payload, non_serializable_payload):
+            truncated = self.planner._truncate_result(payload)
+
+            assert truncated["_truncated"] is True
+            assert truncated["_type"] == "dict"
+            assert "_preview" in truncated
+            json.dumps(truncated)

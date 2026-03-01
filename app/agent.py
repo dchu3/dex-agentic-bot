@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
+from itertools import islice
 from typing import Any, Callable, Dict, List, Optional
 
 from google import genai
 from google.genai import types
 
 from app.mcp_client import MCPManager
-from app.types import PlannerResult
+from app.types import MAX_TOOL_RESULT_CHARS as _MAX_TOOL_RESULT_CHARS, PlannerResult
 from app.tool_converter import parse_function_call_name
 
 
@@ -37,6 +38,10 @@ class AgenticContext:
     malformed_retries: int = 0  # Track recovery attempts for malformed function calls
     original_query: str = ""  # Store original query for recovery context
 
+
+_TOOL_RESULT_SAMPLE_ITEMS = 25
+_TOOL_RESULT_PREVIEW_ITEMS = 5
+_TOOL_RESULT_PREVIEW_STRING_CHARS = 200
 
 AGENTIC_SYSTEM_PROMPT_BASE = """You are a crypto/DeFi assistant that helps users find token and pool information across multiple blockchains.
 
@@ -168,6 +173,98 @@ class AgenticPlanner:
         """Log a message if verbose mode is enabled."""
         if self.verbose and self.log_callback:
             self.log_callback(level, message, data)
+
+    def _truncate_result(self, result: Any) -> Any:
+        """Truncate large tool results to conserve context window tokens."""
+        if isinstance(result, str) and len(result) > _MAX_TOOL_RESULT_CHARS:
+            content_budget = _MAX_TOOL_RESULT_CHARS
+            omitted = len(result) - content_budget
+            suffix = f"\n... [truncated {omitted} chars]"
+            content_budget = max(0, _MAX_TOOL_RESULT_CHARS - len(suffix))
+            omitted = len(result) - content_budget
+            suffix = f"\n... [truncated {omitted} chars]"
+            return result[:content_budget] + suffix
+        if isinstance(result, (dict, list)):
+            if self._should_truncate_structured_result(result):
+                return self._build_truncated_preview(result)
+        return result
+
+    def _should_truncate_structured_result(self, result: Any) -> bool:
+        """Estimate structured payload size without serializing the full object."""
+        if isinstance(result, dict):
+            sample_items = list(islice(result.items(), _TOOL_RESULT_SAMPLE_ITEMS))
+            sample: Any = dict(sample_items)
+            sampled_count = len(sample_items)
+            total_items = len(result)
+        elif isinstance(result, list):
+            sample = result[:_TOOL_RESULT_SAMPLE_ITEMS]
+            sampled_count = len(sample)
+            total_items = len(result)
+        else:
+            return False
+
+        if sampled_count == 0:
+            return False
+
+        try:
+            sample_size = len(json.dumps(sample, default=str))
+        except (TypeError, ValueError):
+            return True
+        if sample_size > _MAX_TOOL_RESULT_CHARS:
+            return True
+
+        if total_items > sampled_count:
+            estimated_size = (sample_size / sampled_count) * total_items
+            return estimated_size > _MAX_TOOL_RESULT_CHARS
+
+        return False
+
+    def _build_truncated_preview(self, result: Any) -> Dict[str, Any]:
+        """Build a JSON-serializable shallow preview for large structured payloads."""
+        if isinstance(result, dict):
+            preview = {
+                str(key): self._preview_truncated_value(value)
+                for key, value in islice(result.items(), _TOOL_RESULT_PREVIEW_ITEMS)
+            }
+            total_items = len(result)
+        elif isinstance(result, list):
+            preview = [self._preview_truncated_value(value) for value in result[:_TOOL_RESULT_PREVIEW_ITEMS]]
+            total_items = len(result)
+        else:
+            preview = self._preview_truncated_value(result)
+            total_items = 1
+
+        preview_items = len(preview) if isinstance(preview, (dict, list)) else 1
+        return {
+            "_truncated": True,
+            "_type": type(result).__name__,
+            "_total_items": total_items,
+            "_preview_items": preview_items,
+            "_omitted_items": max(0, total_items - preview_items),
+            "_preview": preview,
+        }
+
+    def _preview_truncated_value(self, value: Any) -> Any:
+        """Convert values into JSON-safe shallow previews."""
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            if isinstance(value, str) and len(value) > _TOOL_RESULT_PREVIEW_STRING_CHARS:
+                return (
+                    value[:_TOOL_RESULT_PREVIEW_STRING_CHARS]
+                    + f"... [truncated {len(value) - _TOOL_RESULT_PREVIEW_STRING_CHARS} chars]"
+                )
+            return value
+        if isinstance(value, dict):
+            return {
+                "_type": "dict",
+                "_total_items": len(value),
+                "_keys": [str(key) for key in islice(value.keys(), _TOOL_RESULT_PREVIEW_ITEMS)],
+            }
+        if isinstance(value, list):
+            return {
+                "_type": "list",
+                "_total_items": len(value),
+            }
+        return str(value)
 
     def _is_malformed_response(self, response: Any) -> bool:
         """Check if response indicates a malformed function call."""
@@ -422,7 +519,7 @@ class AgenticPlanner:
             if isinstance(result, Exception):
                 response_data = {"error": str(result)}
             else:
-                response_data = result
+                response_data = self._truncate_result(result)
 
             parts.append(
                 types.Part.from_function_response(

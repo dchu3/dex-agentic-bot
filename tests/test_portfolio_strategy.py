@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -875,6 +876,79 @@ class TestSlippageProbeInOpenPosition:
             position = await engine._open_position(self._candidate())
 
         assert position is not None
+
+    @pytest.mark.asyncio
+    async def test_stale_native_price_refreshes_before_quote_and_execution(self, db):
+        """When native price is stale, _open_position refreshes before quote/execution."""
+        from unittest.mock import AsyncMock, patch
+        from app.execution import TradeExecution, TradeQuote
+
+        engine = _make_engine(db, slippage_probe_enabled=False, dry_run=False)
+        engine._native_price_usd = 180.0
+        engine._native_price_updated_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+        call_order: List[str] = []
+
+        async def _refresh() -> None:
+            call_order.append("refresh")
+
+        async def _quote(*args, **kwargs):
+            call_order.append("quote")
+            return TradeQuote(price=0.01, liquidity_usd=50_000.0, method="mock", raw={})
+
+        async def _execute(*args, **kwargs):
+            call_order.append("execute")
+            return TradeExecution(
+                success=True, method="mock", raw={}, executed_price=0.01, quantity_token=500.0, tx_hash="abc"
+            )
+
+        with patch.object(engine, "_refresh_native_price", new_callable=AsyncMock) as mock_refresh, \
+             patch.object(engine.execution, "get_quote", new_callable=AsyncMock) as mock_quote, \
+             patch.object(engine.execution, "execute_trade", new_callable=AsyncMock) as mock_exec:
+            mock_refresh.side_effect = _refresh
+            mock_quote.side_effect = _quote
+            mock_exec.side_effect = _execute
+
+            await engine._open_position(self._candidate())
+
+        mock_refresh.assert_awaited_once()
+        assert call_order[:3] == ["refresh", "quote", "execute"]
+
+    @pytest.mark.asyncio
+    async def test_price_deviation_emits_warning_log_callback(self, db, caplog):
+        """Large quote/execution deviation should log both logger warning and callback warning."""
+        from unittest.mock import AsyncMock, patch
+        from app.execution import TradeExecution, TradeQuote
+
+        engine = _make_engine(db, slippage_probe_enabled=False, dry_run=False)
+        callback_logs: List[tuple[str, str, Optional[Dict[str, Any]]]] = []
+        engine.verbose = True
+        engine.log_callback = lambda level, message, data: callback_logs.append((level, message, data))
+        caplog.set_level(logging.WARNING, logger="app.portfolio_strategy")
+
+        with patch.object(engine.execution, "get_quote", new_callable=AsyncMock) as mock_quote, \
+             patch.object(engine.execution, "execute_trade", new_callable=AsyncMock) as mock_exec:
+            mock_quote.return_value = TradeQuote(price=1.0, liquidity_usd=50_000.0, method="mock", raw={})
+            mock_exec.return_value = TradeExecution(
+                success=True, method="mock", raw={}, executed_price=1.2, quantity_token=5.0, tx_hash="abc"
+            )
+
+            position = await engine._open_position(self._candidate())
+
+        assert position is not None
+        warning_logs = [entry for entry in callback_logs if entry[0] == "warning"]
+        assert len(warning_logs) == 1
+        _, message, data = warning_logs[0]
+        assert "Price deviation 20.0% on PROB buy" in message
+        assert data is not None
+        assert data["symbol"] == "PROB"
+        assert data["quote_price"] == pytest.approx(1.0)
+        assert data["executed_price"] == pytest.approx(1.2)
+        assert data["deviation_pct"] == pytest.approx(20.0)
+        assert any(
+            "Price deviation 20.0% on PROB buy: quoted=$1.0000000000 executed=$1.2000000000"
+            in record.getMessage()
+            for record in caplog.records
+        )
 
     @pytest.mark.asyncio
     async def test_probe_enabled_excessive_slippage_aborts(self, db):

@@ -24,6 +24,7 @@ LogCallback = Callable[[str, str, Optional[Dict[str, Any]]], None]
 _ERROR_SKIP_SECONDS = 300
 _NATIVE_PRICE_STALE_SECONDS = 120
 _DUST_NOTIONAL_USD = 0.01
+_PRICE_DEVIATION_WARN_PCT = 5.0
 
 
 @dataclass
@@ -284,6 +285,13 @@ class PortfolioStrategyEngine:
         """Execute buy and create portfolio position."""
         notional = self.config.position_size_usd
 
+        # Re-fetch native price if it may have gone stale during discovery
+        if self._native_price_updated_at:
+            age_seconds = (datetime.now(timezone.utc) - self._native_price_updated_at).total_seconds()
+            if age_seconds > _NATIVE_PRICE_STALE_SECONDS:
+                self._log("info", f"Native price stale ({age_seconds:.0f}s old), refreshing before buy")
+                await self._refresh_native_price()
+
         if self.config.slippage_probe_enabled and not self.config.dry_run:
             should_abort, slippage_pct, reason = await self.execution.probe_slippage(
                 token_address=candidate.token_address,
@@ -293,7 +301,7 @@ class PortfolioStrategyEngine:
             )
             if should_abort:
                 self._log(
-                    "warn",
+                    "warning",
                     f"Skipping {candidate.symbol}: {reason}",
                 )
                 return None
@@ -322,6 +330,26 @@ class PortfolioStrategyEngine:
             quantity = notional / quote.price
 
         executed_price = execution.executed_price or quote.price
+
+        # Log warning if execution price deviates significantly from quote
+        if execution.success and quote and quote.price > 0 and executed_price > 0:
+            deviation_pct = abs(executed_price - quote.price) / quote.price * 100
+            if deviation_pct > _PRICE_DEVIATION_WARN_PCT:
+                logger.warning(
+                    "Price deviation %.1f%% on %s buy: quoted=$%.10f executed=$%.10f",
+                    deviation_pct, candidate.symbol, quote.price, executed_price,
+                )
+                self._log(
+                    "warning",
+                    f"Price deviation {deviation_pct:.1f}% on {candidate.symbol} buy",
+                    {
+                        "deviation_pct": deviation_pct,
+                        "symbol": candidate.symbol,
+                        "quote_price": quote.price,
+                        "executed_price": executed_price,
+                        "token_address": candidate.token_address,
+                    },
+                )
 
         if not execution.success:
             await self.db.record_portfolio_execution(

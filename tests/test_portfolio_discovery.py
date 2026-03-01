@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from app.portfolio_discovery import DiscoveryCandidate, PortfolioDiscovery
+from app.types import MAX_TOOL_RESULT_CHARS
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +237,55 @@ class TestApplyFilters:
         result = discovery._apply_filters(pairs)
         assert len(result) == 1
 
+    def test_parses_price_change_windows(self):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+        )
+        pair = _make_pair(address="PriceWin1111111111111111111111111111111111")
+        pair["priceChange"] = {"m5": 0.5, "h1": 1.5, "h6": 3.5, "h24": 7.5}
+
+        result = discovery._apply_filters([pair])
+
+        assert len(result) == 1
+        candidate = result[0]
+        assert candidate.price_change_5m == 0.5
+        assert candidate.price_change_1h == 1.5
+        assert candidate.price_change_6h == 3.5
+        assert candidate.price_change_24h == 7.5
+
+    def test_defaults_invalid_price_change_windows_in_dict(self):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+        )
+        pair = _make_pair(address="PriceBad1111111111111111111111111111111111")
+        pair["priceChange"] = {"m5": "bad", "h1": None, "h6": "3.5", "h24": "invalid"}
+
+        result = discovery._apply_filters([pair])
+
+        assert len(result) == 1
+        candidate = result[0]
+        assert candidate.price_change_5m == 0.0
+        assert candidate.price_change_1h == 0.0
+        assert candidate.price_change_6h == 3.5
+        assert candidate.price_change_24h == 0.0
+
+    @pytest.mark.parametrize("price_change_value", [None, "invalid"])
+    def test_handles_null_or_non_dict_price_change(self, price_change_value):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+        )
+        pair = _make_pair(address="PriceNull111111111111111111111111111111111")
+        pair["priceChange"] = price_change_value
+
+        result = discovery._apply_filters([pair])
+
+        assert len(result) == 1
+        candidate = result[0]
+        assert candidate.price_change_5m == 0.0
+        assert candidate.price_change_1h == 0.0
+        assert candidate.price_change_6h == 0.0
+        assert candidate.price_change_24h == 0.0
+
 
 # ---------------------------------------------------------------------------
 # Max token age filter
@@ -340,6 +390,166 @@ class TestExcludeHeldTokens:
 
         assert len(result) == 1
         assert result[0].symbol == "FREE"
+
+
+# ---------------------------------------------------------------------------
+# Discovery pipeline behavior
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverPipeline:
+    @pytest.mark.asyncio
+    async def test_prefilter_skips_low_scores_and_dedupes_before_ai(self, monkeypatch):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", min_momentum_score=50.0,
+        )
+        strong_primary = DiscoveryCandidate(
+            token_address="DupAddr111111111111111111111111111111111111",
+            symbol="GOOD1",
+            chain="solana",
+            price_usd=0.01,
+            volume_24h=100000.0,
+            liquidity_usd=50000.0,
+            price_change_24h=10.0,
+            safety_status="Safe",
+        )
+        strong_duplicate = DiscoveryCandidate(
+            token_address="DupAddr111111111111111111111111111111111111",
+            symbol="GOOD2",
+            chain="solana",
+            price_usd=0.02,
+            volume_24h=120000.0,
+            liquidity_usd=60000.0,
+            price_change_24h=12.0,
+            safety_status="Safe",
+        )
+        weak = DiscoveryCandidate(
+            token_address="WeakAddr11111111111111111111111111111111111",
+            symbol="WEAK",
+            chain="solana",
+            price_usd=0.001,
+            volume_24h=1000.0,
+            liquidity_usd=20000.0,
+            price_change_24h=-5.0,
+            safety_status="Dangerous",
+        )
+        ai_called_symbols: List[str] = []
+
+        async def _scan_trending() -> List[Dict[str, Any]]:
+            return [{"pair": "placeholder"}]
+
+        def _apply_filters(_pairs: List[Dict[str, Any]]) -> List[DiscoveryCandidate]:
+            return [strong_primary, strong_duplicate, weak]
+
+        async def _exclude_held_tokens(
+            candidates: List[DiscoveryCandidate], _db: MockDatabase
+        ) -> List[DiscoveryCandidate]:
+            return candidates
+
+        async def _safety_check(
+            candidates: List[DiscoveryCandidate],
+        ) -> List[DiscoveryCandidate]:
+            return candidates
+
+        async def _insider_check(
+            candidates: List[DiscoveryCandidate],
+        ) -> List[DiscoveryCandidate]:
+            return candidates
+
+        async def _ai_decide(candidate: DiscoveryCandidate) -> tuple[bool, str]:
+            ai_called_symbols.append(candidate.symbol)
+            return True, "buy"
+
+        monkeypatch.setattr(discovery, "_scan_trending", _scan_trending)
+        monkeypatch.setattr(discovery, "_apply_filters", _apply_filters)
+        monkeypatch.setattr(discovery, "_exclude_held_tokens", _exclude_held_tokens)
+        monkeypatch.setattr(discovery, "_safety_check", _safety_check)
+        monkeypatch.setattr(discovery, "_insider_check", _insider_check)
+        monkeypatch.setattr(discovery, "_ai_decide", _ai_decide)
+
+        result = await discovery.discover(MockDatabase(), max_candidates=5)
+
+        assert ai_called_symbols == ["GOOD1"]
+        assert len(result) == 1
+        assert result[0].symbol == "GOOD1"
+
+    @pytest.mark.asyncio
+    async def test_parallel_decisions_cap_ai_launches_relative_to_max_candidates(self, monkeypatch):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x", min_momentum_score=40.0,
+        )
+        symbols = list("ABCDEFGH")
+        candidates = [
+            DiscoveryCandidate(
+                token_address=f"Addr{symbol}{idx:02d}111111111111111111111111111111111111",
+                symbol=symbol,
+                chain="solana",
+                price_usd=0.01,
+                volume_24h=110000.0 - (idx * 2000.0),
+                liquidity_usd=50000.0,
+                price_change_24h=16.0 - idx,
+                safety_status="Safe",
+            )
+            for idx, symbol in enumerate(symbols)
+        ]
+        decisions = {
+            symbol: (symbol in {"A", "C", "H"}, f"decision {symbol}")
+            for symbol in symbols
+        }
+        called_symbols: List[str] = []
+
+        async def _scan_trending() -> List[Dict[str, Any]]:
+            return [{"pair": "placeholder"}]
+
+        def _apply_filters(_pairs: List[Dict[str, Any]]) -> List[DiscoveryCandidate]:
+            return candidates
+
+        async def _exclude_held_tokens(
+            current: List[DiscoveryCandidate], _db: MockDatabase
+        ) -> List[DiscoveryCandidate]:
+            return current
+
+        async def _safety_check(
+            current: List[DiscoveryCandidate],
+        ) -> List[DiscoveryCandidate]:
+            return current
+
+        async def _insider_check(
+            current: List[DiscoveryCandidate],
+        ) -> List[DiscoveryCandidate]:
+            return current
+
+        async def _ai_decide(candidate: DiscoveryCandidate) -> tuple[bool, str]:
+            called_symbols.append(candidate.symbol)
+            return decisions[candidate.symbol]
+
+        monkeypatch.setattr(discovery, "_scan_trending", _scan_trending)
+        monkeypatch.setattr(discovery, "_apply_filters", _apply_filters)
+        monkeypatch.setattr(discovery, "_exclude_held_tokens", _exclude_held_tokens)
+        monkeypatch.setattr(discovery, "_safety_check", _safety_check)
+        monkeypatch.setattr(discovery, "_insider_check", _insider_check)
+        monkeypatch.setattr(discovery, "_ai_decide", _ai_decide)
+
+        result = await discovery.discover(MockDatabase(), max_candidates=2)
+
+        assert sorted(called_symbols) == ["A", "B", "C", "D", "E", "F"]
+        assert len(called_symbols) == 6
+        assert [c.symbol for c in result] == ["A", "C"]
+
+    @pytest.mark.asyncio
+    async def test_negative_max_candidates_short_circuits_before_scan(self, monkeypatch):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+        )
+
+        async def _scan_trending() -> List[Dict[str, Any]]:
+            raise AssertionError("scan should not run when max_candidates <= 0")
+
+        monkeypatch.setattr(discovery, "_scan_trending", _scan_trending)
+
+        result = await discovery.discover(MockDatabase(), max_candidates=-1)
+
+        assert result == []
 
 
 # ---------------------------------------------------------------------------
@@ -592,6 +802,50 @@ class TestNormalizeDexscreenerArgs:
         args = {"token_address": "t", "chain_id": "solana", "pair_address": "p"}
         result = PortfolioDiscovery._normalize_dexscreener_args(args)
         assert result == {"tokenAddress": "t", "chainId": "solana", "pairAddress": "p"}
+
+
+class TestSerializeToolResultForResponse:
+    def test_truncates_long_result_payload(self):
+        result = {"blob": "x" * 9000}
+        serialized = PortfolioDiscovery._serialize_tool_result_for_response(result)
+
+        assert len(serialized) <= MAX_TOOL_RESULT_CHARS
+        parsed = json.loads(serialized)
+        assert parsed["truncated"] is True
+        assert "original_length" in parsed
+        assert "preview" in parsed
+
+    def test_returns_small_result_unchanged(self):
+        result = {"key": "value"}
+        serialized = PortfolioDiscovery._serialize_tool_result_for_response(result)
+        assert serialized == json.dumps(result, default=str)
+
+    def test_large_container_with_small_items_serializes_fully(self):
+        """Large containers estimated to fit should be serialized fully, not previewed."""
+        result = {f"k{i}": i for i in range(100)}
+        serialized = PortfolioDiscovery._serialize_tool_result_for_response(result)
+        parsed = json.loads(serialized)
+        assert len(parsed) == 100
+
+    def test_large_container_with_big_items_returns_preview(self):
+        """Large containers estimated to exceed limit should return a wrapper with metadata."""
+        result = {f"key{i}": "x" * 80 for i in range(200)}
+        serialized = PortfolioDiscovery._serialize_tool_result_for_response(result)
+
+        assert len(serialized) <= MAX_TOOL_RESULT_CHARS
+        parsed = json.loads(serialized)
+        assert parsed["truncated"] is True
+        assert parsed["total_items"] == 200
+        assert "preview_items" in parsed
+        assert "preview" in parsed
+
+    def test_string_truncation_produces_valid_json(self):
+        long_string = "x" * 10000
+        serialized = PortfolioDiscovery._serialize_tool_result_for_response(long_string)
+
+        assert len(serialized) <= MAX_TOOL_RESULT_CHARS
+        parsed = json.loads(serialized)
+        assert parsed["truncated"] is True
 
 
 
