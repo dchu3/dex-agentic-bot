@@ -748,15 +748,63 @@ class PortfolioDiscovery:
 
     @classmethod
     def _serialize_tool_result_for_response(cls, result: Any) -> str:
-        """Serialize tool results with a bounded payload size."""
+        """Serialize tool results with a bounded payload size.
+
+        Returns the full serialized result when it fits, or a valid JSON
+        wrapper with a preview and truncation metadata.
+        """
+        max_chars = cls._MAX_TOOL_RESULT_PAYLOAD_CHARS
+
+        # Fast path for strings
         if isinstance(result, str):
-            result_str = result
-        else:
+            if len(result) <= max_chars:
+                return result
+            return cls._build_truncation_wrapper(result, max_chars)
+
+        # For large containers, serialize only a preview slice to avoid
+        # full serialization cost on huge payloads.
+        if isinstance(result, (dict, list)) and len(result) > 50:
+            if isinstance(result, dict):
+                preview_data = dict(list(result.items())[:20])
+            else:
+                preview_data = result[:20]
             try:
-                result_str = json.dumps(result, default=str)
+                result_str = json.dumps(preview_data, default=str)
             except (TypeError, ValueError):
-                result_str = str(result)
-        return result_str[:cls._MAX_TOOL_RESULT_PAYLOAD_CHARS]
+                result_str = str(preview_data)
+            if len(result_str) <= max_chars:
+                return result_str
+            return cls._build_truncation_wrapper(result_str, max_chars)
+
+        # Small containers: serialize fully
+        try:
+            result_str = json.dumps(result, default=str)
+        except (TypeError, ValueError):
+            result_str = str(result)
+
+        if len(result_str) <= max_chars:
+            return result_str
+        return cls._build_truncation_wrapper(result_str, max_chars)
+
+    @classmethod
+    def _build_truncation_wrapper(cls, result_str: str, max_chars: int) -> str:
+        """Build a valid JSON wrapper for content that exceeds the payload limit."""
+        original_length = len(result_str)
+        preview_budget = max(0, max_chars // 2)
+        preview = result_str[:preview_budget]
+        wrapper = json.dumps({
+            "truncated": True,
+            "original_length": original_length,
+            "preview": preview,
+        }, default=str)
+        while len(wrapper) > max_chars and preview_budget > 0:
+            preview_budget //= 2
+            wrapper = json.dumps({
+                "truncated": True,
+                "original_length": original_length,
+                "preview": result_str[:preview_budget],
+            }, default=str)
+        return wrapper
 
     # DexScreener MCP uses camelCase parameter names. The model sometimes
     # generates snake_case (influenced by rugcheck's schema). Normalize before

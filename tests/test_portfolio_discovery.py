@@ -794,8 +794,34 @@ class TestSerializeToolResultForResponse:
         result = {"blob": "x" * 9000}
         serialized = PortfolioDiscovery._serialize_tool_result_for_response(result)
 
-        assert len(serialized) == 8000
-        assert serialized.startswith('{"blob": "')
+        assert len(serialized) <= 8000
+        parsed = json.loads(serialized)
+        assert parsed["truncated"] is True
+        assert "original_length" in parsed
+        assert "preview" in parsed
+
+    def test_returns_small_result_unchanged(self):
+        result = {"key": "value"}
+        serialized = PortfolioDiscovery._serialize_tool_result_for_response(result)
+        assert serialized == json.dumps(result, default=str)
+
+    def test_large_container_previews_without_full_serialization(self):
+        """Large containers (>50 items) should preview a slice, not serialize all."""
+        result = {f"key{i}": f"value{i}" for i in range(200)}
+        serialized = PortfolioDiscovery._serialize_tool_result_for_response(result)
+
+        assert len(serialized) <= 8000
+        parsed = json.loads(serialized)
+        # Should contain the first 20 items (preview slice)
+        assert len(parsed) <= 20
+
+    def test_string_truncation_produces_valid_json(self):
+        long_string = "x" * 10000
+        serialized = PortfolioDiscovery._serialize_tool_result_for_response(long_string)
+
+        assert len(serialized) <= 8000
+        parsed = json.loads(serialized)
+        assert parsed["truncated"] is True
 
 
 

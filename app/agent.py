@@ -12,7 +12,7 @@ from google import genai
 from google.genai import types
 
 from app.mcp_client import MCPManager
-from app.types import PlannerResult
+from app.types import MAX_TOOL_RESULT_CHARS as _MAX_TOOL_RESULT_CHARS, PlannerResult
 from app.tool_converter import parse_function_call_name
 
 
@@ -39,7 +39,6 @@ class AgenticContext:
     original_query: str = ""  # Store original query for recovery context
 
 
-from app.types import MAX_TOOL_RESULT_CHARS as _MAX_TOOL_RESULT_CHARS
 _TOOL_RESULT_SAMPLE_ITEMS = 25
 _TOOL_RESULT_PREVIEW_ITEMS = 5
 _TOOL_RESULT_PREVIEW_STRING_CHARS = 200
@@ -181,12 +180,6 @@ class AgenticPlanner:
             return result[:_MAX_TOOL_RESULT_CHARS] + f"\n... [truncated {len(result) - _MAX_TOOL_RESULT_CHARS} chars]"
         if isinstance(result, (dict, list)):
             if self._should_truncate_structured_result(result):
-                return self._build_truncated_preview(result)
-            try:
-                serialized = json.dumps(result, default=str)
-            except (TypeError, ValueError):
-                return self._build_truncated_preview(result)
-            if len(serialized) > _MAX_TOOL_RESULT_CHARS:
                 return self._build_truncated_preview(result)
         return result
 
