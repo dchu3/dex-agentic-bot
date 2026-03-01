@@ -152,6 +152,11 @@ class PortfolioDiscovery:
         max_candidates: int = 5,
     ) -> List[DiscoveryCandidate]:
         """Run full discovery pipeline: scan → filter → safety → AI decision."""
+        max_candidates = max(0, max_candidates)
+        if max_candidates == 0:
+            self._log("info", "max_candidates is 0; skipping discovery")
+            return []
+
         # Step 1: Scan trending tokens via DexScreener
         raw_pairs = await self._scan_trending()
         if not raw_pairs:
@@ -216,7 +221,7 @@ class PortfolioDiscovery:
             self._log("info", "No candidates passed heuristic pre-filter")
             return []
 
-        decision_pool_size = max(0, max_candidates) * _AI_DECISION_POOL_MULTIPLIER
+        decision_pool_size = max_candidates * _AI_DECISION_POOL_MULTIPLIER
         decision_pool = sorted(
             pre_filtered,
             key=lambda c: c.momentum_score,

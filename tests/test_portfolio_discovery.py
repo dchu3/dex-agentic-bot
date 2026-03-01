@@ -536,6 +536,21 @@ class TestDiscoverPipeline:
         assert len(called_symbols) == 6
         assert [c.symbol for c in result] == ["A", "C"]
 
+    @pytest.mark.asyncio
+    async def test_negative_max_candidates_short_circuits_before_scan(self, monkeypatch):
+        discovery = PortfolioDiscovery(
+            mcp_manager=MockMCPManager(), api_key="x",
+        )
+
+        async def _scan_trending() -> List[Dict[str, Any]]:
+            raise AssertionError("scan should not run when max_candidates <= 0")
+
+        monkeypatch.setattr(discovery, "_scan_trending", _scan_trending)
+
+        result = await discovery.discover(MockDatabase(), max_candidates=-1)
+
+        assert result == []
+
 
 # ---------------------------------------------------------------------------
 # Safety check parsing
