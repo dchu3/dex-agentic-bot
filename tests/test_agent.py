@@ -4,7 +4,8 @@ import json
 from unittest.mock import MagicMock, AsyncMock
 import pytest
 
-from app.agent import AgenticPlanner, AgenticContext, _MAX_TOOL_RESULT_CHARS
+from app.agent import AgenticPlanner, AgenticContext
+from app.types import MAX_TOOL_RESULT_CHARS as _MAX_TOOL_RESULT_CHARS
 
 
 class MockCandidate:

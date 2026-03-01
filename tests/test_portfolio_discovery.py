@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from app.portfolio_discovery import DiscoveryCandidate, PortfolioDiscovery
+from app.types import MAX_TOOL_RESULT_CHARS
 
 
 # ---------------------------------------------------------------------------
@@ -793,7 +794,7 @@ class TestSerializeToolResultForResponse:
         result = {"blob": "x" * 9000}
         serialized = PortfolioDiscovery._serialize_tool_result_for_response(result)
 
-        assert len(serialized) <= 8000
+        assert len(serialized) <= MAX_TOOL_RESULT_CHARS
         parsed = json.loads(serialized)
         assert parsed["truncated"] is True
         assert "original_length" in parsed
@@ -816,7 +817,7 @@ class TestSerializeToolResultForResponse:
         result = {f"key{i}": "x" * 80 for i in range(200)}
         serialized = PortfolioDiscovery._serialize_tool_result_for_response(result)
 
-        assert len(serialized) <= 8000
+        assert len(serialized) <= MAX_TOOL_RESULT_CHARS
         parsed = json.loads(serialized)
         assert parsed["truncated"] is True
         assert parsed["total_items"] == 200
@@ -827,7 +828,7 @@ class TestSerializeToolResultForResponse:
         long_string = "x" * 10000
         serialized = PortfolioDiscovery._serialize_tool_result_for_response(long_string)
 
-        assert len(serialized) <= 8000
+        assert len(serialized) <= MAX_TOOL_RESULT_CHARS
         parsed = json.loads(serialized)
         assert parsed["truncated"] is True
 
