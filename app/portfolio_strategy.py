@@ -68,7 +68,7 @@ class PortfolioStrategyConfig:
     insider_warn_creator_pct: float = 10.0
     shadow_audit_enabled: bool = False
     shadow_check_minutes: int = 30
-    decision_log_enabled: bool = True
+    decision_log_enabled: bool = False
 
     def __post_init__(self) -> None:
         """Validate configuration consistency."""

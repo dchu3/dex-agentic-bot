@@ -550,7 +550,7 @@ class TestDatabaseDecisionLog:
             token_address="0xABC",
             symbol="TEST",
             chain="solana",
-            decision_label="ai_approve",
+            decision_label="AI_APPROVE",
             price_usd=0.05,
             volume_24h=100000,
             liquidity_usd=50000,

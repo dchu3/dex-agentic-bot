@@ -692,7 +692,7 @@ class Database:
                     token_address.lower(),
                     _normalize_symbol(symbol),
                     chain.lower(),
-                    decision_label,
+                    decision_label.lower(),
                     price_usd,
                     volume_24h,
                     liquidity_usd,

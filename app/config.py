@@ -213,7 +213,7 @@ class Settings(BaseSettings):
     )
     # Decision logging: persist per-candidate reason codes for pipeline observability
     portfolio_decision_log_enabled: bool = Field(
-        default=True, alias="PORTFOLIO_DECISION_LOG_ENABLED"
+        default=False, alias="PORTFOLIO_DECISION_LOG_ENABLED"
     )
 
     @model_validator(mode="after")
