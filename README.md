@@ -123,8 +123,8 @@ Send any token address to your bot:
 | `/analyze <address>` | Analyze a token |
 | `/help` | Show help message |
 | `/status` | Check bot status |
-| `/subscribe` | Subscribe to price alerts for watched tokens |
-| `/unsubscribe` | Unsubscribe from price alerts |
+| `/subscribe` | Subscribe to price alerts (legacy, not shown in bot help) |
+| `/unsubscribe` | Unsubscribe from price alerts (legacy, not shown in bot help) |
 
 ### Interactive CLI Commands
 
@@ -156,7 +156,7 @@ The portfolio strategy autonomously discovers promising Solana tokens, buys smal
 
 **How it works:**
 1. **SOL trend gate**: Skip discovery if SOL has dropped faster than the configured threshold in the lookback window
-2. **Discovery** (every 30 min): DexScreener trending → volume/liquidity/market cap filter → rugcheck safety → insider/sniper detection → Gemini AI momentum scoring → buy top candidates
+2. **Discovery** (every 30 min): DexScreener trending → volume/liquidity/market cap filter → rugcheck safety → insider/sniper detection → heuristic momentum scoring → Gemini AI per-candidate buy/skip decision → buy approved candidates
 3. **Exit monitoring** (every 60s): Check TP/SL thresholds, update trailing stops, close expired positions
 4. **Risk guards**: Max positions cap, daily loss limit, cooldown after failures, duplicate prevention
 
@@ -179,10 +179,10 @@ By default this runs in **dry-run mode** (`PORTFOLIO_DRY_RUN=true`).
 
 **Partial sell (configurable via `.env`):**
 
-Sell a percentage of the position at take-profit while keeping the remainder open with a continued trailing stop:
-- `PORTFOLIO_SELL_PCT` — Percentage of the position to sell at TP (default: 100 = full exit)
+Sell a percentage of the position on any **profitable** exit trigger (e.g. take-profit, trailing stop in profit), while keeping the remainder open with a continued trailing stop:
+- `PORTFOLIO_SELL_PCT` — Percentage of the position to sell on profitable exits (default: 100 = full exit)
 
-When set below 100, the position stays open after the initial TP sell and the trailing stop continues tracking the remaining balance.
+When set below 100 and the trade is in profit, the bot partially closes the position; the remaining size stays open and the trailing stop continues tracking the remaining balance. If an exit is not profitable (at or below entry), the bot closes 100% of the position regardless of this setting.
 
 **SOL trend gate (configurable via `.env`):**
 
