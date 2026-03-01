@@ -120,7 +120,8 @@ Send any token address to your bot:
 
 | Command | Description |
 |---------|-------------|
-| `/analyze <address>` | Analyze a token |
+| `/analyze <address>` | Analyze a token (quick summary) |
+| `/full <address>` | Detailed analysis report |
 | `/help` | Show help message |
 | `/status` | Check bot status |
 | `/subscribe` | Subscribe to price alerts (legacy, not shown in bot help) |
