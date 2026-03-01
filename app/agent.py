@@ -38,6 +38,8 @@ class AgenticContext:
     original_query: str = ""  # Store original query for recovery context
 
 
+_MAX_TOOL_RESULT_CHARS = 8000
+
 AGENTIC_SYSTEM_PROMPT_BASE = """You are a crypto/DeFi assistant that helps users find token and pool information across multiple blockchains.
 
 ## Your Capabilities
@@ -168,6 +170,17 @@ class AgenticPlanner:
         """Log a message if verbose mode is enabled."""
         if self.verbose and self.log_callback:
             self.log_callback(level, message, data)
+
+    def _truncate_result(self, result: Any) -> Any:
+        """Truncate large tool results to conserve context window tokens."""
+        if isinstance(result, str) and len(result) > _MAX_TOOL_RESULT_CHARS:
+            return result[:_MAX_TOOL_RESULT_CHARS] + f"\n... [truncated {len(result) - _MAX_TOOL_RESULT_CHARS} chars]"
+        if isinstance(result, (dict, list)):
+            serialized = json.dumps(result)
+            if len(serialized) > _MAX_TOOL_RESULT_CHARS:
+                truncated = serialized[:_MAX_TOOL_RESULT_CHARS]
+                return json.loads(json.dumps({"_truncated": True, "_preview": truncated}))
+        return result
 
     def _is_malformed_response(self, response: Any) -> bool:
         """Check if response indicates a malformed function call."""
@@ -422,7 +435,7 @@ class AgenticPlanner:
             if isinstance(result, Exception):
                 response_data = {"error": str(result)}
             else:
-                response_data = result
+                response_data = self._truncate_result(result)
 
             parts.append(
                 types.Part.from_function_response(

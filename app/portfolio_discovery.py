@@ -36,6 +36,9 @@ class DiscoveryCandidate:
     liquidity_usd: float
     market_cap_usd: float = 0.0
     price_change_24h: float = 0.0
+    price_change_1h: float = 0.0
+    price_change_6h: float = 0.0
+    price_change_5m: float = 0.0
     safety_status: str = "unknown"
     safety_score: Optional[float] = None
     momentum_score: float = 0.0
@@ -178,25 +181,55 @@ class PortfolioDiscovery:
             return []
         self._log("info", f"{len(insider_checked)} candidates passed insider checks")
 
-        # Step 6: Per-candidate agentic buy decision
-        approved: List[DiscoveryCandidate] = []
-        for candidate in insider_checked:
-            if len(approved) >= max_candidates:
-                break
-            # Populate heuristic score for reference regardless of AI outcome
-            candidate.momentum_score = self._heuristic_score(candidate)
-            buy, reasoning = await self._ai_decide(candidate)
-            candidate.buy_decision = buy
-            candidate.reasoning = reasoning
+        # Step 5b: Defensive dedup by token_address before AI step
+        seen_addrs: set[str] = set()
+        deduped: List[DiscoveryCandidate] = []
+        for c in insider_checked:
+            addr_lower = c.token_address.lower()
+            if addr_lower not in seen_addrs:
+                seen_addrs.add(addr_lower)
+                deduped.append(c)
+        if len(deduped) < len(insider_checked):
+            self._log("info", f"Deduped {len(insider_checked) - len(deduped)} duplicate candidates")
+        insider_checked = deduped
+
+        # Step 5c: Heuristic pre-filter to avoid expensive AI calls on weak candidates
+        for c in insider_checked:
+            c.momentum_score = self._heuristic_score(c)
+        pre_filtered = [
+            c for c in insider_checked
+            if c.momentum_score >= self.min_momentum_score * 0.5
+        ]
+        skipped = len(insider_checked) - len(pre_filtered)
+        if skipped:
             self._log(
                 "info",
-                f"Decision: {candidate.symbol} → {'BUY' if buy else 'SKIP'} "
-                f"(heuristic={candidate.momentum_score:.0f}, "
-                f"vol=${candidate.volume_24h:,.0f} liq=${candidate.liquidity_usd:,.0f} "
-                f"chg={candidate.price_change_24h:+.1f}%) — {reasoning}",
+                f"Heuristic pre-filter skipped {skipped} low-scoring candidates "
+                f"(threshold={self.min_momentum_score * 0.5:.0f})",
             )
-            if buy:
-                approved.append(candidate)
+        if not pre_filtered:
+            self._log("info", "No candidates passed heuristic pre-filter")
+            return []
+
+        # Step 6: Per-candidate agentic buy decision (parallel with bounded concurrency)
+        sem = asyncio.Semaphore(3)
+
+        async def _decide(candidate: DiscoveryCandidate) -> DiscoveryCandidate:
+            async with sem:
+                buy, reasoning = await self._ai_decide(candidate)
+                candidate.buy_decision = buy
+                candidate.reasoning = reasoning
+                self._log(
+                    "info",
+                    f"Decision: {candidate.symbol} → {'BUY' if buy else 'SKIP'} "
+                    f"(heuristic={candidate.momentum_score:.0f}, "
+                    f"vol=${candidate.volume_24h:,.0f} liq=${candidate.liquidity_usd:,.0f} "
+                    f"chg={candidate.price_change_24h:+.1f}%) — {reasoning}",
+                )
+                return candidate
+
+        decided = await asyncio.gather(*[_decide(c) for c in pre_filtered])
+        approved = [c for c in decided if c.buy_decision][:max_candidates]
 
         if not approved:
             self._log("info", "No candidates approved by AI decision step")
@@ -359,7 +392,11 @@ class PortfolioDiscovery:
                 volume_24h = float(pair.get("volume", {}).get("h24", 0))
                 liquidity_data = pair.get("liquidity", {})
                 liquidity = float(liquidity_data.get("usd", 0)) if isinstance(liquidity_data, dict) else 0.0
-                price_change = float(pair.get("priceChange", {}).get("h24", 0))
+                price_change_data = pair.get("priceChange", {})
+                price_change = float(price_change_data.get("h24", 0))
+                price_change_1h = float(price_change_data.get("h1", 0))
+                price_change_6h = float(price_change_data.get("h6", 0))
+                price_change_5m = float(price_change_data.get("m5", 0))
                 market_cap_usd = float(pair.get("marketCap", pair.get("fdv", 0)))
                 pair_created_at_ms = float(pair.get("pairCreatedAt") or 0)
             except (TypeError, ValueError):
@@ -398,6 +435,9 @@ class PortfolioDiscovery:
                 liquidity_usd=liquidity,
                 market_cap_usd=market_cap_usd,
                 price_change_24h=price_change,
+                price_change_1h=price_change_1h,
+                price_change_6h=price_change_6h,
+                price_change_5m=price_change_5m,
             ))
 
         self._log(
@@ -416,17 +456,15 @@ class PortfolioDiscovery:
         db: "Database",
     ) -> List[DiscoveryCandidate]:
         """Remove candidates that already have open portfolio positions."""
-        result: List[DiscoveryCandidate] = []
-        for c in candidates:
-            existing = await db.get_open_portfolio_position(c.token_address, c.chain)
-            if existing is None:
-                result.append(c)
-        return result
+        checks = await asyncio.gather(
+            *[db.get_open_portfolio_position(c.token_address, c.chain) for c in candidates]
+        )
+        return [c for c, existing in zip(candidates, checks) if existing is None]
 
     async def _safety_check(
         self, candidates: List[DiscoveryCandidate]
     ) -> List[DiscoveryCandidate]:
-        """Run rugcheck safety analysis on each candidate."""
+        """Run rugcheck safety analysis on each candidate (parallel)."""
         client = self.mcp_manager.get_client("rugcheck")
         if not client:
             self._log("warning", "Rugcheck not available — skipping safety checks")
@@ -434,8 +472,7 @@ class PortfolioDiscovery:
                 c.safety_status = "unverified"
             return candidates
 
-        safe: List[DiscoveryCandidate] = []
-        for candidate in candidates:
+        async def _check_one(candidate: DiscoveryCandidate) -> Optional[DiscoveryCandidate]:
             try:
                 result = await client.call_tool(
                     "get_token_summary",
@@ -446,18 +483,20 @@ class PortfolioDiscovery:
                 candidate.safety_score = score
 
                 if status in ("Safe", "Risky", "unverified"):
-                    safe.append(candidate)
+                    return candidate
                 else:
                     self._log(
                         "info",
                         f"Rejected {candidate.symbol}: safety={status}",
                     )
+                    return None
             except Exception as exc:
                 self._log("warning", f"Safety check failed for {candidate.symbol}: {exc}")
                 candidate.safety_status = "unverified"
-                safe.append(candidate)
+                return candidate
 
-        return safe
+        results = await asyncio.gather(*[_check_one(c) for c in candidates])
+        return [c for c in results if c is not None]
 
     @staticmethod
     def _parse_safety(result: Any) -> tuple[str, Optional[float]]:
@@ -556,7 +595,11 @@ class PortfolioDiscovery:
             f"- 24h Volume: ${candidate.volume_24h:,.0f}\n"
             f"- Liquidity: ${candidate.liquidity_usd:,.0f}\n"
             f"- Market Cap: ${candidate.market_cap_usd:,.0f}\n"
+            f"- 5m Price Change: {candidate.price_change_5m:+.2f}%\n"
+            f"- 1h Price Change: {candidate.price_change_1h:+.2f}%\n"
+            f"- 6h Price Change: {candidate.price_change_6h:+.2f}%\n"
             f"- 24h Price Change: {candidate.price_change_24h:+.2f}%\n"
+            f"- Heuristic Score: {candidate.momentum_score:.0f}/100\n"
             f"- Safety: {candidate.safety_status}"
             + (f" (score {candidate.safety_score:.0f})" if candidate.safety_score is not None else "")
         )
@@ -615,10 +658,10 @@ class PortfolioDiscovery:
             # Collect any function calls in this response
             function_calls = []
             if response.candidates:
-                candidate = response.candidates[0]
-                if not candidate.content or not candidate.content.parts:
+                resp_candidate = response.candidates[0]
+                if not resp_candidate.content or not resp_candidate.content.parts:
                     break
-                for part in candidate.content.parts:
+                for part in resp_candidate.content.parts:
                     if hasattr(part, "function_call") and part.function_call:
                         function_calls.append(part.function_call)
 
@@ -661,9 +704,9 @@ class PortfolioDiscovery:
         # Exhausted iterations — parse whatever we have
         text = ""
         if response.candidates:
-            candidate = response.candidates[0]
-            if candidate.content and candidate.content.parts:
-                for part in candidate.content.parts:
+            resp_candidate = response.candidates[0]
+            if resp_candidate.content and resp_candidate.content.parts:
+                for part in resp_candidate.content.parts:
                     if hasattr(part, "text") and part.text:
                         text += part.text
         return self._parse_decision(text)
