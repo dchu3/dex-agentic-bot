@@ -76,6 +76,49 @@ CREATE TABLE IF NOT EXISTS token_skip_phases (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (token_address, chain)
 );
+
+CREATE TABLE IF NOT EXISTS discovery_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cycle_id TEXT NOT NULL,
+    token_address TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    chain TEXT NOT NULL,
+    decision_label TEXT NOT NULL,
+    price_usd REAL,
+    volume_24h REAL,
+    liquidity_usd REAL,
+    market_cap_usd REAL,
+    momentum_score REAL,
+    reasoning TEXT,
+    metadata_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_discovery_decisions_cycle
+ON discovery_decisions(cycle_id);
+
+CREATE INDEX IF NOT EXISTS idx_discovery_decisions_token
+ON discovery_decisions(token_address, chain);
+
+CREATE TABLE IF NOT EXISTS shadow_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_address TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    chain TEXT NOT NULL,
+    entry_price REAL NOT NULL,
+    notional_usd REAL NOT NULL,
+    momentum_score REAL,
+    reasoning TEXT,
+    opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    check_after_minutes INTEGER NOT NULL DEFAULT 30,
+    checked_at TIMESTAMP,
+    price_at_check REAL,
+    pnl_pct REAL,
+    status TEXT NOT NULL DEFAULT 'pending'
+);
+
+CREATE INDEX IF NOT EXISTS idx_shadow_positions_status
+ON shadow_positions(status);
 """
 
 
@@ -614,6 +657,218 @@ class Database:
             )
             await conn.commit()
             return cursor.rowcount > 0
+
+    # --- Discovery Decision Log Operations ---
+
+    async def record_discovery_decision(
+        self,
+        cycle_id: str,
+        token_address: str,
+        symbol: str,
+        chain: str,
+        decision_label: str,
+        price_usd: Optional[float] = None,
+        volume_24h: Optional[float] = None,
+        liquidity_usd: Optional[float] = None,
+        market_cap_usd: Optional[float] = None,
+        momentum_score: Optional[float] = None,
+        reasoning: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Record a discovery pipeline decision for audit."""
+        conn = await self._ensure_connected()
+        async with self._lock:
+            await conn.execute(
+                """
+                INSERT INTO discovery_decisions (
+                    cycle_id, token_address, symbol, chain, decision_label,
+                    price_usd, volume_24h, liquidity_usd, market_cap_usd,
+                    momentum_score, reasoning, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    cycle_id,
+                    token_address.lower(),
+                    _normalize_symbol(symbol),
+                    chain.lower(),
+                    decision_label,
+                    price_usd,
+                    volume_24h,
+                    liquidity_usd,
+                    market_cap_usd,
+                    momentum_score,
+                    reasoning,
+                    json.dumps(metadata or {}, default=str),
+                ),
+            )
+            await conn.commit()
+
+    async def record_discovery_decisions_batch(
+        self,
+        decisions: List[tuple],
+    ) -> None:
+        """Batch-insert discovery decisions.
+
+        Each tuple: (cycle_id, token_address, symbol, chain, decision_label,
+                      price_usd, volume_24h, liquidity_usd, market_cap_usd,
+                      momentum_score, reasoning, metadata_json)
+        """
+        if not decisions:
+            return
+        conn = await self._ensure_connected()
+        async with self._lock:
+            await conn.executemany(
+                """
+                INSERT INTO discovery_decisions (
+                    cycle_id, token_address, symbol, chain, decision_label,
+                    price_usd, volume_24h, liquidity_usd, market_cap_usd,
+                    momentum_score, reasoning, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                decisions,
+            )
+            await conn.commit()
+
+    async def get_discovery_decisions(
+        self,
+        cycle_id: Optional[str] = None,
+        token_address: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Query discovery decisions with optional filters."""
+        conn = await self._ensure_connected()
+        conditions = []
+        params: list = []
+        if cycle_id:
+            conditions.append("cycle_id = ?")
+            params.append(cycle_id)
+        if token_address:
+            conditions.append("LOWER(token_address) = LOWER(?)")
+            params.append(token_address)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        cursor = await conn.execute(
+            f"""
+            SELECT * FROM discovery_decisions
+            {where}
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (*params, limit),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    # --- Shadow Position Operations ---
+
+    async def add_shadow_position(
+        self,
+        token_address: str,
+        symbol: str,
+        chain: str,
+        entry_price: float,
+        notional_usd: float,
+        momentum_score: Optional[float] = None,
+        reasoning: Optional[str] = None,
+        check_after_minutes: int = 30,
+    ) -> int:
+        """Record a shadow (paper) position for audit comparison."""
+        conn = await self._ensure_connected()
+        async with self._lock:
+            cursor = await conn.execute(
+                """
+                INSERT INTO shadow_positions (
+                    token_address, symbol, chain, entry_price, notional_usd,
+                    momentum_score, reasoning, check_after_minutes
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
+                """,
+                (
+                    token_address.lower(),
+                    _normalize_symbol(symbol),
+                    chain.lower(),
+                    entry_price,
+                    notional_usd,
+                    momentum_score,
+                    reasoning,
+                    check_after_minutes,
+                ),
+            )
+            row = await cursor.fetchone()
+            await conn.commit()
+            return int(row["id"])
+
+    async def list_pending_shadow_positions(self) -> List[Dict[str, Any]]:
+        """Return shadow positions due for price check."""
+        conn = await self._ensure_connected()
+        cursor = await conn.execute(
+            """
+            SELECT * FROM shadow_positions
+            WHERE status = 'pending'
+              AND datetime(opened_at, '+' || check_after_minutes || ' minutes')
+                  <= datetime('now')
+            ORDER BY opened_at ASC
+            """
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def resolve_shadow_position(
+        self,
+        shadow_id: int,
+        price_at_check: float,
+        pnl_pct: float,
+    ) -> bool:
+        """Resolve a shadow position with the observed price."""
+        conn = await self._ensure_connected()
+        now = datetime.now(timezone.utc)
+        async with self._lock:
+            cursor = await conn.execute(
+                """
+                UPDATE shadow_positions
+                SET status = 'checked',
+                    checked_at = ?,
+                    price_at_check = ?,
+                    pnl_pct = ?
+                WHERE id = ? AND status = 'pending'
+                """,
+                (now, price_at_check, pnl_pct, shadow_id),
+            )
+            await conn.commit()
+            return cursor.rowcount > 0
+
+    async def get_shadow_summary(self, limit: int = 50) -> Dict[str, Any]:
+        """Return aggregate stats for resolved shadow positions."""
+        conn = await self._ensure_connected()
+        cursor = await conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN pnl_pct > 0 THEN 1 ELSE 0 END) AS winners,
+                SUM(CASE WHEN pnl_pct <= 0 THEN 1 ELSE 0 END) AS losers,
+                AVG(pnl_pct) AS avg_pnl_pct,
+                MIN(pnl_pct) AS min_pnl_pct,
+                MAX(pnl_pct) AS max_pnl_pct
+            FROM shadow_positions
+            WHERE status = 'checked'
+            ORDER BY checked_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        row = await cursor.fetchone()
+        if not row or row["total"] == 0:
+            return {"total": 0, "winners": 0, "losers": 0, "avg_pnl_pct": 0.0}
+        return {
+            "total": row["total"],
+            "winners": row["winners"] or 0,
+            "losers": row["losers"] or 0,
+            "avg_pnl_pct": round(row["avg_pnl_pct"] or 0.0, 2),
+            "min_pnl_pct": round(row["min_pnl_pct"] or 0.0, 2),
+            "max_pnl_pct": round(row["max_pnl_pct"] or 0.0, 2),
+        }
 
     # --- Helper Methods ---
 

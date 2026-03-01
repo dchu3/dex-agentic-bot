@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from itertools import islice
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
@@ -15,7 +16,7 @@ from google import genai
 from google.genai import types
 
 from app.insider_detection import InsiderAnalysis, InsiderRisk, analyse_insiders
-from app.types import MAX_TOOL_RESULT_CHARS
+from app.types import DecisionLabel, MAX_TOOL_RESULT_CHARS
 
 if TYPE_CHECKING:
     from app.mcp_client import MCPManager
@@ -49,6 +50,7 @@ class DiscoveryCandidate:
     momentum_score: float = 0.0
     reasoning: str = ""
     buy_decision: Optional[bool] = None
+    decision_label: Optional[DecisionLabel] = None
     insider_analysis: Optional[InsiderAnalysis] = None
 
 
@@ -150,12 +152,38 @@ class PortfolioDiscovery:
         self,
         db: "Database",
         max_candidates: int = 5,
+        decision_log_enabled: bool = False,
+        shadow_audit_enabled: bool = False,
+        shadow_check_minutes: int = 30,
+        position_size_usd: float = 0.0,
     ) -> List[DiscoveryCandidate]:
         """Run full discovery pipeline: scan → filter → safety → AI decision."""
         max_candidates = max(0, max_candidates)
         if max_candidates == 0:
             self._log("info", "max_candidates is 0; skipping discovery")
             return []
+
+        cycle_id = uuid.uuid4().hex[:12]
+        decisions: List[tuple] = []
+
+        def _record(c: DiscoveryCandidate, label: DecisionLabel, reason: str = "") -> None:
+            """Buffer a decision row for batch insert."""
+            c.decision_label = label
+            if decision_log_enabled:
+                decisions.append((
+                    cycle_id,
+                    c.token_address.lower(),
+                    c.symbol,
+                    c.chain.lower(),
+                    label.value,
+                    c.price_usd,
+                    c.volume_24h,
+                    c.liquidity_usd,
+                    c.market_cap_usd,
+                    c.momentum_score,
+                    reason or c.reasoning or None,
+                    "{}",
+                ))
 
         # Step 1: Scan trending tokens via DexScreener
         raw_pairs = await self._scan_trending()
@@ -164,30 +192,49 @@ class PortfolioDiscovery:
             return []
         self._log("info", f"Scanned {len(raw_pairs)} trending pairs")
 
-        # Step 2: Apply deterministic filters
-        filtered = self._apply_filters(raw_pairs)
+        # Step 2: Apply deterministic filters (labels assigned inside)
+        filtered, filter_rejects = self._apply_filters_with_labels(raw_pairs)
+        for c, label, reason in filter_rejects:
+            _record(c, label, reason)
         if not filtered:
             self._log("info", "No candidates passed filters")
+            await self._flush_decisions(db, decisions)
             return []
         self._log("info", f"{len(filtered)} candidates passed filters")
 
         # Step 3: Exclude already-held tokens
+        before_held = set(c.token_address.lower() for c in filtered)
         filtered = await self._exclude_held_tokens(filtered, db)
+        for addr in before_held - set(c.token_address.lower() for c in filtered):
+            held_c = DiscoveryCandidate(token_address=addr, symbol="?", chain=self.chain,
+                                        price_usd=0, volume_24h=0, liquidity_usd=0)
+            _record(held_c, DecisionLabel.HELD_TOKEN, "already held")
         if not filtered:
             self._log("info", "All candidates already held")
+            await self._flush_decisions(db, decisions)
             return []
 
         # Step 4: Safety check via rugcheck
+        before_safety = {c.token_address.lower(): c for c in filtered}
         safe_candidates = await self._safety_check(filtered)
+        for addr, c in before_safety.items():
+            if addr not in {sc.token_address.lower() for sc in safe_candidates}:
+                _record(c, DecisionLabel.SAFETY_REJECTED, f"safety={c.safety_status}")
         if not safe_candidates:
             self._log("info", "No candidates passed safety checks")
+            await self._flush_decisions(db, decisions)
             return []
         self._log("info", f"{len(safe_candidates)} candidates passed safety")
 
         # Step 5: Insider / sniper detection
+        before_insider = {c.token_address.lower(): c for c in safe_candidates}
         insider_checked = await self._insider_check(safe_candidates)
+        for addr, c in before_insider.items():
+            if addr not in {ic.token_address.lower() for ic in insider_checked}:
+                _record(c, DecisionLabel.INSIDER_REJECTED, "insider risk")
         if not insider_checked:
             self._log("info", "No candidates passed insider checks")
+            await self._flush_decisions(db, decisions)
             return []
         self._log("info", f"{len(insider_checked)} candidates passed insider checks")
 
@@ -199,6 +246,8 @@ class PortfolioDiscovery:
             if addr_lower not in seen_addrs:
                 seen_addrs.add(addr_lower)
                 deduped.append(c)
+            else:
+                _record(c, DecisionLabel.DEDUP, "duplicate")
         if len(deduped) < len(insider_checked):
             self._log("info", f"Deduped {len(insider_checked) - len(deduped)} duplicate candidates")
         insider_checked = deduped
@@ -206,19 +255,24 @@ class PortfolioDiscovery:
         # Step 5c: Heuristic pre-filter to avoid expensive AI calls on weak candidates
         for c in insider_checked:
             c.momentum_score = self._heuristic_score(c)
-        pre_filtered = [
-            c for c in insider_checked
-            if c.momentum_score >= self.min_momentum_score * 0.5
-        ]
+        threshold = self.min_momentum_score * 0.5
+        pre_filtered: List[DiscoveryCandidate] = []
+        for c in insider_checked:
+            if c.momentum_score >= threshold:
+                pre_filtered.append(c)
+            else:
+                _record(c, DecisionLabel.HEURISTIC_SKIP,
+                        f"score={c.momentum_score:.0f} < {threshold:.0f}")
         skipped = len(insider_checked) - len(pre_filtered)
         if skipped:
             self._log(
                 "info",
                 f"Heuristic pre-filter skipped {skipped} low-scoring candidates "
-                f"(threshold={self.min_momentum_score * 0.5:.0f})",
+                f"(threshold={threshold:.0f})",
             )
         if not pre_filtered:
             self._log("info", "No candidates passed heuristic pre-filter")
+            await self._flush_decisions(db, decisions)
             return []
 
         decision_pool_size = max_candidates * _AI_DECISION_POOL_MULTIPLIER
@@ -227,6 +281,8 @@ class PortfolioDiscovery:
             key=lambda c: c.momentum_score,
             reverse=True,
         )[:decision_pool_size]
+        for c in pre_filtered[decision_pool_size:] if len(pre_filtered) > decision_pool_size else []:
+            _record(c, DecisionLabel.AI_POOL_CAP, "outside decision pool")
         if len(decision_pool) < len(pre_filtered):
             self._log(
                 "info",
@@ -252,12 +308,56 @@ class PortfolioDiscovery:
                 return candidate
 
         decided = await asyncio.gather(*[_decide(c) for c in decision_pool])
-        approved = [c for c in decided if c.buy_decision][:max_candidates]
+
+        # Label each decided candidate
+        all_approved: List[DiscoveryCandidate] = []
+        for c in decided:
+            if c.buy_decision:
+                all_approved.append(c)
+            else:
+                _record(c, DecisionLabel.AI_REJECT, c.reasoning)
+
+        approved = all_approved[:max_candidates]
+        for c in all_approved[max_candidates:]:
+            _record(c, DecisionLabel.AI_APPROVE_CAPPED, c.reasoning)
+        for c in approved:
+            _record(c, DecisionLabel.AI_APPROVE, c.reasoning)
 
         if not approved:
             self._log("info", "No candidates approved by AI decision step")
 
+        # Shadow audit: record approved candidates as paper positions
+        if shadow_audit_enabled and approved:
+            for c in approved:
+                try:
+                    await db.add_shadow_position(
+                        token_address=c.token_address,
+                        symbol=c.symbol,
+                        chain=c.chain,
+                        entry_price=c.price_usd,
+                        notional_usd=position_size_usd,
+                        momentum_score=c.momentum_score,
+                        reasoning=c.reasoning,
+                        check_after_minutes=shadow_check_minutes,
+                    )
+                except Exception as exc:
+                    self._log("warning", f"Shadow position failed for {c.symbol}: {exc}")
+
+        # Flush decision log
+        await self._flush_decisions(db, decisions)
+
         return approved
+
+    async def _flush_decisions(
+        self, db: "Database", decisions: List[tuple]
+    ) -> None:
+        """Batch-write buffered decisions to the database."""
+        if not decisions:
+            return
+        try:
+            await db.record_discovery_decisions_batch(decisions)
+        except Exception as exc:
+            self._log("warning", f"Failed to flush {len(decisions)} decisions: {exc}")
 
     async def _scan_trending(self) -> List[Dict[str, Any]]:
         """Fetch trending tokens from DexScreener using boosted + search endpoints."""
@@ -474,6 +574,96 @@ class PortfolioDiscovery:
         )
 
         return candidates
+
+    def _apply_filters_with_labels(
+        self, pairs: List[Dict[str, Any]]
+    ) -> tuple[List[DiscoveryCandidate], List[tuple["DiscoveryCandidate", "DecisionLabel", str]]]:
+        """Apply deterministic filters, returning both passed candidates and labeled rejects."""
+        candidates: List[DiscoveryCandidate] = []
+        rejects: List[tuple[DiscoveryCandidate, DecisionLabel, str]] = []
+        seen_addresses: set[str] = set()
+        chain_counts: Dict[str, int] = {}
+        now_ms = time.time() * 1000
+
+        for pair in pairs:
+            chain_id = (pair.get("chainId") or "").lower()
+            chain_counts[chain_id] = chain_counts.get(chain_id, 0) + 1
+            if chain_id != self.chain:
+                continue
+
+            base_token = pair.get("baseToken", {})
+            address = base_token.get("address", "")
+            symbol = base_token.get("symbol", "")
+            if not address or not symbol:
+                continue
+
+            addr_lower = address.lower()
+            if addr_lower in seen_addresses:
+                continue
+            seen_addresses.add(addr_lower)
+
+            try:
+                price = float(pair.get("priceUsd", 0))
+                volume_24h = float(pair.get("volume", {}).get("h24", 0))
+                liquidity_data = pair.get("liquidity", {})
+                liquidity = float(liquidity_data.get("usd", 0)) if isinstance(liquidity_data, dict) else 0.0
+                price_change_data = pair.get("priceChange", {})
+                if not isinstance(price_change_data, dict):
+                    price_change_data = {}
+                price_change = self._parse_optional_float(price_change_data.get("h24", 0))
+                price_change_1h = self._parse_optional_float(price_change_data.get("h1", 0))
+                price_change_6h = self._parse_optional_float(price_change_data.get("h6", 0))
+                price_change_5m = self._parse_optional_float(price_change_data.get("m5", 0))
+                market_cap_usd = float(pair.get("marketCap", pair.get("fdv", 0)))
+                pair_created_at_ms = float(pair.get("pairCreatedAt") or 0)
+            except (TypeError, ValueError):
+                c = DiscoveryCandidate(token_address=address, symbol=symbol, chain=self.chain,
+                                       price_usd=0, volume_24h=0, liquidity_usd=0)
+                rejects.append((c, DecisionLabel.FILTER_PARSE, "unparseable pair data"))
+                continue
+
+            c = DiscoveryCandidate(
+                token_address=address, symbol=symbol, chain=self.chain,
+                price_usd=price, volume_24h=volume_24h, liquidity_usd=liquidity,
+                market_cap_usd=market_cap_usd, price_change_24h=price_change,
+                price_change_1h=price_change_1h, price_change_6h=price_change_6h,
+                price_change_5m=price_change_5m,
+            )
+
+            if volume_24h < self.min_volume_usd:
+                rejects.append((c, DecisionLabel.FILTER_VOLUME, f"vol=${volume_24h:,.0f}"))
+                continue
+            if liquidity < self.min_liquidity_usd:
+                rejects.append((c, DecisionLabel.FILTER_LIQUIDITY, f"liq=${liquidity:,.0f}"))
+                continue
+            if market_cap_usd < self.min_market_cap_usd:
+                rejects.append((c, DecisionLabel.FILTER_MCAP, f"mcap=${market_cap_usd:,.0f}"))
+                continue
+            if price <= 0:
+                rejects.append((c, DecisionLabel.FILTER_PRICE, "price<=0"))
+                continue
+
+            if (self.min_token_age_hours > 0 or self.max_token_age_hours > 0) and pair_created_at_ms > 0:
+                age_hours = (now_ms - pair_created_at_ms) / 1_000 / 3_600
+                if age_hours < 0:
+                    rejects.append((c, DecisionLabel.FILTER_AGE, f"age={age_hours:.1f}h"))
+                    continue
+                if self.min_token_age_hours > 0 and age_hours < self.min_token_age_hours:
+                    rejects.append((c, DecisionLabel.FILTER_AGE, f"age={age_hours:.1f}h < min"))
+                    continue
+                if self.max_token_age_hours > 0 and age_hours > self.max_token_age_hours:
+                    rejects.append((c, DecisionLabel.FILTER_AGE, f"age={age_hours:.1f}h > max"))
+                    continue
+
+            candidates.append(c)
+
+        self._log(
+            "info",
+            f"Filter breakdown: chains={chain_counts}, "
+            f"rejected={len(rejects)}, passed={len(candidates)}",
+        )
+
+        return candidates, rejects
 
     async def _exclude_held_tokens(
         self,

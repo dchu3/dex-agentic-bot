@@ -204,6 +204,17 @@ class Settings(BaseSettings):
     portfolio_insider_warn_creator_pct: float = Field(
         default=10.0, alias="PORTFOLIO_INSIDER_WARN_CREATOR_PCT", ge=0, le=100
     )
+    # Shadow audit: record approved candidates without trading for outcome comparison
+    portfolio_shadow_audit_enabled: bool = Field(
+        default=False, alias="PORTFOLIO_SHADOW_AUDIT_ENABLED"
+    )
+    portfolio_shadow_check_minutes: int = Field(
+        default=30, alias="PORTFOLIO_SHADOW_CHECK_MINUTES", ge=5, le=1440
+    )
+    # Decision logging: persist per-candidate reason codes for pipeline observability
+    portfolio_decision_log_enabled: bool = Field(
+        default=True, alias="PORTFOLIO_DECISION_LOG_ENABLED"
+    )
 
     @model_validator(mode="after")
     def _validate_insider_thresholds(self) -> "Settings":

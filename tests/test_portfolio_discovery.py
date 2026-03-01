@@ -438,8 +438,8 @@ class TestDiscoverPipeline:
         async def _scan_trending() -> List[Dict[str, Any]]:
             return [{"pair": "placeholder"}]
 
-        def _apply_filters(_pairs: List[Dict[str, Any]]) -> List[DiscoveryCandidate]:
-            return [strong_primary, strong_duplicate, weak]
+        def _apply_filters_with_labels(_pairs):
+            return [strong_primary, strong_duplicate, weak], []
 
         async def _exclude_held_tokens(
             candidates: List[DiscoveryCandidate], _db: MockDatabase
@@ -461,7 +461,7 @@ class TestDiscoverPipeline:
             return True, "buy"
 
         monkeypatch.setattr(discovery, "_scan_trending", _scan_trending)
-        monkeypatch.setattr(discovery, "_apply_filters", _apply_filters)
+        monkeypatch.setattr(discovery, "_apply_filters_with_labels", _apply_filters_with_labels)
         monkeypatch.setattr(discovery, "_exclude_held_tokens", _exclude_held_tokens)
         monkeypatch.setattr(discovery, "_safety_check", _safety_check)
         monkeypatch.setattr(discovery, "_insider_check", _insider_check)
@@ -501,8 +501,8 @@ class TestDiscoverPipeline:
         async def _scan_trending() -> List[Dict[str, Any]]:
             return [{"pair": "placeholder"}]
 
-        def _apply_filters(_pairs: List[Dict[str, Any]]) -> List[DiscoveryCandidate]:
-            return candidates
+        def _apply_filters_with_labels(_pairs):
+            return candidates, []
 
         async def _exclude_held_tokens(
             current: List[DiscoveryCandidate], _db: MockDatabase
@@ -524,7 +524,7 @@ class TestDiscoverPipeline:
             return decisions[candidate.symbol]
 
         monkeypatch.setattr(discovery, "_scan_trending", _scan_trending)
-        monkeypatch.setattr(discovery, "_apply_filters", _apply_filters)
+        monkeypatch.setattr(discovery, "_apply_filters_with_labels", _apply_filters_with_labels)
         monkeypatch.setattr(discovery, "_exclude_held_tokens", _exclude_held_tokens)
         monkeypatch.setattr(discovery, "_safety_check", _safety_check)
         monkeypatch.setattr(discovery, "_insider_check", _insider_check)
