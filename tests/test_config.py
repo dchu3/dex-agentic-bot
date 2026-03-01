@@ -18,6 +18,11 @@ def test_insider_thresholds_allow_valid_ordering() -> None:
     )
 
 
+def test_decision_log_default_disabled() -> None:
+    settings = Settings(GEMINI_API_KEY="x")
+    assert settings.portfolio_decision_log_enabled is False
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

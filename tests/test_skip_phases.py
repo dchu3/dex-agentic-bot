@@ -383,7 +383,7 @@ class TestSkipPhasesIntegration:
         engine = _make_engine(db)
 
         # Mock the discovery to return our candidate
-        async def mock_discover(db, max_candidates):
+        async def mock_discover(db, max_candidates, **kwargs):
             return [candidate]
         
         engine.discovery.discover = mock_discover
@@ -405,7 +405,7 @@ class TestSkipPhasesIntegration:
 
         engine = _make_engine(db)
         
-        async def mock_discover(db, max_candidates):
+        async def mock_discover(db, max_candidates, **kwargs):
             return []
         
         engine.discovery.discover = mock_discover
@@ -436,7 +436,7 @@ class TestSkipPhasesIntegration:
 
         engine = _make_engine(db)
         
-        async def mock_discover(db, max_candidates):
+        async def mock_discover(db, max_candidates, **kwargs):
             return [candidate]
         
         engine.discovery.discover = mock_discover

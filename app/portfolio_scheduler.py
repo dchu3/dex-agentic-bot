@@ -163,6 +163,14 @@ class PortfolioScheduler:
 
         result = await self.engine.run_exit_checks()
 
+        # Resolve pending shadow positions alongside exit checks
+        try:
+            shadow_resolved = await self.engine.check_shadow_positions()
+            if shadow_resolved:
+                self._log("info", f"Resolved {shadow_resolved} shadow position(s)")
+        except Exception as exc:
+            self._log("warning", f"Shadow position check failed: {exc}")
+
         if self.telegram and self.telegram.is_configured:
             if result.positions_closed or result.errors:
                 await self._send_exit_notification(result)

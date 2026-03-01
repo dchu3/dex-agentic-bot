@@ -878,6 +878,9 @@ Examples:
             insider_max_creator_pct=settings.portfolio_insider_max_creator_pct,
             insider_warn_concentration_pct=settings.portfolio_insider_warn_concentration_pct,
             insider_warn_creator_pct=settings.portfolio_insider_warn_creator_pct,
+            shadow_audit_enabled=settings.portfolio_shadow_audit_enabled,
+            shadow_check_minutes=settings.portfolio_shadow_check_minutes,
+            decision_log_enabled=settings.portfolio_decision_log_enabled,
         )
         portfolio_engine = PortfolioStrategyEngine(
             db=db,

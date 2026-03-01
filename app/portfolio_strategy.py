@@ -66,6 +66,9 @@ class PortfolioStrategyConfig:
     insider_max_creator_pct: float = 30.0
     insider_warn_concentration_pct: float = 30.0
     insider_warn_creator_pct: float = 10.0
+    shadow_audit_enabled: bool = False
+    shadow_check_minutes: int = 30
+    decision_log_enabled: bool = False
 
     def __post_init__(self) -> None:
         """Validate configuration consistency."""
@@ -226,6 +229,10 @@ class PortfolioStrategyEngine:
             candidates = await self.discovery.discover(
                 db=self.db,
                 max_candidates=available_slots,
+                decision_log_enabled=self.config.decision_log_enabled,
+                shadow_audit_enabled=self.config.shadow_audit_enabled,
+                shadow_check_minutes=self.config.shadow_check_minutes,
+                position_size_usd=self.config.position_size_usd,
             )
             result.candidates_found = len(candidates)
 
@@ -858,3 +865,43 @@ class PortfolioStrategyEngine:
                     pass
 
         return price, liquidity_usd
+
+    # ------------------------------------------------------------------
+    # Shadow audit checks
+    # ------------------------------------------------------------------
+
+    async def check_shadow_positions(self) -> int:
+        """Resolve pending shadow positions by fetching current prices.
+
+        Returns the number of shadow positions resolved.
+        """
+        pending = await self.db.list_pending_shadow_positions()
+        if not pending:
+            return 0
+
+        resolved = 0
+        for shadow in pending:
+            token_address = shadow["token_address"]
+            entry_price = shadow["entry_price"]
+            try:
+                current_price = await self._fetch_current_price(
+                    token_address=token_address,
+                    chain=shadow["chain"],
+                )
+                pnl_pct = ((current_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
+                updated = await self.db.resolve_shadow_position(
+                    shadow_id=shadow["id"],
+                    price_at_check=current_price,
+                    pnl_pct=pnl_pct,
+                )
+                if updated:
+                    self._log(
+                        "info",
+                        f"Shadow {shadow['symbol']}: entry=${entry_price:.10f} "
+                        f"now=${current_price:.10f} pnl={pnl_pct:+.1f}%",
+                    )
+                    resolved += 1
+            except Exception as exc:
+                self._log("warning", f"Shadow check failed for {shadow.get('symbol', '?')}: {exc}")
+
+        return resolved
