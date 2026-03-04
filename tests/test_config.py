@@ -19,7 +19,7 @@ def test_insider_thresholds_allow_valid_ordering() -> None:
 
 
 def test_decision_log_default_disabled() -> None:
-    settings = Settings(GEMINI_API_KEY="x")
+    settings = Settings(GEMINI_API_KEY="x", _env_file=None)
     assert settings.portfolio_decision_log_enabled is False
 
 
