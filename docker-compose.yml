@@ -1,0 +1,13 @@
+services:
+  bot:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - dex-bot-data:/root/.dex-bot
+    # Enable interactive mode (stdin + tty)
+    stdin_open: true
+    tty: true
+
+volumes:
+  dex-bot-data:
