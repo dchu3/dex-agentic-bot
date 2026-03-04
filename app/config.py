@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = Field(..., alias="GEMINI_API_KEY")
     gemini_model: str = Field(
-        default="gemini-2.5-flash",
+        default="gemini-3-flash-preview",
         alias="GEMINI_MODEL",
     )
 
@@ -115,40 +115,40 @@ class Settings(BaseSettings):
         default=5.0, alias="PORTFOLIO_POSITION_SIZE_USD", ge=0.01
     )
     portfolio_take_profit_pct: float = Field(
-        default=15.0, alias="PORTFOLIO_TAKE_PROFIT_PCT", ge=0.0, le=500.0
+        default=0.0, alias="PORTFOLIO_TAKE_PROFIT_PCT", ge=0.0, le=500.0
     )
     portfolio_stop_loss_pct: float = Field(
-        default=8.0, alias="PORTFOLIO_STOP_LOSS_PCT", ge=0.1, le=100.0
+        default=17.0, alias="PORTFOLIO_STOP_LOSS_PCT", ge=0.1, le=100.0
     )
     portfolio_trailing_stop_pct: float = Field(
-        default=5.0, alias="PORTFOLIO_TRAILING_STOP_PCT", ge=0.1, le=100.0
+        default=11.0, alias="PORTFOLIO_TRAILING_STOP_PCT", ge=0.1, le=100.0
     )
     portfolio_sell_pct: float = Field(
-        default=100.0, alias="PORTFOLIO_SELL_PCT", ge=0.1, le=100.0
+        default=45.0, alias="PORTFOLIO_SELL_PCT", ge=0.1, le=100.0
     )
     portfolio_max_hold_hours: int = Field(
         default=24, alias="PORTFOLIO_MAX_HOLD_HOURS", ge=1, le=720
     )
     portfolio_discovery_interval_mins: int = Field(
-        default=30, alias="PORTFOLIO_DISCOVERY_INTERVAL_MINS", ge=5, le=1440
+        default=20, alias="PORTFOLIO_DISCOVERY_INTERVAL_MINS", ge=5, le=1440
     )
     portfolio_price_check_seconds: int = Field(
-        default=60, alias="PORTFOLIO_PRICE_CHECK_SECONDS", ge=10, le=3600
+        default=40, alias="PORTFOLIO_PRICE_CHECK_SECONDS", ge=10, le=3600
     )
     portfolio_daily_loss_limit_usd: float = Field(
         default=50.0, alias="PORTFOLIO_DAILY_LOSS_LIMIT_USD", ge=0
     )
     portfolio_min_volume_usd: float = Field(
-        default=50000.0, alias="PORTFOLIO_MIN_VOLUME_USD", ge=0
+        default=380000.0, alias="PORTFOLIO_MIN_VOLUME_USD", ge=0
     )
     portfolio_min_liquidity_usd: float = Field(
-        default=25000.0, alias="PORTFOLIO_MIN_LIQUIDITY_USD", ge=0
+        default=245000.0, alias="PORTFOLIO_MIN_LIQUIDITY_USD", ge=0
     )
     portfolio_min_market_cap_usd: float = Field(
-        default=250000.0, alias="PORTFOLIO_MIN_MARKET_CAP_USD", ge=0
+        default=1650000.0, alias="PORTFOLIO_MIN_MARKET_CAP_USD", ge=0
     )
     portfolio_min_token_age_hours: float = Field(
-        default=4.0, alias="PORTFOLIO_MIN_TOKEN_AGE_HOURS", ge=0
+        default=11.0, alias="PORTFOLIO_MIN_TOKEN_AGE_HOURS", ge=0
     )
     portfolio_max_token_age_hours: float = Field(
         default=0.0, alias="PORTFOLIO_MAX_TOKEN_AGE_HOURS", ge=0
@@ -157,10 +157,10 @@ class Settings(BaseSettings):
         default=300, alias="PORTFOLIO_COOLDOWN_SECONDS", ge=0, le=86400
     )
     portfolio_min_momentum_score: float = Field(
-        default=50.0, alias="PORTFOLIO_MIN_MOMENTUM_SCORE", ge=0, le=100
+        default=54.0, alias="PORTFOLIO_MIN_MOMENTUM_SCORE", ge=0, le=100
     )
     portfolio_max_slippage_bps: int = Field(
-        default=100, alias="PORTFOLIO_MAX_SLIPPAGE_BPS", ge=1, le=5000
+        default=300, alias="PORTFOLIO_MAX_SLIPPAGE_BPS", ge=1, le=5000
     )
     portfolio_quote_mint: str = Field(
         default="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
