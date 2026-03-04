@@ -181,7 +181,7 @@ By default this runs in **dry-run mode** (`PORTFOLIO_DRY_RUN=true`).
 **Partial sell (configurable via `.env`):**
 
 Sell a percentage of the position on any **profitable** exit trigger (e.g. take-profit, trailing stop in profit), while keeping the remainder open with a continued trailing stop:
-- `PORTFOLIO_SELL_PCT` — Percentage of the position to sell on profitable exits (default: 45)
+- `PORTFOLIO_SELL_PCT` — Percentage of the position to sell on profitable exits (default: 45; 100 = full exit)
 
 When set below 100 and the trade is in profit, the bot partially closes the position; the remaining size stays open and the trailing stop continues tracking the remaining balance. If an exit is not profitable (at or below entry), the bot closes 100% of the position regardless of this setting.
 
