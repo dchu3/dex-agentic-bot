@@ -118,7 +118,7 @@ PORTFOLIO_TRAILING_STOP_PCT=11.0
 PORTFOLIO_SELL_PCT=45.0
 ```
 
-> **Trader MCP** — set `SOLANA_PRIVATE_KEY`, `JUPITER_API_BASE`, and `JUPITER_API_KEY` in your `.env` to enable live Solana trading. These are forwarded to the `dex-trader-mcp` subprocess automatically. A free Jupiter API key is available at [dev.jup.ag](https://dev.jup.ag/). See the [dex-trader-mcp README](https://github.com/dchu3/dex-trader-mcp) for details.
+> **Trader MCP** — for live Solana trading, set `SOLANA_PRIVATE_KEY`, `SOLANA_RPC_URL` (to a reliable/private Solana RPC), `JUPITER_API_BASE`, and `JUPITER_API_KEY` in your `.env`. These variables are forwarded to the `dex-trader-mcp` subprocess automatically. A free Jupiter API key is available at [dev.jup.ag](https://dev.jup.ag/). See the [dex-trader-mcp README](https://github.com/dchu3/dex-trader-mcp) for details.
 
 See `.env.example` for the full list of settings.
 

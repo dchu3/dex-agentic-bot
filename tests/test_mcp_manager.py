@@ -219,6 +219,25 @@ def test_mcp_manager_with_trader():
     assert manager.trader.name == "trader"
 
 
+def test_mcp_manager_forwards_trader_extra_env():
+    """MCPManager passes trader_env through to trader client extra_env."""
+    trader_env = {
+        "SOLANA_PRIVATE_KEY": "test-private-key",
+        "SOLANA_RPC_URL": "https://rpc.example",
+        "JUPITER_API_BASE": "https://api.jup.ag/swap/v1",
+        "JUPITER_API_KEY": "test-jupiter-key",
+    }
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        trader_cmd="echo trader",
+        trader_env=trader_env,
+    )
+
+    assert manager.trader is not None
+    assert manager.trader._extra_env == trader_env
+
+
 def test_mcp_manager_without_trader():
     """Test MCPManager skips trader client when cmd is empty."""
     manager = MCPManager(
