@@ -40,6 +40,7 @@ class MCPClient:
         call_timeout: float = 90.0,
         retry_on_timeout: bool = True,
         extra_env: Optional[Dict[str, str]] = None,
+        max_concurrent: int = 8,
     ) -> None:
         self.name = name
         self.command = command
@@ -50,6 +51,8 @@ class MCPClient:
         if not self._command_args:
             raise ValueError(f"Empty MCP command for {name!r}")
         self._command_repr = " ".join(self._command_args)
+        if max_concurrent < 1:
+            raise ValueError(f"max_concurrent must be >= 1 for {name!r}, got {max_concurrent}")
         self._call_timeout = call_timeout
         self._retry_on_timeout = retry_on_timeout
         self._extra_env = extra_env
@@ -61,6 +64,7 @@ class MCPClient:
         self._lock = asyncio.Lock()
         self._restart_lock = asyncio.Lock()
         self._pending: Dict[str, asyncio.Future[Any]] = {}
+        self._call_semaphore = asyncio.Semaphore(max_concurrent)
         self._initialized = False
         self._tools: list[Dict[str, Any]] = []
 
@@ -308,21 +312,22 @@ class MCPClient:
         ``retry_on_timeout=False`` for non-idempotent operations (e.g. trade
         execution) to avoid duplicate side-effects from a double submission.
         """
-        try:
-            return await self._call_tool_once(method, arguments)
-        except MCPTimeoutError:
-            logger.warning(
-                "MCP tool call timed out (%s/%s), restarting process%s.",
-                self.name,
-                method,
-                " and retrying once" if self._retry_on_timeout else "",
-            )
-            async with self._restart_lock:
-                await self.stop()
-                await self.start()
-            if not self._retry_on_timeout:
-                raise
-            return await self._call_tool_once(method, arguments)
+        async with self._call_semaphore:
+            try:
+                return await self._call_tool_once(method, arguments)
+            except MCPTimeoutError:
+                logger.warning(
+                    "MCP tool call timed out (%s/%s), restarting process%s.",
+                    self.name,
+                    method,
+                    " and retrying once" if self._retry_on_timeout else "",
+                )
+                async with self._restart_lock:
+                    await self.stop()
+                    await self.start()
+                if not self._retry_on_timeout:
+                    raise
+                return await self._call_tool_once(method, arguments)
 
     async def _call_tool_once(self, method: str, arguments: Dict[str, Any]) -> Any:
         """Single attempt to call an MCP tool."""
@@ -375,16 +380,20 @@ class MCPManager:
         trader_cmd: str = "",
         call_timeout: float = 90.0,
         solana_rpc_url: str = "",
+        max_concurrent_per_server: int = 8,
     ) -> None:
-        self.dexscreener = MCPClient("dexscreener", dexscreener_cmd, call_timeout=call_timeout)
-        self.dexpaprika = MCPClient("dexpaprika", dexpaprika_cmd, call_timeout=call_timeout)
-        self.honeypot = MCPClient("honeypot", honeypot_cmd, call_timeout=call_timeout) if honeypot_cmd else None
-        self.rugcheck = MCPClient("rugcheck", rugcheck_cmd, call_timeout=call_timeout) if rugcheck_cmd else None
+        if max_concurrent_per_server < 1:
+            raise ValueError(f"max_concurrent_per_server must be >= 1, got {max_concurrent_per_server}")
+        mc = max_concurrent_per_server
+        self.dexscreener = MCPClient("dexscreener", dexscreener_cmd, call_timeout=call_timeout, max_concurrent=mc)
+        self.dexpaprika = MCPClient("dexpaprika", dexpaprika_cmd, call_timeout=call_timeout, max_concurrent=mc)
+        self.honeypot = MCPClient("honeypot", honeypot_cmd, call_timeout=call_timeout, max_concurrent=mc) if honeypot_cmd else None
+        self.rugcheck = MCPClient("rugcheck", rugcheck_cmd, call_timeout=call_timeout, max_concurrent=mc) if rugcheck_cmd else None
         solana_extra_env = {"SOLANA_RPC_URL": solana_rpc_url} if solana_rpc_url else None
-        self.solana = MCPClient("solana", solana_rpc_cmd, call_timeout=call_timeout, extra_env=solana_extra_env) if solana_rpc_cmd else None
-        self.blockscout = MCPClient("blockscout", blockscout_cmd, call_timeout=call_timeout) if blockscout_cmd else None
+        self.solana = MCPClient("solana", solana_rpc_cmd, call_timeout=call_timeout, extra_env=solana_extra_env, max_concurrent=mc) if solana_rpc_cmd else None
+        self.blockscout = MCPClient("blockscout", blockscout_cmd, call_timeout=call_timeout, max_concurrent=mc) if blockscout_cmd else None
         # retry_on_timeout=False: trader executes swaps; retrying on timeout risks a double submission.
-        self.trader = MCPClient("trader", trader_cmd, call_timeout=call_timeout, retry_on_timeout=False) if trader_cmd else None
+        self.trader = MCPClient("trader", trader_cmd, call_timeout=call_timeout, retry_on_timeout=False, max_concurrent=mc) if trader_cmd else None
         self._gemini_functions_cache: Optional[List["types.FunctionDeclaration"]] = None
 
     async def start(self) -> None:
