@@ -12,7 +12,7 @@ services:
       MCP_BLOCKSCOUT_CMD: node /opt/mcp/dex-blockscout-mcp/dist/index.js
       MCP_TRADER_CMD: node /opt/mcp/dex-trader-mcp/dist/index.js
     volumes:
-      - dex-bot-data:/root/.dex-bot
+      - dex-bot-data:/home/botuser/.dex-bot
     # Enable interactive mode (stdin + tty)
     stdin_open: true
     tty: true

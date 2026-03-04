@@ -40,11 +40,9 @@ RUN npm install -g "dexpaprika-mcp@${DEXPAPRIKA_MCP_VERSION}"
 # ---- Stage 2: Python runtime ----
 FROM python:3.11-slim
 
-# Install Node.js 22 runtime (required to spawn MCP server subprocesses)
+# Install Node.js runtime (required to spawn MCP server subprocesses)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get install -y --no-install-recommends ca-certificates nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy built MCP servers
@@ -69,8 +67,10 @@ ENV MCP_SOLANA_RPC_CMD="node /opt/mcp/solana-rpc-mcp/dist/index.js"
 ENV MCP_BLOCKSCOUT_CMD="node /opt/mcp/dex-blockscout-mcp/dist/index.js"
 ENV MCP_TRADER_CMD="node /opt/mcp/dex-trader-mcp/dist/index.js"
 
-# Create data directory for SQLite databases
-RUN mkdir -p /root/.dex-bot
+# Create a non-root runtime user and writable data directory
+RUN useradd --create-home --uid 10001 botuser \
+    && mkdir -p /home/botuser/.dex-bot \
+    && chown -R botuser:botuser /home/botuser
 
 # Set up Python application
 WORKDIR /app
@@ -79,6 +79,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
+RUN chown -R botuser:botuser /app
+
+USER botuser
 
 ENTRYPOINT ["python", "-m", "app"]
 CMD ["--interactive"]
