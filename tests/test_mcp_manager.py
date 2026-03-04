@@ -1,5 +1,6 @@
 """Tests for MCP Manager configuration."""
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -573,3 +574,86 @@ def test_mcp_manager_non_trader_clients_retry_on_timeout_enabled():
     assert manager.dexpaprika._retry_on_timeout is True
     assert manager.rugcheck is not None
     assert manager.rugcheck._retry_on_timeout is True
+
+
+# ---------------------------------------------------------------------------
+# MCPClient._call_semaphore — concurrency limiting
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_client_default_call_semaphore():
+    """MCPClient has a _call_semaphore with default limit of 8."""
+    client = MCPClient("test", "echo test")
+    assert isinstance(client._call_semaphore, asyncio.Semaphore)
+    # Semaphore internal value reflects the limit
+    assert client._call_semaphore._value == 8
+
+
+def test_mcp_client_custom_max_concurrent():
+    """MCPClient accepts a custom max_concurrent parameter."""
+    client = MCPClient("test", "echo test", max_concurrent=4)
+    assert client._call_semaphore._value == 4
+
+
+def test_mcp_manager_propagates_max_concurrent():
+    """MCPManager propagates max_concurrent_per_server to all clients."""
+    manager = MCPManager(
+        dexscreener_cmd="echo dexscreener",
+        dexpaprika_cmd="echo dexpaprika",
+        rugcheck_cmd="echo rugcheck",
+        trader_cmd="echo trader",
+        max_concurrent_per_server=5,
+    )
+
+    for client in [manager.dexscreener, manager.dexpaprika, manager.rugcheck, manager.trader]:
+        assert client is not None
+        assert client._call_semaphore._value == 5
+
+
+def test_mcp_client_rejects_zero_max_concurrent():
+    """MCPClient raises ValueError when max_concurrent is 0."""
+    with pytest.raises(ValueError, match="max_concurrent must be >= 1"):
+        MCPClient("test", "echo test", max_concurrent=0)
+
+
+def test_mcp_client_rejects_negative_max_concurrent():
+    """MCPClient raises ValueError when max_concurrent is negative."""
+    with pytest.raises(ValueError, match="max_concurrent must be >= 1"):
+        MCPClient("test", "echo test", max_concurrent=-1)
+
+
+def test_mcp_manager_rejects_zero_max_concurrent_per_server():
+    """MCPManager raises ValueError when max_concurrent_per_server is 0."""
+    with pytest.raises(ValueError, match="max_concurrent_per_server must be >= 1"):
+        MCPManager(
+            dexscreener_cmd="echo dexscreener",
+            dexpaprika_cmd="echo dexpaprika",
+            max_concurrent_per_server=0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_call_tool_semaphore_limits_concurrency():
+    """call_tool uses _call_semaphore to limit concurrent in-flight requests."""
+    client = MCPClient("test", "echo test", max_concurrent=2)
+    max_concurrent_observed = 0
+    current_concurrent = 0
+    lock = asyncio.Lock()
+
+    async def _slow_call_tool_once(method, arguments):
+        nonlocal max_concurrent_observed, current_concurrent
+        async with lock:
+            current_concurrent += 1
+            if current_concurrent > max_concurrent_observed:
+                max_concurrent_observed = current_concurrent
+        await asyncio.sleep(0.05)
+        async with lock:
+            current_concurrent -= 1
+        return {"ok": True}
+
+    with patch.object(client, "_call_tool_once", new=_slow_call_tool_once):
+        tasks = [client.call_tool("method", {}) for _ in range(6)]
+        await asyncio.gather(*tasks)
+
+    # Should never exceed the semaphore limit of 2
+    assert max_concurrent_observed <= 2
