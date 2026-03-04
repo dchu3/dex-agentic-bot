@@ -27,6 +27,40 @@ An AI-powered CLI and Telegram bot for token safety checks, market analysis, and
 
 ## Quick Start
 
+### Option A: Docker (recommended)
+
+The easiest way to get started. All MCP servers are pre-built and bundled in the image — no need to install Node.js or clone separate repos.
+
+```bash
+git clone https://github.com/dchu3/dex-agentic-bot && cd dex-agentic-bot
+cp .env.example .env
+# Edit .env — set GEMINI_API_KEY (required). Docker injects MCP commands automatically.
+docker compose run --rm bot "search for PEPE on ethereum"
+```
+
+**Run modes:**
+
+```bash
+# Interactive CLI
+docker compose up
+
+# Single query
+docker compose run --rm bot "search for PEPE on ethereum"
+
+# Telegram bot only
+docker compose run --rm bot --telegram-only
+
+# Portfolio strategy (dry-run)
+docker compose run --rm bot --interactive --portfolio
+
+# Rebuild to get latest MCP server updates
+docker compose build --no-cache
+```
+
+Data (SQLite databases) is persisted in a Docker volume (`dex-bot-data`) across container restarts.
+
+### Option B: Manual Setup
+
 ### 1. Setup
 
 ```bash
