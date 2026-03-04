@@ -44,7 +44,7 @@ Key settings in `.env`:
 GEMINI_API_KEY=your-gemini-api-key
 
 # Optional (defaults shown)
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3-flash-preview
 
 # MCP Servers (token data sources)
 MCP_DEXSCREENER_CMD=node /path/to/dex-screener-mcp/dist/index.js
@@ -73,10 +73,10 @@ PORTFOLIO_ENABLED=false
 PORTFOLIO_DRY_RUN=true
 PORTFOLIO_POSITION_SIZE_USD=5.0
 PORTFOLIO_MAX_POSITIONS=5
-PORTFOLIO_TAKE_PROFIT_PCT=15.0
-PORTFOLIO_STOP_LOSS_PCT=8.0
-PORTFOLIO_TRAILING_STOP_PCT=5.0
-PORTFOLIO_SELL_PCT=100.0
+PORTFOLIO_TAKE_PROFIT_PCT=0.0
+PORTFOLIO_STOP_LOSS_PCT=17.0
+PORTFOLIO_TRAILING_STOP_PCT=11.0
+PORTFOLIO_SELL_PCT=45.0
 ```
 
 > **Trader MCP — additional configuration required**
@@ -157,15 +157,15 @@ The portfolio strategy autonomously discovers promising Solana tokens, buys smal
 
 **How it works:**
 1. **SOL trend gate**: Skip discovery if SOL has dropped faster than the configured threshold in the lookback window
-2. **Discovery** (every 30 min): DexScreener trending → volume/liquidity/market cap filter → rugcheck safety → insider/sniper detection → heuristic momentum scoring → Gemini AI per-candidate buy/skip decision → buy approved candidates
-3. **Exit monitoring** (every 60s): Check TP/SL thresholds, update trailing stops, close expired positions
+2. **Discovery** (every 20 min): DexScreener trending → volume/liquidity/market cap filter → rugcheck safety → insider/sniper detection → heuristic momentum scoring → Gemini AI per-candidate buy/skip decision → buy approved candidates
+3. **Exit monitoring** (every 40s): Check TP/SL thresholds, update trailing stops, close expired positions
 4. **Risk guards**: Max positions cap, daily loss limit, cooldown after failures, duplicate prevention
 
 **Discovery filters (configurable via `.env`):**
-- `PORTFOLIO_MIN_VOLUME_USD` — Minimum 24h trading volume (default: 50k)
-- `PORTFOLIO_MIN_LIQUIDITY_USD` — Minimum liquidity depth (default: 25k)
-- `PORTFOLIO_MIN_MARKET_CAP_USD` — Minimum market cap or FDV (default: 250k)
-- `PORTFOLIO_MIN_TOKEN_AGE_HOURS` — Reject tokens younger than this many hours (default: 4; 0 = disabled)
+- `PORTFOLIO_MIN_VOLUME_USD` — Minimum 24h trading volume (default: 380k)
+- `PORTFOLIO_MIN_LIQUIDITY_USD` — Minimum liquidity depth (default: 245k)
+- `PORTFOLIO_MIN_MARKET_CAP_USD` — Minimum market cap or FDV (default: 1.65M)
+- `PORTFOLIO_MIN_TOKEN_AGE_HOURS` — Reject tokens younger than this many hours (default: 11; 0 = disabled)
 - `PORTFOLIO_MAX_TOKEN_AGE_HOURS` — Reject tokens older than this many hours (default: 0 = disabled)
 
 **Pre-trade slippage probe (opt-in, live mode only):**
@@ -181,7 +181,7 @@ By default this runs in **dry-run mode** (`PORTFOLIO_DRY_RUN=true`).
 **Partial sell (configurable via `.env`):**
 
 Sell a percentage of the position on any **profitable** exit trigger (e.g. take-profit, trailing stop in profit), while keeping the remainder open with a continued trailing stop:
-- `PORTFOLIO_SELL_PCT` — Percentage of the position to sell on profitable exits (default: 100 = full exit)
+- `PORTFOLIO_SELL_PCT` — Percentage of the position to sell on profitable exits (default: 45)
 
 When set below 100 and the trade is in profit, the bot partially closes the position; the remaining size stays open and the trailing stop continues tracking the remaining balance. If an exit is not profitable (at or below entry), the bot closes 100% of the position regardless of this setting.
 
