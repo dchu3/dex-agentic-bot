@@ -24,6 +24,26 @@ def test_decision_log_default_disabled() -> None:
     assert settings.portfolio_decision_log_enabled is False
 
 
+def test_trader_env_defaults_empty() -> None:
+    settings = Settings(GEMINI_API_KEY="x", _env_file=None)
+    assert settings.solana_private_key == ""
+    assert settings.jupiter_api_base == ""
+    assert settings.jupiter_api_key == ""
+
+
+def test_trader_env_fields_accept_env_overrides() -> None:
+    settings = Settings(
+        GEMINI_API_KEY="x",
+        SOLANA_PRIVATE_KEY="test-private-key",
+        JUPITER_API_BASE="https://api.jup.ag/swap/v1",
+        JUPITER_API_KEY="test-jupiter-key",
+        _env_file=None,
+    )
+    assert settings.solana_private_key == "test-private-key"
+    assert settings.jupiter_api_base == "https://api.jup.ag/swap/v1"
+    assert settings.jupiter_api_key == "test-jupiter-key"
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

@@ -97,6 +97,11 @@ MCP_CALL_TIMEOUT=90
 # Use a private provider such as Helius (https://helius.dev).
 SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=your-key
 
+# Trader MCP (optional — needed for live trading on Solana)
+SOLANA_PRIVATE_KEY=your-base58-private-key
+JUPITER_API_BASE=https://api.jup.ag/swap/v1
+JUPITER_API_KEY=your-jupiter-api-key
+
 # Telegram (optional)
 TELEGRAM_BOT_TOKEN=your-telegram-bot-token
 TELEGRAM_CHAT_ID=your-chat-id
@@ -113,9 +118,7 @@ PORTFOLIO_TRAILING_STOP_PCT=11.0
 PORTFOLIO_SELL_PCT=45.0
 ```
 
-> **Trader MCP — additional configuration required**
->
-> The `dex-trader-mcp` server has its own `.env` in its project directory. Set `SOLANA_RPC_URL` (private RPC such as Helius/QuickNode) and optionally `JUPITER_API_BASE` + `JUPITER_API_KEY` there. The public Solana RPC (`api.mainnet-beta.solana.com`) and Jupiter Lite API (`lite-api.jup.ag`) block cloud/VPN IPs. See the [dex-trader-mcp README](https://github.com/dchu3/dex-trader-mcp) for details.
+> **Trader MCP** — for live Solana trading, set `SOLANA_PRIVATE_KEY`, `SOLANA_RPC_URL` (to a reliable/private Solana RPC), `JUPITER_API_BASE`, and `JUPITER_API_KEY` in your `.env`. These variables are forwarded to the `dex-trader-mcp` subprocess automatically. A free Jupiter API key is available at [dev.jup.ag](https://dev.jup.ag/). See the [dex-trader-mcp README](https://github.com/dchu3/dex-trader-mcp) for details.
 
 See `.env.example` for the full list of settings.
 

@@ -98,6 +98,11 @@ class Settings(BaseSettings):
         alias="SOLANA_RPC_URL",
     )
 
+    # Trader MCP environment — forwarded to the trader subprocess
+    solana_private_key: str = Field(default="", alias="SOLANA_PRIVATE_KEY")
+    jupiter_api_base: str = Field(default="", alias="JUPITER_API_BASE")
+    jupiter_api_key: str = Field(default="", alias="JUPITER_API_KEY")
+
     # Portfolio strategy settings (discover → hold → exit)
     portfolio_enabled: bool = Field(
         default=False, alias="PORTFOLIO_ENABLED"
