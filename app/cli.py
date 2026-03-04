@@ -770,6 +770,14 @@ Examples:
 
     # Initialize MCP manager
     output.status("Starting MCP servers...")
+    trader_env = {
+        k: v for k, v in {
+            "SOLANA_PRIVATE_KEY": settings.solana_private_key,
+            "SOLANA_RPC_URL": settings.solana_rpc_url,
+            "JUPITER_API_BASE": settings.jupiter_api_base,
+            "JUPITER_API_KEY": settings.jupiter_api_key,
+        }.items() if v
+    } or None
     mcp_manager = MCPManager(
         dexscreener_cmd=settings.mcp_dexscreener_cmd,
         dexpaprika_cmd=settings.mcp_dexpaprika_cmd,
@@ -780,6 +788,7 @@ Examples:
         trader_cmd="" if args.no_trader else settings.mcp_trader_cmd,
         call_timeout=float(settings.mcp_call_timeout),
         solana_rpc_url=settings.solana_rpc_url,
+        trader_env=trader_env,
     )
 
     try:

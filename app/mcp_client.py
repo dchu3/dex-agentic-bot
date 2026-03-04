@@ -380,6 +380,7 @@ class MCPManager:
         trader_cmd: str = "",
         call_timeout: float = 90.0,
         solana_rpc_url: str = "",
+        trader_env: Optional[Dict[str, str]] = None,
         max_concurrent_per_server: int = 8,
     ) -> None:
         if max_concurrent_per_server < 1:
@@ -393,7 +394,7 @@ class MCPManager:
         self.solana = MCPClient("solana", solana_rpc_cmd, call_timeout=call_timeout, extra_env=solana_extra_env, max_concurrent=mc) if solana_rpc_cmd else None
         self.blockscout = MCPClient("blockscout", blockscout_cmd, call_timeout=call_timeout, max_concurrent=mc) if blockscout_cmd else None
         # retry_on_timeout=False: trader executes swaps; retrying on timeout risks a double submission.
-        self.trader = MCPClient("trader", trader_cmd, call_timeout=call_timeout, retry_on_timeout=False, max_concurrent=mc) if trader_cmd else None
+        self.trader = MCPClient("trader", trader_cmd, call_timeout=call_timeout, retry_on_timeout=False, extra_env=trader_env, max_concurrent=mc) if trader_cmd else None
         self._gemini_functions_cache: Optional[List["types.FunctionDeclaration"]] = None
 
     async def start(self) -> None:
