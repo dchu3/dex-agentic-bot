@@ -34,7 +34,7 @@ The easiest way to get started. All MCP servers are pre-built and bundled in the
 ```bash
 git clone https://github.com/dchu3/dex-agentic-bot && cd dex-agentic-bot
 cp .env.example .env
-# Edit .env — set GEMINI_API_KEY (required). MCP paths are pre-configured.
+# Edit .env — set GEMINI_API_KEY (required). Docker injects MCP commands automatically.
 docker compose run --rm bot "search for PEPE on ethereum"
 ```
 

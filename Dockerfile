@@ -6,27 +6,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 
 WORKDIR /build
 
+ARG DEXSCREENER_MCP_REF=316f6bee7b4f28a675b927eb74f4ef1ed48bdc40
+ARG HONEYPOT_MCP_REF=28a95d3aed45ba285a295d778ce5ed370c679d50
+ARG RUGCHECK_MCP_REF=723c89636157c4095f2eb4074d33ffbf4de3e3cc
+ARG SOLANA_RPC_MCP_REF=c22d7fb5878d99d1432ed4e624f3ad3cee15e965
+ARG BLOCKSCOUT_MCP_REF=371ae9f76a1db8639727eb3ccea917f158d006c4
+ARG TRADER_MCP_REF=924213e355150c00d2ce34d37ef3babb67aeb223
+ARG DEXPAPRIKA_MCP_VERSION=1.0.5
+
 # Clone and build each MCP server from public GitHub repos
-RUN git clone --depth 1 https://github.com/dchu3/dex-screener-mcp.git \
-    && cd dex-screener-mcp && npm ci && npm run build
+RUN git clone https://github.com/dchu3/dex-screener-mcp.git \
+    && cd dex-screener-mcp && git checkout "$DEXSCREENER_MCP_REF" && npm ci && npm run build
 
-RUN git clone --depth 1 https://github.com/dchu3/dex-honeypot-mcp.git \
-    && cd dex-honeypot-mcp && npm ci && npm run build
+RUN git clone https://github.com/dchu3/dex-honeypot-mcp.git \
+    && cd dex-honeypot-mcp && git checkout "$HONEYPOT_MCP_REF" && npm ci && npm run build
 
-RUN git clone --depth 1 https://github.com/dchu3/dex-rugcheck-mcp.git \
-    && cd dex-rugcheck-mcp && npm ci && npm run build
+RUN git clone https://github.com/dchu3/dex-rugcheck-mcp.git \
+    && cd dex-rugcheck-mcp && git checkout "$RUGCHECK_MCP_REF" && npm ci && npm run build
 
-RUN git clone --depth 1 https://github.com/dchu3/solana-rpc-mcp.git \
-    && cd solana-rpc-mcp && npm ci && npm run build
+RUN git clone https://github.com/dchu3/solana-rpc-mcp.git \
+    && cd solana-rpc-mcp && git checkout "$SOLANA_RPC_MCP_REF" && npm ci && npm run build
 
-RUN git clone --depth 1 https://github.com/dchu3/dex-blockscout-mcp.git \
-    && cd dex-blockscout-mcp && npm ci && npm run build
+RUN git clone https://github.com/dchu3/dex-blockscout-mcp.git \
+    && cd dex-blockscout-mcp && git checkout "$BLOCKSCOUT_MCP_REF" && npm ci && npm run build
 
-RUN git clone --depth 1 https://github.com/dchu3/dex-trader-mcp.git \
-    && cd dex-trader-mcp && npm ci && npm run build
+RUN git clone https://github.com/dchu3/dex-trader-mcp.git \
+    && cd dex-trader-mcp && git checkout "$TRADER_MCP_REF" && npm ci && npm run build
 
 # Install dexpaprika-mcp globally
-RUN npm install -g dexpaprika-mcp
+RUN npm install -g "dexpaprika-mcp@${DEXPAPRIKA_MCP_VERSION}"
 
 
 # ---- Stage 2: Python runtime ----
