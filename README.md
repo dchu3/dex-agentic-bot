@@ -323,7 +323,7 @@ DexScreener DexPap Honeypot Rugcheck Blockscout Trader
 **Portfolio Strategy** runs as a separate subsystem:
 
 ```
-PortfolioScheduler (discovery every 30min + exit checks every 60s)
+PortfolioScheduler (discovery every 20min + exit checks every 40s)
     │
     ├── PortfolioDiscovery → DexScreener + Rugcheck + Gemini AI scoring
     │
