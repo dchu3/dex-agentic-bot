@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException
@@ -66,7 +67,7 @@ class AnalyzeResponse(BaseModel):
     safety_status: str
     ai_analysis: str
     telegram_message: str
-    generated_at: str
+    generated_at: datetime
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)
@@ -96,7 +97,7 @@ async def analyze_token(request: AnalyzeRequest) -> AnalyzeResponse:
         safety_status=report.token_data.safety_status,
         ai_analysis=report.ai_analysis,
         telegram_message=report.telegram_message,
-        generated_at=report.generated_at.isoformat(),
+        generated_at=report.generated_at,
     )
 
 

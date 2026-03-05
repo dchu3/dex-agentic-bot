@@ -156,51 +156,62 @@ async function settlePayment(
 
 const paymentRequirements = buildPaymentRequirements();
 const app = express();
-app.use(express.json());
 
-app.post("/mcp", async (req: Request, res: Response): Promise<void> => {
-  const method = (req.body as Record<string, unknown>)?.["method"] as
-    | string
-    | undefined;
+app.post(
+  "/mcp",
+  express.json({ limit: "1mb" }),
+  async (req: Request, res: Response): Promise<void> => {
+    const body = req.body as Record<string, unknown>;
+    const method = body?.["method"] as string | undefined;
 
-  // Enforce payment only for tool invocations
-  if (method === "tools/call") {
-    const paymentHeader = req.headers["x-payment"] as string | undefined;
+    // Enforce payment only for the paid analyze_token tool invocation
+    if (method === "tools/call") {
+      const params = body?.["params"] as Record<string, unknown> | undefined;
+      const toolName = params?.["name"];
+      if (toolName !== "analyze_token") {
+        res.status(400).json({
+          error: "Unsupported tool name",
+          supportedTools: ["analyze_token"],
+        });
+        return;
+      }
+      const paymentHeader = req.headers["x-payment"] as string | undefined;
 
-    if (!paymentHeader) {
-      res.status(402).json({
-        x402Version: 1,
-        error: "Payment required",
-        accepts: paymentRequirements,
-      });
-      return;
+      if (!paymentHeader) {
+        res.status(402).json({
+          x402Version: 1,
+          error: "Payment required",
+          accepts: paymentRequirements,
+        });
+        return;
+      }
+
+      const settled = await settlePayment(paymentHeader, paymentRequirements[0]);
+      if (!settled) {
+        res.status(402).json({
+          x402Version: 1,
+          error: "Payment settlement failed — invalid or already-used payment",
+          accepts: paymentRequirements,
+        });
+        return;
+      }
     }
 
-    const settled = await settlePayment(paymentHeader, paymentRequirements[0]);
-    if (!settled) {
-      res.status(402).json({
-        x402Version: 1,
-        error: "Payment settlement failed — invalid or already-used payment",
-        accepts: paymentRequirements,
-      });
-      return;
+    // Dispatch through a fresh stateless MCP server instance
+    const server = makeMcpServer();
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined, // Stateless: no session state
+    });
+
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req, res, body);
+    } finally {
+      // Best-effort cleanup; ignore close errors
+      await server.close().catch(() => undefined);
     }
   }
-
-  // Dispatch through a fresh stateless MCP server instance
-  const server = makeMcpServer();
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined, // Stateless: no session state
-  });
-
-  try {
-    await server.connect(transport);
-    await transport.handleRequest(req, res, req.body as Record<string, unknown>);
-  } finally {
-    // Best-effort cleanup; ignore close errors
-    await server.close().catch(() => undefined);
-  }
-});
+);
 
 app.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok", facilitator: FACILITATOR_URL });

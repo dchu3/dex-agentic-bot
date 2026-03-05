@@ -36,6 +36,13 @@ export interface PaymentRequirements {
   extra: null;
 }
 
+function formatUsdFromMicrounits(amountMicrounits: bigint): string {
+  const cents = (amountMicrounits + 5_000n) / 10_000n;
+  const dollars = cents / 100n;
+  const centPart = (cents % 100n).toString().padStart(2, "0");
+  return `${dollars.toString()}.${centPart}`;
+}
+
 function toUsdcMicrounits(priceStr: string): bigint {
   const normalized = priceStr.trim();
   if (!/^\d+(\.\d{1,6})?$/.test(normalized)) {
@@ -59,7 +66,7 @@ export function buildPaymentRequirements(): PaymentRequirements[] {
 
   const priceInput = process.env.SERVER_PRICE_ANALYZE ?? "0.50";
   const amountMicrounits = toUsdcMicrounits(priceInput);
-  const priceUsd = Number(amountMicrounits) / 1_000_000;
+  const priceDisplay = formatUsdFromMicrounits(amountMicrounits);
   // USDC has 6 decimal places: $0.50 → 500_000 raw units
   const amountRaw = amountMicrounits.toString();
 
@@ -73,7 +80,7 @@ export function buildPaymentRequirements(): PaymentRequirements[] {
       network,
       maxAmountRequired: amountRaw,
       resource: "/mcp",
-      description: `DEX AI token analysis — $${priceUsd.toFixed(2)} USDC`,
+      description: `DEX AI token analysis — $${priceDisplay} USDC`,
       mimeType: "application/json",
       payTo: walletAddress,
       maxTimeoutSeconds: 300,
