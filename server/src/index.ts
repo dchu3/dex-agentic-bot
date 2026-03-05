@@ -164,48 +164,46 @@ app.post(
     const body = req.body as Record<string, unknown>;
     const method = body?.["method"] as string | undefined;
 
-    // Enforce payment only for the paid analyze_token tool invocation
+    // Only enforce x402 payment for the paid analyze_token tool.
+    // For other tool names, let the MCP server handle the request and
+    // return a protocol-consistent JSON-RPC error response.
     if (method === "tools/call") {
       const params = body?.["params"] as Record<string, unknown> | undefined;
       const toolName = params?.["name"];
-      if (toolName !== "analyze_token") {
-        res.status(400).json({
-          error: "Unsupported tool name",
-          supportedTools: ["analyze_token"],
-        });
-        return;
-      }
-      const rawPaymentHeader = req.headers["x-payment"];
-      let paymentHeader: string | undefined;
-      if (Array.isArray(rawPaymentHeader)) {
-        if (rawPaymentHeader.length !== 1) {
-          res.status(400).json({
-            error: "Invalid x-payment header — multiple values are not allowed",
+
+      if (toolName === "analyze_token") {
+        const rawPaymentHeader = req.headers["x-payment"];
+        let paymentHeader: string | undefined;
+        if (Array.isArray(rawPaymentHeader)) {
+          if (rawPaymentHeader.length !== 1) {
+            res.status(400).json({
+              error: "Invalid x-payment header — multiple values are not allowed",
+            });
+            return;
+          }
+          paymentHeader = rawPaymentHeader[0];
+        } else {
+          paymentHeader = rawPaymentHeader;
+        }
+
+        if (!paymentHeader) {
+          res.status(402).json({
+            x402Version: 1,
+            error: "Payment required",
+            accepts: paymentRequirements,
           });
           return;
         }
-        paymentHeader = rawPaymentHeader[0];
-      } else {
-        paymentHeader = rawPaymentHeader;
-      }
 
-      if (!paymentHeader) {
-        res.status(402).json({
-          x402Version: 1,
-          error: "Payment required",
-          accepts: paymentRequirements,
-        });
-        return;
-      }
-
-      const settled = await settlePayment(paymentHeader, paymentRequirements[0]);
-      if (!settled) {
-        res.status(402).json({
-          x402Version: 1,
-          error: "Payment settlement failed — invalid or already-used payment",
-          accepts: paymentRequirements,
-        });
-        return;
+        const settled = await settlePayment(paymentHeader, paymentRequirements[0]);
+        if (!settled) {
+          res.status(402).json({
+            x402Version: 1,
+            error: "Payment settlement failed — invalid or already-used payment",
+            accepts: paymentRequirements,
+          });
+          return;
+        }
       }
     }
 
