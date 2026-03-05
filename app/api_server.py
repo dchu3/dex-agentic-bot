@@ -45,10 +45,14 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
     )
 
     logger.info("Analysis server ready")
-    yield
-
-    if _mcp_manager:
-        await _mcp_manager.shutdown()
+    try:
+        yield
+    finally:
+        mcp_manager = _mcp_manager
+        _token_analyzer = None
+        _mcp_manager = None
+        if mcp_manager:
+            await mcp_manager.shutdown()
 
 
 app = FastAPI(title="DEX Analysis API", lifespan=lifespan)

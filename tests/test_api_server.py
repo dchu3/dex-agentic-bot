@@ -1,5 +1,6 @@
 """Tests for FastAPI analysis server endpoints."""
 
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
@@ -10,11 +11,17 @@ import app.api_server as api_server
 from app.token_analyzer import AnalysisReport, TokenData
 
 
+@asynccontextmanager
+async def _noop_lifespan(_app):
+    yield
+
+
 @pytest.fixture(autouse=True)
 def reset_server_state(monkeypatch):
     """Reset module-level state so tests do not depend on app lifespan startup."""
     monkeypatch.setattr(api_server, "_token_analyzer", None)
     monkeypatch.setattr(api_server, "_mcp_manager", None)
+    monkeypatch.setattr(api_server.app.router, "lifespan_context", _noop_lifespan)
 
 
 @pytest.mark.asyncio

@@ -37,10 +37,12 @@ export interface PaymentRequirements {
 }
 
 function formatUsdFromMicrounits(amountMicrounits: bigint): string {
-  const cents = (amountMicrounits + 5_000n) / 10_000n;
-  const dollars = cents / 100n;
-  const centPart = (cents % 100n).toString().padStart(2, "0");
-  return `${dollars.toString()}.${centPart}`;
+  const dollars = amountMicrounits / 1_000_000n;
+  const micros = (amountMicrounits % 1_000_000n).toString().padStart(6, "0");
+  const microsTrimmed = micros.replace(/0+$/, "");
+  return microsTrimmed.length > 0
+    ? `${dollars.toString()}.${microsTrimmed}`
+    : dollars.toString();
 }
 
 function toUsdcMicrounits(priceStr: string): bigint {
@@ -61,7 +63,7 @@ function toUsdcMicrounits(priceStr: string): bigint {
 export function buildPaymentRequirements(): PaymentRequirements[] {
   const walletAddress = process.env.SERVER_WALLET_ADDRESS;
   if (!walletAddress) {
-    throw new Error("SERVER_WALLET_ADDRESS must be set in .env");
+    throw new Error("SERVER_WALLET_ADDRESS must be set");
   }
 
   const priceInput = process.env.SERVER_PRICE_ANALYZE ?? "0.50";

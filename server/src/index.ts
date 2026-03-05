@@ -175,7 +175,19 @@ app.post(
         });
         return;
       }
-      const paymentHeader = req.headers["x-payment"] as string | undefined;
+      const rawPaymentHeader = req.headers["x-payment"];
+      let paymentHeader: string | undefined;
+      if (Array.isArray(rawPaymentHeader)) {
+        if (rawPaymentHeader.length !== 1) {
+          res.status(400).json({
+            error: "Invalid x-payment header — multiple values are not allowed",
+          });
+          return;
+        }
+        paymentHeader = rawPaymentHeader[0];
+      } else {
+        paymentHeader = rawPaymentHeader;
+      }
 
       if (!paymentHeader) {
         res.status(402).json({
