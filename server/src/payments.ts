@@ -44,6 +44,9 @@ export function buildPaymentRequirements(): PaymentRequirements[] {
   }
 
   const priceUsd = parseFloat(process.env.SERVER_PRICE_ANALYZE ?? "0.50");
+  if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
+    throw new Error("SERVER_PRICE_ANALYZE must be a positive number");
+  }
   // USDC has 6 decimal places: $0.50 → 500_000 raw units
   const amountRaw = Math.round(priceUsd * 1_000_000).toString();
 

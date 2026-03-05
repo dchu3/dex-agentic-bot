@@ -47,31 +47,53 @@ function makeMcpServer(): McpServer {
         ),
     },
     async ({ address, chain }) => {
-      const res = await fetch(`${PYTHON_API_URL}/analyze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address, chain: chain ?? null }),
-      });
-
-      const data = (await res.json()) as Record<string, unknown>;
-
-      if (!res.ok) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      try {
+        const res = await fetch(`${PYTHON_API_URL}/analyze`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address, chain: chain ?? null }),
+          signal: controller.signal,
+        });
+        let data: Record<string, unknown> = {};
+        try {
+          data = (await res.json()) as Record<string, unknown>;
+        } catch {
+          data = {};
+        }
+        if (!res.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Analysis error: ${String(data["detail"] ?? "unknown error")}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        const report =
+          String(data["telegram_message"] ?? data["ai_analysis"] ?? "").trim() ||
+          "No report generated.";
+        return { content: [{ type: "text", text: report }] };
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error && error.name === "AbortError"
+            ? "Analysis request timed out. Please try again later."
+            : "Analysis service request failed. Please try again later.";
         return {
           content: [
             {
               type: "text",
-              text: `Analysis error: ${String(data["detail"] ?? "unknown error")}`,
+              text: message,
             },
           ],
           isError: true,
         };
+      } finally {
+        clearTimeout(timeoutId);
       }
-
-      const report =
-        String(data["telegram_message"] ?? data["ai_analysis"] ?? "").trim() ||
-        "No report generated.";
-
-      return { content: [{ type: "text", text: report }] };
     }
   );
 

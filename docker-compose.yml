@@ -19,7 +19,7 @@ services:
 
   api-service:
     build: .
-    command: ["python", "-m", "app", "--http-api"]
+    command: ["--http-api"]
     env_file:
       - .env
     environment:

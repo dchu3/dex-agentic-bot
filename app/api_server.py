@@ -78,11 +78,15 @@ async def analyze_token(request: AnalyzeRequest) -> AnalyzeResponse:
     if not address:
         raise HTTPException(status_code=400, detail="address is required")
 
+    normalized_chain = request.chain.strip() if request.chain is not None else None
+    if normalized_chain == "":
+        normalized_chain = None
+
     try:
-        report: AnalysisReport = await _token_analyzer.analyze(address, request.chain)
+        report: AnalysisReport = await _token_analyzer.analyze(address, normalized_chain)
     except Exception as exc:
         logger.exception("Analysis failed for %s", address)
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Analysis failed due to an internal error") from exc
 
     return AnalyzeResponse(
         address=report.token_data.address,

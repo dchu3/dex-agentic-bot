@@ -727,7 +727,9 @@ Examples:
     # Run HTTP API server and return early
     if args.http_api:
         import uvicorn
-        uvicorn.run("app.api_server:app", host="0.0.0.0", port=8080, log_level="info")
+        config = uvicorn.Config("app.api_server:app", host="0.0.0.0", port=8080, log_level="info")
+        server = uvicorn.Server(config)
+        await server.serve()
         return
 
     # Validate arguments
