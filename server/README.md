@@ -26,6 +26,8 @@ SERVER_WALLET_ADDRESS=YourSolanaWalletAddress   # receives USDC
 SERVER_PORT=4022
 SERVER_SOLANA_NETWORK=solana                    # or solana-devnet for testing
 SERVER_PRICE_ANALYZE=0.50                       # USD amount charged per call
+SERVER_ANALYZE_TIMEOUT_MS=30000                 # Python API timeout
+SERVER_SETTLE_TIMEOUT_MS=10000                  # x402 facilitator timeout
 ```
 
 ### Run with Docker Compose

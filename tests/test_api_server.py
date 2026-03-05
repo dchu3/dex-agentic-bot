@@ -28,6 +28,28 @@ async def test_analyze_returns_503_when_service_not_ready():
 
 
 @pytest.mark.asyncio
+async def test_health_returns_not_ready_by_default():
+    transport = ASGITransport(app=api_server.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "ready": False}
+
+
+@pytest.mark.asyncio
+async def test_health_returns_ready_when_analyzer_set(monkeypatch):
+    monkeypatch.setattr(api_server, "_token_analyzer", MagicMock())
+
+    transport = ASGITransport(app=api_server.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "ready": True}
+
+
+@pytest.mark.asyncio
 async def test_analyze_returns_400_for_blank_address(monkeypatch):
     mock_analyzer = MagicMock()
     mock_analyzer.analyze = AsyncMock()

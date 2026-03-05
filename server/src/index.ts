@@ -27,6 +27,31 @@ import {
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8080";
 const SERVER_PORT = parseInt(process.env.SERVER_PORT ?? "4022", 10);
+const ANALYZE_TIMEOUT_MS = parseTimeoutMs(
+  process.env.SERVER_ANALYZE_TIMEOUT_MS,
+  30000,
+  "SERVER_ANALYZE_TIMEOUT_MS"
+);
+const SETTLE_TIMEOUT_MS = parseTimeoutMs(
+  process.env.SERVER_SETTLE_TIMEOUT_MS,
+  10000,
+  "SERVER_SETTLE_TIMEOUT_MS"
+);
+
+function parseTimeoutMs(
+  rawValue: string | undefined,
+  defaultValue: number,
+  envName: string
+): number {
+  if (rawValue === undefined || rawValue.trim() === "") {
+    return defaultValue;
+  }
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${envName} must be a positive integer`);
+  }
+  return parsed;
+}
 
 /** Create a fresh McpServer for each stateless request. */
 function makeMcpServer(): McpServer {
@@ -48,7 +73,7 @@ function makeMcpServer(): McpServer {
     },
     async ({ address, chain }) => {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), ANALYZE_TIMEOUT_MS);
       try {
         const res = await fetch(`${PYTHON_API_URL}/analyze`, {
           method: "POST",
@@ -105,6 +130,8 @@ async function settlePayment(
   paymentHeader: string,
   requirements: PaymentRequirements
 ): Promise<boolean> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), SETTLE_TIMEOUT_MS);
   try {
     const res = await fetch(`${FACILITATOR_URL}/settle`, {
       method: "POST",
@@ -113,6 +140,7 @@ async function settlePayment(
         paymentPayload: paymentHeader,
         paymentRequirements: requirements,
       }),
+      signal: controller.signal,
     });
 
     if (!res.ok) return false;
@@ -121,6 +149,8 @@ async function settlePayment(
     return body["success"] === true;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

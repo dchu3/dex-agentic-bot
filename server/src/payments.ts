@@ -36,6 +36,20 @@ export interface PaymentRequirements {
   extra: null;
 }
 
+function toUsdcMicrounits(priceStr: string): bigint {
+  const normalized = priceStr.trim();
+  if (!/^\d+(\.\d{1,6})?$/.test(normalized)) {
+    throw new Error("SERVER_PRICE_ANALYZE must be a positive number");
+  }
+  const [whole, fractional = ""] = normalized.split(".");
+  const fractionalPadded = (fractional + "000000").slice(0, 6);
+  const amount = BigInt(whole) * 1_000_000n + BigInt(fractionalPadded);
+  if (amount <= 0n) {
+    throw new Error("SERVER_PRICE_ANALYZE must be a positive number");
+  }
+  return amount;
+}
+
 /** Build payment requirements from environment variables. */
 export function buildPaymentRequirements(): PaymentRequirements[] {
   const walletAddress = process.env.SERVER_WALLET_ADDRESS;
@@ -43,12 +57,11 @@ export function buildPaymentRequirements(): PaymentRequirements[] {
     throw new Error("SERVER_WALLET_ADDRESS must be set in .env");
   }
 
-  const priceUsd = parseFloat(process.env.SERVER_PRICE_ANALYZE ?? "0.50");
-  if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
-    throw new Error("SERVER_PRICE_ANALYZE must be a positive number");
-  }
+  const priceInput = process.env.SERVER_PRICE_ANALYZE ?? "0.50";
+  const amountMicrounits = toUsdcMicrounits(priceInput);
+  const priceUsd = Number(amountMicrounits) / 1_000_000;
   // USDC has 6 decimal places: $0.50 → 500_000 raw units
-  const amountRaw = Math.round(priceUsd * 1_000_000).toString();
+  const amountRaw = amountMicrounits.toString();
 
   const network = process.env.SERVER_SOLANA_NETWORK ?? "solana";
   const isDevnet = network.includes("devnet");
