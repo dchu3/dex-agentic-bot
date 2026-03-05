@@ -708,6 +708,11 @@ Examples:
         action="store_true",
         help="Run portfolio strategy in live mode (overrides dry-run setting)",
     )
+    parser.add_argument(
+        "--http-api",
+        action="store_true",
+        help="Run the HTTP analysis API server (port 8080) instead of interactive bot",
+    )
 
     args = parser.parse_args()
 
@@ -718,6 +723,14 @@ Examples:
         output_format = OutputFormat.TABLE
 
     output = CLIOutput(format=output_format, verbose=args.verbose)
+
+    # Run HTTP API server and return early
+    if args.http_api:
+        import uvicorn
+        config = uvicorn.Config("app.api_server:app", host="0.0.0.0", port=8080, log_level="info")
+        server = uvicorn.Server(config)
+        await server.serve()
+        return
 
     # Validate arguments
     if not args.interactive and not args.query and not args.stdin and not args.telegram_only:

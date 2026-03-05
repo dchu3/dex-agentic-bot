@@ -221,3 +221,7 @@ __marimo__/
 *.swp
 *.swo
 *~
+
+# Server build artifacts
+server/node_modules/
+server/dist/
