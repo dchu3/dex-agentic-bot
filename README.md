@@ -246,34 +246,89 @@ Observability features for evaluating the discovery pipeline alongside normal tr
 
 ### Example Report
 
+The Telegram/CLI bot shows a human-readable report:
+
 ```
 🔍 Token Analysis Report
-
-Token: PEPE
-Chain: Ethereum
+Token: PEPE | Chain: Ethereum
 Address: 0x6982508145454Ce325dDbE47a25d4ec3d2311933
 
-━━━ 💰 Price & Market ━━━
-Price: $0.00001234
-24h Change: 🟢 +5.2%
-Market Cap: $5.2B
-Volume 24h: $234M
+💰 Price: $0.00001234 (🟢 +5.20%)
+📊 MCap: $5.20B | Vol 24h: $234M | Liq: $45.2M
+💧 Top Pool: uniswap ($23.0M)
+🛡️ Safety: ✅ Safe
+   Risk Score: 0.0/10 (low)
 
-━━━ 💧 Liquidity ━━━
-Total: $45.2M
-Top Pool: Uniswap V3 ($23M)
+✅ Strengths: deep liquidity, clean contract, no tax mechanisms
+⚠️ Risks: meme volatility, retail-driven momentum
 
-━━━ 🛡️ Safety Check ━━━
-Status: ✅ Safe
-Buy Tax: 0%
-Sell Tax: 0%
-
-━━━ 🤖 AI Analysis ━━━
-This token shows healthy trading characteristics with
-deep liquidity and no concerning tax mechanisms...
+🎯 Verdict: BUY (medium confidence)
+   Solid blue-chip meme with deep liquidity and no red flags.
 
 ⏰ 2026-02-03 16:30 UTC
 ```
+
+### x402 Paid Analysis API
+
+The x402 MCP endpoint (`POST /mcp`) returns a structured JSON report designed for agent consumption. Each call costs **$0.75 USDC** via the [x402 protocol](https://x402.org).
+
+**Tool:** `analyze_token(address, chain?)`
+
+**Example response:**
+
+```json
+{
+  "token": "PEPE",
+  "chain": "ethereum",
+  "address": "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+  "timestamp": "2026-03-09T08:07:00Z",
+  "price_data": {
+    "price_usd": 0.00001234,
+    "change_24h_percent": 5.2,
+    "market_cap_usd": 5200000000,
+    "volume_24h_usd": 234000000,
+    "fdv_usd": 5200000000
+  },
+  "liquidity": {
+    "total_usd": 45200000,
+    "top_pool": "uniswap",
+    "top_pool_liquidity_usd": 23000000
+  },
+  "safety": {
+    "status": "safe",
+    "risk_score": 0.0,
+    "risk_level": "low",
+    "flags": []
+  },
+  "holder_snapshot": {
+    "top_10_holders_percent": 12.3,
+    "concentration_risk": "low"
+  },
+  "ai_analysis": {
+    "key_strengths": ["deep liquidity", "clean contract", "no tax mechanisms"],
+    "key_risks": ["meme volatility", "retail-driven momentum"],
+    "whale_signal": "none detected",
+    "narrative_momentum": "positive"
+  },
+  "verdict": {
+    "action": "buy",
+    "confidence": "medium",
+    "one_sentence": "Solid blue-chip meme with deep liquidity and no red flags."
+  },
+  "human_readable": "🔍 Token Analysis Report\n..."
+}
+```
+
+**Environment variables for the x402 server:**
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SERVER_WALLET_ADDRESS` | ✅ | — | Solana wallet to receive USDC payments |
+| `SERVER_PRICE_ANALYZE` | ❌ | `0.75` | Price per analysis in USDC |
+| `SERVER_SOLANA_NETWORK` | ❌ | `solana` | `solana` (mainnet) or `solana-devnet` |
+| `X402_FACILITATOR_URL` | ❌ | `https://x402.org/facilitator` | x402 payment facilitator |
+| `PYTHON_API_URL` | ❌ | `http://localhost:8080` | Internal analysis service URL |
+| `SERVER_PORT` | ❌ | `4022` | MCP server listen port |
 
 ## CLI Options
 

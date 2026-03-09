@@ -54,14 +54,16 @@ function parseTimeoutMs(
 }
 
 /** Create a fresh McpServer for each stateless request. */
-function makeMcpServer(): McpServer {
+function makeMcpServer(priceDescription: string): McpServer {
   const server = new McpServer({ name: "dex-analysis", version: "1.0.0" });
 
   server.tool(
     "analyze_token",
     "Full AI-powered token safety and market analysis using Gemini. " +
-      "Returns safety verdict, market metrics, and a detailed AI report. " +
-      "Costs USDC per call (x402 protocol).",
+      "Returns a structured JSON report with price_data, liquidity, safety, " +
+      "holder_snapshot, ai_analysis (key_strengths, key_risks, whale_signal, " +
+      "narrative_momentum), verdict (action, confidence, one_sentence), and " +
+      `human_readable summary. ${priceDescription} (x402 protocol).`,
     {
       address: z.string().describe("Token contract address"),
       chain: z
@@ -98,10 +100,9 @@ function makeMcpServer(): McpServer {
             isError: true,
           };
         }
-        const report =
-          String(data["telegram_message"] ?? data["ai_analysis"] ?? "").trim() ||
-          "No report generated.";
-        return { content: [{ type: "text", text: report }] };
+        return {
+          content: [{ type: "text", text: JSON.stringify(data) }],
+        };
       } catch (error: unknown) {
         const message =
           error instanceof Error && error.name === "AbortError"
@@ -155,6 +156,7 @@ async function settlePayment(
 }
 
 const paymentRequirements = buildPaymentRequirements();
+const analyzePrice = paymentRequirements[0]?.description ?? "USDC per call";
 const app = express();
 
 app.post(
@@ -162,6 +164,14 @@ app.post(
   express.json({ limit: "1mb" }),
   async (req: Request, res: Response): Promise<void> => {
     const body = req.body as Record<string, unknown>;
+
+    // Reject JSON-RPC batch requests — the MCP SDK processes arrays natively,
+    // which would bypass per-method payment enforcement below.
+    if (Array.isArray(body)) {
+      res.status(400).json({ error: "Batch requests are not supported" });
+      return;
+    }
+
     const method = body?.["method"] as string | undefined;
 
     // Only enforce x402 payment for the paid analyze_token tool.
@@ -208,7 +218,7 @@ app.post(
     }
 
     // Dispatch through a fresh stateless MCP server instance
-    const server = makeMcpServer();
+    const server = makeMcpServer(analyzePrice);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // Stateless: no session state
     });
