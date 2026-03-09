@@ -164,6 +164,14 @@ app.post(
   express.json({ limit: "1mb" }),
   async (req: Request, res: Response): Promise<void> => {
     const body = req.body as Record<string, unknown>;
+
+    // Reject JSON-RPC batch requests — the MCP SDK processes arrays natively,
+    // which would bypass per-method payment enforcement below.
+    if (Array.isArray(body)) {
+      res.status(400).json({ error: "Batch requests are not supported" });
+      return;
+    }
+
     const method = body?.["method"] as string | undefined;
 
     // Only enforce x402 payment for the paid analyze_token tool.

@@ -616,7 +616,7 @@ class TokenAnalyzer:
     
     def _parse_rugcheck_score(self, result: Dict[str, Any], token_data: TokenData) -> None:
         """Parse rugcheck score, set safety status, and extract enriched fields."""
-        score = result.get("score_normalised", result.get("score", 0))
+        score = result.get("score_normalised", result.get("score"))
         risks = result.get("risks", [])
         
         # Extract LP locked percentage
@@ -625,8 +625,13 @@ class TokenAnalyzer:
             token_data.lp_locked_pct = self._safe_float(lp_locked)
         
         # Normalize score to 0-10 scale (rugcheck: 0-10000, lower is better)
-        score = self._safe_float(score) or 0
-        normalized = min(10.0, score / 1000.0) if score else 0
+        score = self._safe_float(score)
+        if score is None:
+            # No score in response — cannot assess safety
+            token_data.safety_status = "Unverified"
+            token_data.risk_level = "medium"
+            return
+        normalized = min(10.0, score / 1000.0)
         token_data.risk_score = round(normalized, 1)
         
         # Collect safety flags from risks
@@ -637,11 +642,14 @@ class TokenAnalyzer:
                 risk_name = str(risk)
             token_data.safety_flags.append(risk_name)
         
-        # Score interpretation: lower is better (fewer risks)
+        # Score interpretation: lower is better (fewer risks).
+        # Classification is purely score-driven to keep risk_score and
+        # risk_level consistent — high score always means high risk regardless
+        # of how many named risk flags the API returned.
         if score <= 500 and not risks:
             token_data.safety_status = "Safe"
             token_data.risk_level = "low"
-        elif score <= 2000 or len(risks) <= 2:
+        elif score <= 2000:
             token_data.safety_status = "Risky"
             token_data.risk_level = "medium"
         else:
@@ -750,7 +758,10 @@ class TokenAnalyzer:
             except (InvalidOperation, OverflowError):
                 pass
 
-        return float(raw_int)
+        # Cannot determine UI units without decimals — return None rather than
+        # silently returning raw base-unit amount, which would mix units in any
+        # subsequent percentage computation (e.g. raw/UI or UI/raw → off by 10^decimals).
+        return None
 
     def _extract_supply(self, supply_result: Any) -> Optional[float]:
         """Extract total supply from getTokenSupply response."""
@@ -798,7 +809,7 @@ class TokenAnalyzer:
                     for item in items[:10]:
                         if isinstance(item, dict):
                             pct = self._safe_float(item.get("percentage"))
-                            if pct is not None:
+                            if pct:
                                 holder_list.append({"pct": pct})
                     if holder_list:
                         self._compute_holder_concentration(holder_list, token_data)

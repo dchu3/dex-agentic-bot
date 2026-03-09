@@ -194,6 +194,33 @@ class TestTokenAnalyzer:
 
         assert supply == 1234.5
 
+    def test_extract_solana_ui_amount_returns_none_when_decimals_absent(self, mock_mcp_manager):
+        """Should return None (not raw int) when decimals field is missing."""
+        with patch("app.token_analyzer.genai"):
+            analyzer = TokenAnalyzer(api_key="test-key", mcp_manager=mock_mcp_manager)
+
+        # amount present but no decimals and no uiAmount — unit is ambiguous
+        result = analyzer._extract_solana_ui_amount({
+            "amount": "5000000000",
+            "uiAmount": None,
+            "uiAmountString": None,
+        })
+        assert result is None
+
+    def test_extract_supply_returns_none_when_decimals_absent(self, mock_mcp_manager):
+        """Supply should be None when decimals are missing, preventing unit mixing."""
+        with patch("app.token_analyzer.genai"):
+            analyzer = TokenAnalyzer(api_key="test-key", mcp_manager=mock_mcp_manager)
+
+        supply = analyzer._extract_supply({
+            "value": {
+                "amount": "5000000000",
+                "uiAmount": None,
+                "uiAmountString": None,
+            }
+        })
+        assert supply is None
+
     @pytest.mark.asyncio
     async def test_solana_holder_fallback_uses_consistent_ui_units(self, mock_mcp_manager):
         """Largest-account fallback should normalize raw amounts before pct math."""
@@ -711,6 +738,30 @@ class TestRugcheckResultHandling:
         assert token_data.safety_status == "Dangerous"
 
     @pytest.mark.asyncio
+    async def test_high_score_few_risks_is_dangerous(self, analyzer_with_rugcheck):
+        """High rugcheck score must be Dangerous even with only 1 named risk flag."""
+        analyzer, rugcheck = analyzer_with_rugcheck
+        rugcheck.call_tool = AsyncMock(return_value={
+            "score_normalised": 9000,
+            "risks": [{"name": "single_risk"}],
+        })
+        token_data = TokenData(address="So1ana", chain="solana")
+        await analyzer._fetch_rugcheck_data("So1ana", token_data)
+        assert token_data.safety_status == "Dangerous"
+        assert token_data.risk_level == "high"
+        assert token_data.risk_score == 9.0
+
+    @pytest.mark.asyncio
+    async def test_missing_score_is_unverified(self, analyzer_with_rugcheck):
+        """Missing score field must not default to Safe."""
+        analyzer, rugcheck = analyzer_with_rugcheck
+        rugcheck.call_tool = AsyncMock(return_value={"risks": []})
+        token_data = TokenData(address="So1ana", chain="solana")
+        await analyzer._fetch_rugcheck_data("So1ana", token_data)
+        assert token_data.safety_status == "Unverified"
+        assert token_data.risk_level == "medium"
+
+    @pytest.mark.asyncio
     async def test_list_result_unwrapped(self, analyzer_with_rugcheck):
         """Test list result is unwrapped and parsed correctly."""
         analyzer, rugcheck = analyzer_with_rugcheck
@@ -840,6 +891,19 @@ class TestEVMHolderConcentration:
         """Empty items leaves holder data unset."""
         analyzer, blockscout = analyzer_with_blockscout
         blockscout.call_tool = AsyncMock(return_value={"items": []})
+        token_data = TokenData(address="0xABC", chain="ethereum")
+        await analyzer._fetch_holder_data_evm("0xABC", "ethereum", token_data)
+
+        assert token_data.top_10_holders_pct is None
+        assert token_data.holder_concentration_risk is None
+
+    @pytest.mark.asyncio
+    async def test_zero_percentage_items_no_concentration(self, analyzer_with_blockscout):
+        """All-zero percentage items must not produce a phantom 0.0% low-risk snapshot."""
+        analyzer, blockscout = analyzer_with_blockscout
+        blockscout.call_tool = AsyncMock(return_value={
+            "items": [{"percentage": 0.0}, {"percentage": 0.0}]
+        })
         token_data = TokenData(address="0xABC", chain="ethereum")
         await analyzer._fetch_holder_data_evm("0xABC", "ethereum", token_data)
 
