@@ -10,6 +10,7 @@ from app.token_analyzer import (
     AnalysisReport,
     detect_chain,
     is_valid_token_address,
+    normalize_chain_identifier,
     EVM_ADDRESS_PATTERN,
     SOLANA_ADDRESS_PATTERN,
 )
@@ -58,6 +59,14 @@ class TestAddressDetection:
         assert not is_valid_token_address("not_an_address")
         assert not is_valid_token_address("")
         assert not is_valid_token_address("search for PEPE")
+
+    def test_normalize_chain_identifier(self):
+        """Test chain alias normalization."""
+        assert normalize_chain_identifier(" ETH ") == "ethereum"
+        assert normalize_chain_identifier("Ethereum") == "ethereum"
+        assert normalize_chain_identifier(" SOL ") == "solana"
+        assert normalize_chain_identifier("Binance Smart Chain") == "bsc"
+        assert normalize_chain_identifier("  ") is None
 
 
 class TestTokenData:
@@ -333,6 +342,91 @@ class TestTokenAnalyzer:
             assert report.token_data.safety_status == "Safe"
             assert report.structured is not None
             assert report.structured.chain == "solana"
+
+    @pytest.mark.asyncio
+    async def test_analyze_normalizes_chain_alias(self, mock_mcp_manager):
+        """Explicit chain input should be normalized before routing."""
+        with patch("app.token_analyzer.genai") as mock_genai:
+            structured_response = MagicMock()
+            structured_candidate = MagicMock()
+            structured_content = MagicMock()
+            structured_part = MagicMock()
+            structured_part.text = json.dumps({
+                "key_strengths": [],
+                "key_risks": [],
+                "whale_signal": "unknown",
+                "narrative_momentum": "neutral",
+                "action": "hold",
+                "confidence": "low",
+                "one_sentence": "Analysis complete.",
+            })
+            structured_content.parts = [structured_part]
+            structured_candidate.content = structured_content
+            structured_response.candidates = [structured_candidate]
+
+            text_response = MagicMock()
+            text_candidate = MagicMock()
+            text_content = MagicMock()
+            text_part = MagicMock()
+            text_part.text = "Analysis complete."
+            text_content.parts = [text_part]
+            text_candidate.content = text_content
+            text_response.candidates = [text_candidate]
+
+            mock_client = MagicMock()
+            mock_client.models.generate_content = MagicMock(
+                side_effect=[structured_response, text_response]
+            )
+            mock_genai.Client.return_value = mock_client
+
+            analyzer = TokenAnalyzer(api_key="test-key", mcp_manager=mock_mcp_manager)
+            report = await analyzer.analyze(
+                "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+                " ETH ",
+            )
+
+            assert report.token_data.chain == "ethereum"
+
+    @pytest.mark.asyncio
+    async def test_analyze_structured_only_skips_legacy_generation(self, mock_mcp_manager):
+        """Structured-only mode should skip legacy Gemini calls and formatting work."""
+        with patch("app.token_analyzer.genai") as mock_genai:
+            structured_response = MagicMock()
+            structured_candidate = MagicMock()
+            structured_content = MagicMock()
+            structured_part = MagicMock()
+            structured_part.text = json.dumps({
+                "key_strengths": ["good liquidity"],
+                "key_risks": ["meme volatility"],
+                "whale_signal": "none detected",
+                "narrative_momentum": "positive",
+                "action": "buy",
+                "confidence": "medium",
+                "one_sentence": "Solid token for structured consumers.",
+            })
+            structured_content.parts = [structured_part]
+            structured_candidate.content = structured_content
+            structured_response.candidates = [structured_candidate]
+
+            mock_client = MagicMock()
+            mock_client.models.generate_content = MagicMock(
+                side_effect=[structured_response]
+            )
+            mock_genai.Client.return_value = mock_client
+
+            analyzer = TokenAnalyzer(api_key="test-key", mcp_manager=mock_mcp_manager)
+            report = await analyzer.analyze(
+                "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+                "ethereum",
+                structured=True,
+                legacy_output=False,
+            )
+
+            assert report.structured is not None
+            assert report.ai_analysis == ""
+            assert report.telegram_message == report.structured.human_readable
+            assert report.tweet_message == "Solid token for structured consumers."
+            assert mock_client.models.generate_content.call_count == 1
 
     @pytest.mark.asyncio
     async def test_analyze_auto_detect_chain(self, mock_mcp_manager):

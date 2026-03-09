@@ -133,6 +133,30 @@ def detect_chain(address: str) -> Optional[str]:
     return None
 
 
+def normalize_chain_identifier(chain: Optional[str]) -> Optional[str]:
+    """Normalize chain aliases into canonical internal identifiers."""
+    if chain is None:
+        return None
+
+    normalized = chain.strip().lower()
+    if not normalized:
+        return None
+
+    aliases = {
+        "eth": "ethereum",
+        "ethereum": "ethereum",
+        "sol": "solana",
+        "solana": "solana",
+        "bsc": "bsc",
+        "bnb": "bsc",
+        "binance": "bsc",
+        "binance-smart-chain": "bsc",
+        "binance smart chain": "bsc",
+        "base": "base",
+    }
+    return aliases.get(normalized, normalized)
+
+
 def is_valid_token_address(text: str) -> bool:
     """Check if text looks like a valid token address.
     
@@ -224,7 +248,14 @@ class TokenAnalyzer:
         if self.verbose and self.log_callback:
             self.log_callback(level, message, data)
 
-    async def analyze(self, address: str, chain: Optional[str] = None, *, structured: bool = True) -> AnalysisReport:
+    async def analyze(
+        self,
+        address: str,
+        chain: Optional[str] = None,
+        *,
+        structured: bool = True,
+        legacy_output: bool = True,
+    ) -> AnalysisReport:
         """Analyze a token and generate a comprehensive report.
         
         Args:
@@ -233,10 +264,15 @@ class TokenAnalyzer:
             structured: If True, generate structured JSON analysis for x402
                 consumers. If False, skip the extra Gemini call to reduce
                 latency/cost (e.g. for Telegram bot callers).
+            legacy_output: If True, generate the free-text/tweet summaries
+                used by Telegram and CLI callers. If False, skip those extra
+                Gemini calls and return only structured output.
             
         Returns:
             Complete analysis report with AI insights
         """
+        chain = normalize_chain_identifier(chain)
+
         # Auto-detect chain if not provided
         if not chain:
             chain = detect_chain(address)
@@ -256,20 +292,6 @@ class TokenAnalyzer:
         if structured:
             # Generate structured AI analysis (JSON mode) — includes verdict
             ai_structured, verdict = await self._generate_structured_ai_analysis(token_data)
-        
-        # Generate legacy free-text AI analysis (for telegram_message)
-        ai_analysis = await self._generate_ai_analysis(token_data)
-        
-        # Reuse structured verdict for tweet when available, otherwise call Gemini
-        if verdict and verdict.one_sentence and verdict.one_sentence != "Insufficient data for analysis.":
-            tweet_verdict = verdict.one_sentence[:100]
-        else:
-            tweet_verdict = await self._generate_tweet_verdict(token_data)
-        
-        # Format as Telegram messages
-        telegram_message = self._format_telegram_report(token_data, ai_analysis)
-        tweet_message = self._format_tweet_report(token_data, tweet_verdict)
-        
         generated_at = datetime.now(timezone.utc)
         
         # Build the structured report (only when requested)
@@ -277,6 +299,24 @@ class TokenAnalyzer:
             structured_report = self._build_structured_report(
                 token_data, ai_structured, verdict, generated_at
             )
+
+        if legacy_output:
+            # Generate legacy free-text AI analysis (for telegram_message)
+            ai_analysis = await self._generate_ai_analysis(token_data)
+
+            # Reuse structured verdict for tweet when available, otherwise call Gemini
+            if verdict and verdict.one_sentence and verdict.one_sentence != "Insufficient data for analysis.":
+                tweet_verdict = verdict.one_sentence[:100]
+            else:
+                tweet_verdict = await self._generate_tweet_verdict(token_data)
+
+            # Format as Telegram messages
+            telegram_message = self._format_telegram_report(token_data, ai_analysis)
+            tweet_message = self._format_tweet_report(token_data, tweet_verdict)
+        else:
+            ai_analysis = ""
+            telegram_message = structured_report.human_readable if structured_report else ""
+            tweet_message = verdict.one_sentence[:100] if verdict else ""
         
         return AnalysisReport(
             token_data=token_data,

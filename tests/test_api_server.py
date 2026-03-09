@@ -141,7 +141,7 @@ async def test_analyze_happy_path_returns_structured_response(monkeypatch):
 
     transport = ASGITransport(app=api_server.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/analyze", json={"address": " 0x123 ", "chain": "   "})
+        response = await client.post("/analyze", json={"address": " 0x123 ", "chain": " ETH "})
 
     assert response.status_code == 200
     data = response.json()
@@ -161,7 +161,12 @@ async def test_analyze_happy_path_returns_structured_response(monkeypatch):
     assert data["verdict"]["action"] == "buy"
     assert "human_readable" in data
 
-    mock_analyzer.analyze.assert_awaited_once_with("0x123", None)
+    mock_analyzer.analyze.assert_awaited_once_with(
+        "0x123",
+        "ethereum",
+        structured=True,
+        legacy_output=False,
+    )
 
 
 @pytest.mark.asyncio

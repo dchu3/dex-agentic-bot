@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from app.config import load_settings
 from app.mcp_client import MCPManager
-from app.token_analyzer import TokenAnalyzer, AnalysisReport
+from app.token_analyzer import AnalysisReport, TokenAnalyzer, normalize_chain_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -124,12 +124,15 @@ async def analyze_token(request: AnalyzeRequest) -> AnalyzeResponse:
     if not address:
         raise HTTPException(status_code=400, detail="address is required")
 
-    normalized_chain = request.chain.strip() if request.chain is not None else None
-    if normalized_chain == "":
-        normalized_chain = None
+    normalized_chain = normalize_chain_identifier(request.chain)
 
     try:
-        report: AnalysisReport = await _token_analyzer.analyze(address, normalized_chain)
+        report: AnalysisReport = await _token_analyzer.analyze(
+            address,
+            normalized_chain,
+            structured=True,
+            legacy_output=False,
+        )
     except Exception as exc:
         logger.exception("Analysis failed for %s", address)
         raise HTTPException(status_code=500, detail="Analysis failed due to an internal error") from exc
