@@ -295,7 +295,7 @@ class TelegramNotifier:
             )
             
             # Run analysis
-            report = await self._token_analyzer.analyze(address, chain)
+            report = await self._token_analyzer.analyze(address, chain, structured=False)
             
             # Send tweet summary or full report
             message = report.telegram_message if full else report.tweet_message

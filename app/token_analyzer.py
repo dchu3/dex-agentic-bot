@@ -224,12 +224,15 @@ class TokenAnalyzer:
         if self.verbose and self.log_callback:
             self.log_callback(level, message, data)
 
-    async def analyze(self, address: str, chain: Optional[str] = None) -> AnalysisReport:
+    async def analyze(self, address: str, chain: Optional[str] = None, *, structured: bool = True) -> AnalysisReport:
         """Analyze a token and generate a comprehensive report.
         
         Args:
             address: Token contract address
             chain: Blockchain (auto-detected if not provided)
+            structured: If True, generate structured JSON analysis for x402
+                consumers. If False, skip the extra Gemini call to reduce
+                latency/cost (e.g. for Telegram bot callers).
             
         Returns:
             Complete analysis report with AI insights
@@ -246,14 +249,22 @@ class TokenAnalyzer:
         # Collect data from MCP tools (includes holder data)
         token_data = await self._collect_token_data(address, chain)
         
-        # Generate structured AI analysis (JSON mode)
-        ai_structured, verdict = await self._generate_structured_ai_analysis(token_data)
+        ai_structured = None
+        verdict = None
+        structured_report = None
+
+        if structured:
+            # Generate structured AI analysis (JSON mode) — includes verdict
+            ai_structured, verdict = await self._generate_structured_ai_analysis(token_data)
         
-        # Generate legacy free-text AI analysis (for telegram_message compatibility)
+        # Generate legacy free-text AI analysis (for telegram_message)
         ai_analysis = await self._generate_ai_analysis(token_data)
         
-        # Generate tweet-length AI verdict
-        tweet_verdict = await self._generate_tweet_verdict(token_data)
+        # Reuse structured verdict for tweet when available, otherwise call Gemini
+        if verdict and verdict.one_sentence and verdict.one_sentence != "Insufficient data for analysis.":
+            tweet_verdict = verdict.one_sentence
+        else:
+            tweet_verdict = await self._generate_tweet_verdict(token_data)
         
         # Format as Telegram messages
         telegram_message = self._format_telegram_report(token_data, ai_analysis)
@@ -261,10 +272,11 @@ class TokenAnalyzer:
         
         generated_at = datetime.now(timezone.utc)
         
-        # Build the structured report
-        structured = self._build_structured_report(
-            token_data, ai_structured, verdict, generated_at
-        )
+        # Build the structured report (only when requested)
+        if structured and ai_structured and verdict:
+            structured_report = self._build_structured_report(
+                token_data, ai_structured, verdict, generated_at
+            )
         
         return AnalysisReport(
             token_data=token_data,
@@ -272,7 +284,7 @@ class TokenAnalyzer:
             generated_at=generated_at,
             telegram_message=telegram_message,
             tweet_message=tweet_message,
-            structured=structured,
+            structured=structured_report,
         )
 
     async def _collect_token_data(self, address: str, chain: str) -> TokenData:

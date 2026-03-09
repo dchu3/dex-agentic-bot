@@ -12,8 +12,6 @@ from app.token_analyzer import (
     AnalysisReport,
     TokenData,
     StructuredAnalysisReport,
-    StructuredAIAnalysis,
-    Verdict,
 )
 
 

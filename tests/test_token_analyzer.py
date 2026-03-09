@@ -8,9 +8,6 @@ from app.token_analyzer import (
     TokenAnalyzer,
     TokenData,
     AnalysisReport,
-    StructuredAnalysisReport,
-    StructuredAIAnalysis,
-    Verdict,
     detect_chain,
     is_valid_token_address,
     EVM_ADDRESS_PATTERN,
@@ -205,7 +202,7 @@ class TestTokenAnalyzer:
 
             mock_client = MagicMock()
             mock_client.models.generate_content = MagicMock(
-                side_effect=[structured_response, text_response, text_response]
+                side_effect=[structured_response, text_response]
             )
             mock_genai.Client.return_value = mock_client
             
@@ -261,7 +258,7 @@ class TestTokenAnalyzer:
 
             mock_client = MagicMock()
             mock_client.models.generate_content = MagicMock(
-                side_effect=[structured_response, text_response, text_response]
+                side_effect=[structured_response, text_response]
             )
             mock_genai.Client.return_value = mock_client
             
@@ -310,8 +307,8 @@ class TestTokenAnalyzer:
             
             mock_client = MagicMock()
             mock_client.models.generate_content = MagicMock(
-                side_effect=[structured_response, text_response, text_response,
-                             structured_response, text_response, text_response]
+                side_effect=[structured_response, text_response,
+                             structured_response, text_response]
             )
             mock_genai.Client.return_value = mock_client
             
@@ -363,7 +360,7 @@ class TestTokenAnalyzer:
 
             mock_client = MagicMock()
             mock_client.models.generate_content = MagicMock(
-                side_effect=[structured_response, text_response, text_response]
+                side_effect=[structured_response, text_response]
             )
             mock_genai.Client.return_value = mock_client
 
