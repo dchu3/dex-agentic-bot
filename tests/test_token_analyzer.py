@@ -173,7 +173,7 @@ class TestTokenAnalyzer:
     async def test_analyze_evm_token(self, mock_mcp_manager):
         """Test analyzing an EVM token."""
         with patch("app.token_analyzer.genai") as mock_genai:
-            # Mock Gemini responses: structured JSON, free-text, tweet
+            # Mock Gemini responses: structured JSON + free-text (tweet reuses verdict)
             structured_response = MagicMock()
             structured_candidate = MagicMock()
             structured_content = MagicMock()

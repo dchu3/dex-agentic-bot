@@ -262,7 +262,7 @@ class TokenAnalyzer:
         
         # Reuse structured verdict for tweet when available, otherwise call Gemini
         if verdict and verdict.one_sentence and verdict.one_sentence != "Insufficient data for analysis.":
-            tweet_verdict = verdict.one_sentence
+            tweet_verdict = verdict.one_sentence[:100]
         else:
             tweet_verdict = await self._generate_tweet_verdict(token_data)
         
@@ -417,6 +417,8 @@ class TokenAnalyzer:
             
             # Collect pool info
             for pair in pairs[:5]:  # Top 5 pools
+                if not isinstance(pair, dict):
+                    continue
                 pool_info = {
                     "dex": pair.get("dexId", "Unknown"),
                     "pair": pair.get("pairAddress", ""),
