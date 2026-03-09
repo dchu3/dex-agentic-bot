@@ -7,6 +7,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from google import genai
@@ -272,6 +273,9 @@ class TokenAnalyzer:
             Complete analysis report with AI insights
         """
         chain = normalize_chain_identifier(chain)
+
+        if not structured and not legacy_output:
+            raise ValueError("At least one of structured or legacy_output must be True")
 
         # Auto-detect chain if not provided
         if not chain:
@@ -708,6 +712,7 @@ class TokenAnalyzer:
 
     def _extract_solana_ui_amount(self, value: Dict[str, Any]) -> Optional[float]:
         """Extract a Solana token amount in UI units from RPC response fields."""
+        # Prefer pre-computed decimal string (avoids float precision issues)
         ui_amount_string = value.get("uiAmountString")
         if ui_amount_string not in (None, ""):
             parsed = self._safe_float(ui_amount_string)
@@ -718,12 +723,19 @@ class TokenAnalyzer:
         if ui_amount is not None:
             return ui_amount
 
-        raw_amount = self._safe_float(value.get("amount"))
-        if raw_amount is None:
+        # Fall back to raw amount + decimals using Decimal math to avoid
+        # float mantissa precision loss on large Solana balances/supplies.
+        raw_str = value.get("amount")
+        if raw_str is None:
+            return None
+
+        try:
+            raw_int = int(raw_str) if isinstance(raw_str, str) else int(raw_str)
+        except (ValueError, TypeError):
             return None
 
         decimals_raw = value.get("decimals")
-        decimals = None
+        decimals: Optional[int] = None
         if isinstance(decimals_raw, int):
             decimals = decimals_raw
         else:
@@ -732,9 +744,13 @@ class TokenAnalyzer:
                 decimals = int(decimals_float)
 
         if decimals is not None and decimals >= 0:
-            return raw_amount / (10 ** decimals)
+            try:
+                result = Decimal(raw_int) / Decimal(10 ** decimals)
+                return float(result)
+            except (InvalidOperation, OverflowError):
+                pass
 
-        return raw_amount
+        return float(raw_int)
 
     def _extract_supply(self, supply_result: Any) -> Optional[float]:
         """Extract total supply from getTokenSupply response."""

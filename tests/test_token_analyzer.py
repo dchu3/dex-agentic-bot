@@ -429,6 +429,35 @@ class TestTokenAnalyzer:
             assert mock_client.models.generate_content.call_count == 1
 
     @pytest.mark.asyncio
+    async def test_analyze_raises_when_both_outputs_disabled(self, mock_mcp_manager):
+        """Both structured=False and legacy_output=False should raise ValueError."""
+        with patch("app.token_analyzer.genai"):
+            analyzer = TokenAnalyzer(api_key="test-key", mcp_manager=mock_mcp_manager)
+
+        with pytest.raises(ValueError, match="At least one"):
+            await analyzer.analyze(
+                "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+                "ethereum",
+                structured=False,
+                legacy_output=False,
+            )
+
+    def test_extract_solana_ui_amount_precision(self, mock_mcp_manager):
+        """Decimal math should handle large Solana balances without float precision loss."""
+        with patch("app.token_analyzer.genai"):
+            analyzer = TokenAnalyzer(api_key="test-key", mcp_manager=mock_mcp_manager)
+
+        # 2^53 + 1 cannot be represented exactly as float64
+        large_amount = str(2**53 + 1)
+        result = analyzer._extract_solana_ui_amount({
+            "amount": large_amount,
+            "decimals": 9,
+        })
+        expected = (2**53 + 1) / (10**9)
+        assert result is not None
+        assert abs(result - expected) < 1e-3
+
+    @pytest.mark.asyncio
     async def test_analyze_auto_detect_chain(self, mock_mcp_manager):
         """Test chain auto-detection during analysis."""
         with patch("app.token_analyzer.genai") as mock_genai:
@@ -750,3 +779,83 @@ class TestRugcheckResultHandling:
         await analyzer._fetch_rugcheck_data("So1ana", token_data)
         assert token_data.safety_status == "Unverified"
         assert any("not available" in e.lower() for e in token_data.errors)
+
+
+class TestEVMHolderConcentration:
+    """Tests for _fetch_holder_data_evm via Blockscout."""
+
+    @pytest.fixture
+    def analyzer_with_blockscout(self):
+        """Analyzer with blockscout mock, no other clients."""
+        manager = MagicMock()
+        blockscout = AsyncMock()
+        manager.get_client = lambda name: blockscout if name == "blockscout" else None
+
+        with patch("app.token_analyzer.genai"):
+            analyzer = TokenAnalyzer(api_key="test-key", mcp_manager=manager)
+
+        return analyzer, blockscout
+
+    @pytest.mark.asyncio
+    async def test_low_concentration(self, analyzer_with_blockscout):
+        """<30% total -> concentration_risk='low'."""
+        analyzer, blockscout = analyzer_with_blockscout
+        blockscout.call_tool = AsyncMock(return_value={
+            "items": [{"percentage": 5.0}, {"percentage": 4.5}, {"percentage": 4.0}]
+        })
+        token_data = TokenData(address="0xABC", chain="ethereum")
+        await analyzer._fetch_holder_data_evm("0xABC", "ethereum", token_data)
+
+        assert token_data.top_10_holders_pct == 13.5
+        assert token_data.holder_concentration_risk == "low"
+
+    @pytest.mark.asyncio
+    async def test_medium_concentration(self, analyzer_with_blockscout):
+        """>=30% and <60% total -> concentration_risk='medium'."""
+        analyzer, blockscout = analyzer_with_blockscout
+        blockscout.call_tool = AsyncMock(return_value={
+            "items": [{"percentage": 20.0}, {"percentage": 15.0}, {"percentage": 5.0}]
+        })
+        token_data = TokenData(address="0xABC", chain="ethereum")
+        await analyzer._fetch_holder_data_evm("0xABC", "ethereum", token_data)
+
+        assert token_data.top_10_holders_pct == 40.0
+        assert token_data.holder_concentration_risk == "medium"
+
+    @pytest.mark.asyncio
+    async def test_high_concentration(self, analyzer_with_blockscout):
+        """>=60% total -> concentration_risk='high'."""
+        analyzer, blockscout = analyzer_with_blockscout
+        blockscout.call_tool = AsyncMock(return_value={
+            "items": [{"percentage": 40.0}, {"percentage": 25.0}]
+        })
+        token_data = TokenData(address="0xABC", chain="ethereum")
+        await analyzer._fetch_holder_data_evm("0xABC", "ethereum", token_data)
+
+        assert token_data.top_10_holders_pct == 65.0
+        assert token_data.holder_concentration_risk == "high"
+
+    @pytest.mark.asyncio
+    async def test_empty_items_no_concentration(self, analyzer_with_blockscout):
+        """Empty items leaves holder data unset."""
+        analyzer, blockscout = analyzer_with_blockscout
+        blockscout.call_tool = AsyncMock(return_value={"items": []})
+        token_data = TokenData(address="0xABC", chain="ethereum")
+        await analyzer._fetch_holder_data_evm("0xABC", "ethereum", token_data)
+
+        assert token_data.top_10_holders_pct is None
+        assert token_data.holder_concentration_risk is None
+
+    @pytest.mark.asyncio
+    async def test_no_blockscout_client(self):
+        """Missing blockscout client leaves holder data unset."""
+        manager = MagicMock()
+        manager.get_client = lambda name: None
+
+        with patch("app.token_analyzer.genai"):
+            analyzer = TokenAnalyzer(api_key="test-key", mcp_manager=manager)
+
+        token_data = TokenData(address="0xABC", chain="ethereum")
+        await analyzer._fetch_holder_data_evm("0xABC", "ethereum", token_data)
+
+        assert token_data.top_10_holders_pct is None
