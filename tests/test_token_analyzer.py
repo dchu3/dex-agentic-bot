@@ -169,6 +169,62 @@ class TestTokenAnalyzer:
         assert TokenAnalyzer._safe_float(None) is None
         assert TokenAnalyzer._safe_float("invalid") is None
 
+    def test_extract_supply_uses_amount_and_decimals_when_ui_amount_missing(self, mock_mcp_manager):
+        """Supply extraction should normalize raw amount using decimals."""
+        with patch("app.token_analyzer.genai"):
+            analyzer = TokenAnalyzer(api_key="test-key", mcp_manager=mock_mcp_manager)
+
+        supply = analyzer._extract_supply({
+            "value": {
+                "amount": "1234500000",
+                "decimals": 6,
+                "uiAmount": None,
+                "uiAmountString": None,
+            }
+        })
+
+        assert supply == 1234.5
+
+    @pytest.mark.asyncio
+    async def test_solana_holder_fallback_uses_consistent_ui_units(self, mock_mcp_manager):
+        """Largest-account fallback should normalize raw amounts before pct math."""
+        solana = mock_mcp_manager.get_client("solana")
+        solana.call_tool = AsyncMock(side_effect=[
+            {
+                "value": [
+                    {
+                        "amount": "2500000000",
+                        "decimals": 6,
+                        "uiAmount": None,
+                        "uiAmountString": None,
+                    },
+                    {
+                        "amount": "1000000000",
+                        "decimals": 6,
+                        "uiAmount": None,
+                        "uiAmountString": None,
+                    },
+                ]
+            },
+            {
+                "value": {
+                    "amount": "10000000000",
+                    "decimals": 6,
+                    "uiAmount": None,
+                    "uiAmountString": None,
+                }
+            },
+        ])
+
+        with patch("app.token_analyzer.genai"):
+            analyzer = TokenAnalyzer(api_key="test-key", mcp_manager=mock_mcp_manager)
+
+        token_data = TokenData(address="So11111111111111111111111111111111111111112", chain="solana")
+        await analyzer._fetch_holder_data_solana(token_data.address, token_data)
+
+        assert token_data.top_10_holders_pct == 35.0
+        assert token_data.holder_concentration_risk == "medium"
+
     @pytest.mark.asyncio
     async def test_analyze_evm_token(self, mock_mcp_manager):
         """Test analyzing an EVM token."""

@@ -657,9 +657,7 @@ class TokenAnalyzer:
                         holder_list = []
                         for acc in accounts[:10]:
                             if isinstance(acc, dict):
-                                amount = self._safe_float(
-                                    acc.get("uiAmount", acc.get("amount", 0))
-                                )
+                                amount = self._extract_solana_ui_amount(acc)
                                 if amount:
                                     pct = (amount / total_supply) * 100
                                     holder_list.append({"pct": pct})
@@ -667,6 +665,36 @@ class TokenAnalyzer:
                             self._compute_holder_concentration(holder_list, token_data)
         except Exception as e:
             self._log("error", f"Solana holder data fetch failed: {e}")
+
+    def _extract_solana_ui_amount(self, value: Dict[str, Any]) -> Optional[float]:
+        """Extract a Solana token amount in UI units from RPC response fields."""
+        ui_amount_string = value.get("uiAmountString")
+        if ui_amount_string not in (None, ""):
+            parsed = self._safe_float(ui_amount_string)
+            if parsed is not None:
+                return parsed
+
+        ui_amount = self._safe_float(value.get("uiAmount"))
+        if ui_amount is not None:
+            return ui_amount
+
+        raw_amount = self._safe_float(value.get("amount"))
+        if raw_amount is None:
+            return None
+
+        decimals_raw = value.get("decimals")
+        decimals = None
+        if isinstance(decimals_raw, int):
+            decimals = decimals_raw
+        else:
+            decimals_float = self._safe_float(decimals_raw)
+            if decimals_float is not None and decimals_float.is_integer():
+                decimals = int(decimals_float)
+
+        if decimals is not None and decimals >= 0:
+            return raw_amount / (10 ** decimals)
+
+        return raw_amount
 
     def _extract_supply(self, supply_result: Any) -> Optional[float]:
         """Extract total supply from getTokenSupply response."""
@@ -678,7 +706,7 @@ class TokenAnalyzer:
         if isinstance(supply_result, dict):
             value = supply_result.get("value", {})
             if isinstance(value, dict):
-                return self._safe_float(value.get("uiAmount", value.get("amount")))
+                return self._extract_solana_ui_amount(value)
         return None
 
     async def _fetch_holder_data_evm(
