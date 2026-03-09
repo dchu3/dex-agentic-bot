@@ -1,5 +1,6 @@
 """Tests for token analyzer module."""
 
+import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -7,6 +8,9 @@ from app.token_analyzer import (
     TokenAnalyzer,
     TokenData,
     AnalysisReport,
+    StructuredAnalysisReport,
+    StructuredAIAnalysis,
+    Verdict,
     detect_chain,
     is_valid_token_address,
     EVM_ADDRESS_PATTERN,
@@ -106,6 +110,7 @@ class TestTokenAnalyzer:
                 "marketCap": 5000000000,
                 "dexId": "uniswap",
                 "pairAddress": "0xabc",
+                "pairCreatedAt": "2024-01-01T00:00:00Z",
             }]
         })
         
@@ -121,13 +126,24 @@ class TestTokenAnalyzer:
         rugcheck.call_tool = AsyncMock(return_value={
             "riskLevel": "low",
             "risks": [],
+            "score_normalised": 100,
         })
+        
+        # Mock blockscout client (returns no holders by default)
+        blockscout = AsyncMock()
+        blockscout.call_tool = AsyncMock(return_value={"items": []})
+        
+        # Mock solana client (returns no holders by default)
+        solana = AsyncMock()
+        solana.call_tool = AsyncMock(return_value={"value": []})
         
         def get_client(name):
             clients = {
                 "dexscreener": dexscreener,
                 "honeypot": honeypot,
                 "rugcheck": rugcheck,
+                "blockscout": blockscout,
+                "solana": solana,
             }
             return clients.get(name)
         
@@ -160,18 +176,37 @@ class TestTokenAnalyzer:
     async def test_analyze_evm_token(self, mock_mcp_manager):
         """Test analyzing an EVM token."""
         with patch("app.token_analyzer.genai") as mock_genai:
-            # Mock Gemini response
-            mock_response = MagicMock()
-            mock_candidate = MagicMock()
-            mock_content = MagicMock()
-            mock_part = MagicMock()
-            mock_part.text = "This token appears to be safe with good liquidity."
-            mock_content.parts = [mock_part]
-            mock_candidate.content = mock_content
-            mock_response.candidates = [mock_candidate]
-            
+            # Mock Gemini responses: structured JSON, free-text, tweet
+            structured_response = MagicMock()
+            structured_candidate = MagicMock()
+            structured_content = MagicMock()
+            structured_part = MagicMock()
+            structured_part.text = json.dumps({
+                "key_strengths": ["good liquidity"],
+                "key_risks": ["meme volatility"],
+                "whale_signal": "none detected",
+                "narrative_momentum": "positive",
+                "action": "buy",
+                "confidence": "medium",
+                "one_sentence": "Solid token.",
+            })
+            structured_content.parts = [structured_part]
+            structured_candidate.content = structured_content
+            structured_response.candidates = [structured_candidate]
+
+            text_response = MagicMock()
+            text_candidate = MagicMock()
+            text_content = MagicMock()
+            text_part = MagicMock()
+            text_part.text = "This token appears to be safe with good liquidity."
+            text_content.parts = [text_part]
+            text_candidate.content = text_content
+            text_response.candidates = [text_candidate]
+
             mock_client = MagicMock()
-            mock_client.models.generate_content = MagicMock(return_value=mock_response)
+            mock_client.models.generate_content = MagicMock(
+                side_effect=[structured_response, text_response, text_response]
+            )
             mock_genai.Client.return_value = mock_client
             
             analyzer = TokenAnalyzer(
@@ -188,24 +223,46 @@ class TestTokenAnalyzer:
             assert report.token_data.chain == "ethereum"
             assert report.token_data.symbol == "PEPE"
             assert report.token_data.safety_status == "Safe"
+            assert report.structured is not None
+            assert report.structured.token == "PEPE"
+            assert report.structured.safety["status"] == "safe"
+            assert report.structured.verdict["action"] == "buy"
             assert "Token Analysis Report" in report.telegram_message
 
     @pytest.mark.asyncio
     async def test_analyze_solana_token(self, mock_mcp_manager):
         """Test analyzing a Solana token."""
         with patch("app.token_analyzer.genai") as mock_genai:
-            # Mock Gemini response
-            mock_response = MagicMock()
-            mock_candidate = MagicMock()
-            mock_content = MagicMock()
-            mock_part = MagicMock()
-            mock_part.text = "This Solana token has low risk indicators."
-            mock_content.parts = [mock_part]
-            mock_candidate.content = mock_content
-            mock_response.candidates = [mock_candidate]
-            
+            structured_part = MagicMock()
+            structured_part.text = json.dumps({
+                "key_strengths": ["low risk"],
+                "key_risks": [],
+                "whale_signal": "unknown",
+                "narrative_momentum": "neutral",
+                "action": "hold",
+                "confidence": "low",
+                "one_sentence": "Low risk Solana token.",
+            })
+            structured_content = MagicMock()
+            structured_content.parts = [structured_part]
+            structured_candidate = MagicMock()
+            structured_candidate.content = structured_content
+            structured_response = MagicMock()
+            structured_response.candidates = [structured_candidate]
+
+            text_part = MagicMock()
+            text_part.text = "This Solana token has low risk indicators."
+            text_content = MagicMock()
+            text_content.parts = [text_part]
+            text_candidate = MagicMock()
+            text_candidate.content = text_content
+            text_response = MagicMock()
+            text_response.candidates = [text_candidate]
+
             mock_client = MagicMock()
-            mock_client.models.generate_content = MagicMock(return_value=mock_response)
+            mock_client.models.generate_content = MagicMock(
+                side_effect=[structured_response, text_response, text_response]
+            )
             mock_genai.Client.return_value = mock_client
             
             analyzer = TokenAnalyzer(
@@ -221,22 +278,41 @@ class TestTokenAnalyzer:
             assert isinstance(report, AnalysisReport)
             assert report.token_data.chain == "solana"
             assert report.token_data.safety_status == "Safe"
+            assert report.structured is not None
+            assert report.structured.chain == "solana"
 
     @pytest.mark.asyncio
     async def test_analyze_auto_detect_chain(self, mock_mcp_manager):
         """Test chain auto-detection during analysis."""
         with patch("app.token_analyzer.genai") as mock_genai:
-            mock_response = MagicMock()
-            mock_candidate = MagicMock()
-            mock_content = MagicMock()
-            mock_part = MagicMock()
-            mock_part.text = "Analysis complete."
-            mock_content.parts = [mock_part]
-            mock_candidate.content = mock_content
-            mock_response.candidates = [mock_candidate]
+            structured_part = MagicMock()
+            structured_part.text = json.dumps({
+                "key_strengths": [], "key_risks": [],
+                "whale_signal": "unknown", "narrative_momentum": "neutral",
+                "action": "hold", "confidence": "low",
+                "one_sentence": "Analysis complete.",
+            })
+            structured_content = MagicMock()
+            structured_content.parts = [structured_part]
+            structured_candidate = MagicMock()
+            structured_candidate.content = structured_content
+            structured_response = MagicMock()
+            structured_response.candidates = [structured_candidate]
+
+            text_part = MagicMock()
+            text_part.text = "Analysis complete."
+            text_content = MagicMock()
+            text_content.parts = [text_part]
+            text_candidate = MagicMock()
+            text_candidate.content = text_content
+            text_response = MagicMock()
+            text_response.candidates = [text_candidate]
             
             mock_client = MagicMock()
-            mock_client.models.generate_content = MagicMock(return_value=mock_response)
+            mock_client.models.generate_content = MagicMock(
+                side_effect=[structured_response, text_response, text_response,
+                             structured_response, text_response, text_response]
+            )
             mock_genai.Client.return_value = mock_client
             
             analyzer = TokenAnalyzer(
@@ -262,17 +338,33 @@ class TestTokenAnalyzer:
         })
 
         with patch("app.token_analyzer.genai") as mock_genai:
-            mock_response = MagicMock()
-            mock_candidate = MagicMock()
-            mock_content = MagicMock()
-            mock_part = MagicMock()
-            mock_part.text = "Analysis complete."
-            mock_content.parts = [mock_part]
-            mock_candidate.content = mock_content
-            mock_response.candidates = [mock_candidate]
+            structured_part = MagicMock()
+            structured_part.text = json.dumps({
+                "key_strengths": [], "key_risks": [],
+                "whale_signal": "unknown", "narrative_momentum": "neutral",
+                "action": "hold", "confidence": "low",
+                "one_sentence": "Analysis complete.",
+            })
+            structured_content = MagicMock()
+            structured_content.parts = [structured_part]
+            structured_candidate = MagicMock()
+            structured_candidate.content = structured_content
+            structured_response = MagicMock()
+            structured_response.candidates = [structured_candidate]
+
+            text_part = MagicMock()
+            text_part.text = "Analysis complete."
+            text_content = MagicMock()
+            text_content.parts = [text_part]
+            text_candidate = MagicMock()
+            text_candidate.content = text_content
+            text_response = MagicMock()
+            text_response.candidates = [text_candidate]
 
             mock_client = MagicMock()
-            mock_client.models.generate_content = MagicMock(return_value=mock_response)
+            mock_client.models.generate_content = MagicMock(
+                side_effect=[structured_response, text_response, text_response]
+            )
             mock_genai.Client.return_value = mock_client
 
             analyzer = TokenAnalyzer(

@@ -66,7 +66,7 @@ export function buildPaymentRequirements(): PaymentRequirements[] {
     throw new Error("SERVER_WALLET_ADDRESS must be set");
   }
 
-  const priceInput = process.env.SERVER_PRICE_ANALYZE ?? "0.50";
+  const priceInput = process.env.SERVER_PRICE_ANALYZE ?? "0.75";
   const amountMicrounits = toUsdcMicrounits(priceInput);
   const priceDisplay = formatUsdFromMicrounits(amountMicrounits);
   // USDC has 6 decimal places: $0.50 → 500_000 raw units

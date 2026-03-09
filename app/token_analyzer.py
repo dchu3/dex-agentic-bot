@@ -45,6 +45,58 @@ class TokenData:
     raw_dexscreener: Optional[Dict[str, Any]] = None
     errors: List[str] = field(default_factory=list)
 
+    # Enriched fields
+    top_pool_name: Optional[str] = None
+    top_pool_liquidity: Optional[float] = None
+    pair_created_at: Optional[str] = None
+    lp_locked_pct: Optional[float] = None
+    contract_open_source: Optional[bool] = None
+
+    # Holder data
+    top_10_holders_pct: Optional[float] = None
+    holder_concentration_risk: Optional[str] = None  # low, medium, high
+
+    # Safety score (normalized 0-10)
+    risk_score: Optional[float] = None
+    risk_level: Optional[str] = None  # low, medium, high
+    safety_flags: List[str] = field(default_factory=list)
+
+
+@dataclass
+class StructuredAIAnalysis:
+    """Structured output from Gemini AI analysis."""
+
+    key_strengths: List[str] = field(default_factory=list)
+    key_risks: List[str] = field(default_factory=list)
+    whale_signal: str = "unknown"
+    narrative_momentum: str = "neutral"
+
+
+@dataclass
+class Verdict:
+    """AI-generated verdict for the token."""
+
+    action: str = "hold"
+    confidence: str = "low"
+    one_sentence: str = "Insufficient data for analysis."
+
+
+@dataclass
+class StructuredAnalysisReport:
+    """Full structured analysis report returned by the x402 endpoint."""
+
+    token: str
+    chain: str
+    address: str
+    timestamp: str
+    price_data: Dict[str, Any]
+    liquidity: Dict[str, Any]
+    safety: Dict[str, Any]
+    holder_snapshot: Optional[Dict[str, Any]]
+    ai_analysis: Dict[str, Any]
+    verdict: Dict[str, Any]
+    human_readable: str
+
 
 @dataclass
 class AnalysisReport:
@@ -55,6 +107,7 @@ class AnalysisReport:
     generated_at: datetime
     telegram_message: str
     tweet_message: str = ""
+    structured: Optional[StructuredAnalysisReport] = None
 
 
 def detect_chain(address: str) -> Optional[str]:
@@ -93,7 +146,7 @@ def is_valid_token_address(text: str) -> bool:
     return bool(EVM_ADDRESS_PATTERN.match(text) or SOLANA_ADDRESS_PATTERN.match(text))
 
 
-# System prompt for token analysis
+# System prompt for token analysis (legacy free-text)
 ANALYSIS_SYSTEM_PROMPT = """You are a crypto token analyst providing comprehensive safety and market analysis reports.
 
 ## Your Task
@@ -114,6 +167,32 @@ Provide a concise analysis in 2-3 paragraphs:
 Keep it brief but informative. Use plain text, no markdown formatting.
 Do NOT repeat the raw data - the user already sees that in the report header.
 Focus on INSIGHTS and INTERPRETATION of the data.
+"""
+
+# System prompt for structured JSON analysis (x402 endpoint)
+STRUCTURED_ANALYSIS_SYSTEM_PROMPT = """You are a crypto token analyst. Analyze the provided token data and return a JSON object with your assessment.
+
+You MUST return valid JSON matching this exact schema:
+{
+  "key_strengths": ["string", ...],
+  "key_risks": ["string", ...],
+  "whale_signal": "none detected | accumulation detected | distribution detected | unknown",
+  "narrative_momentum": "positive | neutral | negative | unknown",
+  "action": "strong_buy | buy | buy_on_dip | hold | reduce | sell | avoid",
+  "confidence": "high | medium | low",
+  "one_sentence": "A single sentence verdict under 120 characters."
+}
+
+Guidelines:
+- key_strengths: 1-4 short phrases about what's good (safety, liquidity, momentum, etc.)
+- key_risks: 1-4 short phrases about concerns (volatility, concentration, low liquidity, etc.)
+- whale_signal: Based on holder concentration and trading patterns in the data
+- narrative_momentum: Based on price action, volume trends, and market sentiment
+- action: Your recommended action for a trader
+- confidence: How confident you are in this recommendation
+- one_sentence: A punchy, opinionated summary — be direct
+
+Return ONLY the JSON object, no markdown, no explanation.
 """
 
 TWEET_ANALYSIS_SYSTEM_PROMPT = """You are a crypto token analyst. Provide a single punchy sentence summarizing the token's safety and market outlook.
@@ -164,10 +243,13 @@ class TokenAnalyzer:
         
         self._log("info", f"Analyzing token {address} on {chain}")
         
-        # Collect data from MCP tools
+        # Collect data from MCP tools (includes holder data)
         token_data = await self._collect_token_data(address, chain)
         
-        # Generate AI analysis
+        # Generate structured AI analysis (JSON mode)
+        ai_structured, verdict = await self._generate_structured_ai_analysis(token_data)
+        
+        # Generate legacy free-text AI analysis (for telegram_message compatibility)
         ai_analysis = await self._generate_ai_analysis(token_data)
         
         # Generate tweet-length AI verdict
@@ -177,12 +259,20 @@ class TokenAnalyzer:
         telegram_message = self._format_telegram_report(token_data, ai_analysis)
         tweet_message = self._format_tweet_report(token_data, tweet_verdict)
         
+        generated_at = datetime.now(timezone.utc)
+        
+        # Build the structured report
+        structured = self._build_structured_report(
+            token_data, ai_structured, verdict, generated_at
+        )
+        
         return AnalysisReport(
             token_data=token_data,
             ai_analysis=ai_analysis,
-            generated_at=datetime.now(timezone.utc),
+            generated_at=generated_at,
             telegram_message=telegram_message,
             tweet_message=tweet_message,
+            structured=structured,
         )
 
     async def _collect_token_data(self, address: str, chain: str) -> TokenData:
@@ -203,6 +293,14 @@ class TokenAnalyzer:
                 task_name = ["dexscreener", "safety"][i]
                 self._log("error", f"Data collection task '{task_name}' failed: {result}")
                 token_data.errors.append(f"{task_name} error: {result}")
+        
+        # Fetch holder data (depends on chain detection from dexscreener)
+        actual_chain = token_data.chain
+        try:
+            await self._fetch_holder_data(address, actual_chain, token_data)
+        except Exception as e:
+            self._log("error", f"Holder data fetch failed: {e}")
+            token_data.errors.append(f"holder data error: {e}")
         
         return token_data
 
@@ -300,6 +398,17 @@ class TokenAnalyzer:
                     "volume_24h": self._safe_float(pair.get("volume", {}).get("h24")),
                 }
                 token_data.pools.append(pool_info)
+            
+            # Enriched fields: top pool name and liquidity
+            if token_data.pools:
+                top = token_data.pools[0]
+                token_data.top_pool_name = top.get("dex", "Unknown")
+                token_data.top_pool_liquidity = top.get("liquidity")
+            
+            # Token age from pair creation timestamp
+            created_at = best_pair.get("pairCreatedAt")
+            if created_at:
+                token_data.pair_created_at = str(created_at)
                 
         except Exception as e:
             self._log("error", f"DexScreener fetch failed: {str(e)}")
@@ -352,16 +461,36 @@ class TokenAnalyzer:
             
             if is_honeypot or honeypot_result.get("isHoneypot"):
                 token_data.safety_status = "Honeypot"
+                token_data.risk_score = 10.0
+                token_data.risk_level = "critical"
+                token_data.safety_flags.append("honeypot detected")
             else:
                 # Check for high taxes or other risks
                 simulation = result.get("simulationResult", {})
-                buy_tax = self._safe_float(simulation.get("buyTax", 0))
-                sell_tax = self._safe_float(simulation.get("sellTax", 0))
+                buy_tax = self._safe_float(simulation.get("buyTax", 0)) or 0
+                sell_tax = self._safe_float(simulation.get("sellTax", 0)) or 0
                 
                 if buy_tax > 10 or sell_tax > 10:
                     token_data.safety_status = "Risky"
+                    token_data.risk_score = min(10.0, 5.0 + max(buy_tax, sell_tax) / 10)
+                    token_data.risk_level = "high"
+                    if buy_tax > 10:
+                        token_data.safety_flags.append(f"high buy tax ({buy_tax:.1f}%)")
+                    if sell_tax > 10:
+                        token_data.safety_flags.append(f"high sell tax ({sell_tax:.1f}%)")
                 else:
                     token_data.safety_status = "Safe"
+                    token_data.risk_score = max(0, (buy_tax + sell_tax) / 4)
+                    token_data.risk_level = "low" if token_data.risk_score < 3 else "medium"
+            
+            # Extract contract open source status
+            contract_code = result.get("contractCode", {})
+            if isinstance(contract_code, dict):
+                open_source = contract_code.get("openSource")
+                if open_source is not None:
+                    token_data.contract_open_source = bool(open_source)
+                    if not open_source:
+                        token_data.safety_flags.append("contract not open source")
 
     async def _fetch_rugcheck_data(
         self, address: str, token_data: TokenData
@@ -414,17 +543,230 @@ class TokenAnalyzer:
             token_data.errors.append("Rugcheck: unexpected response format")
     
     def _parse_rugcheck_score(self, result: Dict[str, Any], token_data: TokenData) -> None:
-        """Parse rugcheck score and set safety status."""
+        """Parse rugcheck score, set safety status, and extract enriched fields."""
         score = result.get("score_normalised", result.get("score", 0))
         risks = result.get("risks", [])
+        
+        # Extract LP locked percentage
+        lp_locked = result.get("lpLockedPct")
+        if lp_locked is not None:
+            token_data.lp_locked_pct = self._safe_float(lp_locked)
+        
+        # Normalize score to 0-10 scale (rugcheck: 0-10000, lower is better)
+        normalized = min(10.0, score / 1000.0) if score else 0
+        token_data.risk_score = round(normalized, 1)
+        
+        # Collect safety flags from risks
+        for risk in risks[:10]:
+            if isinstance(risk, dict):
+                risk_name = risk.get("name", str(risk))
+            else:
+                risk_name = str(risk)
+            token_data.safety_flags.append(risk_name)
         
         # Score interpretation: lower is better (fewer risks)
         if score <= 500 and not risks:
             token_data.safety_status = "Safe"
+            token_data.risk_level = "low"
         elif score <= 2000 or len(risks) <= 2:
             token_data.safety_status = "Risky"
+            token_data.risk_level = "medium"
         else:
             token_data.safety_status = "Dangerous"
+            token_data.risk_level = "high"
+
+    async def _fetch_holder_data(
+        self, address: str, chain: str, token_data: TokenData
+    ) -> None:
+        """Fetch holder concentration data for the token."""
+        if chain == "solana":
+            await self._fetch_holder_data_solana(address, token_data)
+        elif chain in ("ethereum", "eth", "bsc", "base"):
+            await self._fetch_holder_data_evm(address, chain, token_data)
+
+    async def _fetch_holder_data_solana(
+        self, address: str, token_data: TokenData
+    ) -> None:
+        """Extract holder data from rugcheck response or Solana RPC."""
+        # First try: extract from rugcheck safety_data (already fetched)
+        if token_data.safety_data and isinstance(token_data.safety_data, dict):
+            holders = token_data.safety_data.get("topHolders", [])
+            if not holders:
+                holders = token_data.safety_data.get("holders", [])
+            if holders and isinstance(holders, list):
+                self._compute_holder_concentration(holders, token_data)
+                return
+
+        # Fallback: call Solana RPC getTokenLargestAccounts
+        client = self.mcp_manager.get_client("solana")
+        if not client:
+            self._log("info", "Solana RPC client not available for holder data")
+            return
+
+        try:
+            self._log("tool", f"→ solana_getTokenLargestAccounts({address})")
+            result = await client.call_tool("getTokenLargestAccounts", {
+                "mint_address": address,
+            })
+            self._log("tool", "✓ solana_getTokenLargestAccounts")
+
+            if isinstance(result, str):
+                try:
+                    result = json.loads(result)
+                except (json.JSONDecodeError, ValueError):
+                    return
+
+            if isinstance(result, dict):
+                accounts = result.get("value", [])
+                if accounts and isinstance(accounts, list):
+                    # Convert RPC format to percentage-based
+                    supply_result = await client.call_tool("getTokenSupply", {
+                        "mint_address": address,
+                    })
+                    total_supply = self._extract_supply(supply_result)
+                    if total_supply and total_supply > 0:
+                        holder_list = []
+                        for acc in accounts[:10]:
+                            if isinstance(acc, dict):
+                                amount = self._safe_float(
+                                    acc.get("amount", acc.get("uiAmount", 0))
+                                )
+                                if amount:
+                                    pct = (amount / total_supply) * 100
+                                    holder_list.append({"pct": pct})
+                        if holder_list:
+                            self._compute_holder_concentration(holder_list, token_data)
+        except Exception as e:
+            self._log("error", f"Solana holder data fetch failed: {e}")
+
+    def _extract_supply(self, supply_result: Any) -> Optional[float]:
+        """Extract total supply from getTokenSupply response."""
+        if isinstance(supply_result, str):
+            try:
+                supply_result = json.loads(supply_result)
+            except (json.JSONDecodeError, ValueError):
+                return None
+        if isinstance(supply_result, dict):
+            value = supply_result.get("value", {})
+            if isinstance(value, dict):
+                return self._safe_float(value.get("uiAmount", value.get("amount")))
+        return None
+
+    async def _fetch_holder_data_evm(
+        self, address: str, chain: str, token_data: TokenData
+    ) -> None:
+        """Fetch holder data from Blockscout for EVM chains."""
+        client = self.mcp_manager.get_client("blockscout")
+        if not client:
+            self._log("info", "Blockscout client not available for holder data")
+            return
+
+        chain_map = {"ethereum": "ethereum", "eth": "ethereum", "bsc": "bsc", "base": "base"}
+        api_chain = chain_map.get(chain.lower(), "ethereum")
+
+        try:
+            self._log("tool", f"→ blockscout_get_token_holders({address}, {api_chain})")
+            result = await client.call_tool("get_token_holders", {
+                "address_hash": address,
+                "chain": api_chain,
+            })
+            self._log("tool", "✓ blockscout_get_token_holders")
+
+            if isinstance(result, str):
+                try:
+                    result = json.loads(result)
+                except (json.JSONDecodeError, ValueError):
+                    return
+
+            if isinstance(result, dict):
+                items = result.get("items", [])
+                if items and isinstance(items, list):
+                    holder_list = []
+                    for item in items[:10]:
+                        if isinstance(item, dict):
+                            pct = self._safe_float(item.get("percentage"))
+                            if pct is not None:
+                                holder_list.append({"pct": pct})
+                    if holder_list:
+                        self._compute_holder_concentration(holder_list, token_data)
+        except Exception as e:
+            self._log("error", f"Blockscout holder data fetch failed: {e}")
+
+    def _compute_holder_concentration(
+        self, holders: List[Any], token_data: TokenData
+    ) -> None:
+        """Compute top-10 holder concentration and risk level from holder list."""
+        total_pct = 0.0
+        for holder in holders[:10]:
+            if isinstance(holder, dict):
+                pct = self._safe_float(holder.get("pct", holder.get("percentage", 0)))
+                if pct:
+                    total_pct += pct
+
+        token_data.top_10_holders_pct = round(total_pct, 1)
+
+        if total_pct >= 60:
+            token_data.holder_concentration_risk = "high"
+        elif total_pct >= 30:
+            token_data.holder_concentration_risk = "medium"
+        else:
+            token_data.holder_concentration_risk = "low"
+
+    async def _generate_structured_ai_analysis(
+        self, token_data: TokenData
+    ) -> tuple[StructuredAIAnalysis, Verdict]:
+        """Generate structured AI analysis using Gemini JSON mode."""
+        context = self._build_analysis_context(token_data)
+
+        default_analysis = StructuredAIAnalysis()
+        default_verdict = Verdict()
+
+        try:
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model=self.model_name,
+                contents=context,
+                config=types.GenerateContentConfig(
+                    system_instruction=STRUCTURED_ANALYSIS_SYSTEM_PROMPT,
+                    response_mime_type="application/json",
+                ),
+            )
+
+            raw_text = ""
+            if response and response.candidates:
+                candidate = response.candidates[0]
+                if candidate and candidate.content and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if hasattr(part, "text") and part.text:
+                            raw_text = part.text.strip()
+                            break
+
+            if not raw_text:
+                return default_analysis, default_verdict
+
+            data = json.loads(raw_text)
+            if not isinstance(data, dict):
+                return default_analysis, default_verdict
+
+            analysis = StructuredAIAnalysis(
+                key_strengths=data.get("key_strengths", [])[:4],
+                key_risks=data.get("key_risks", [])[:4],
+                whale_signal=data.get("whale_signal", "unknown"),
+                narrative_momentum=data.get("narrative_momentum", "neutral"),
+            )
+            verdict = Verdict(
+                action=data.get("action", "hold"),
+                confidence=data.get("confidence", "low"),
+                one_sentence=data.get("one_sentence", "Insufficient data for analysis."),
+            )
+            return analysis, verdict
+
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            self._log("error", f"Structured AI analysis parse failed: {e}")
+            return default_analysis, default_verdict
+        except Exception as e:
+            self._log("error", f"Structured AI analysis failed: {e}")
+            return default_analysis, default_verdict
 
     async def _generate_ai_analysis(self, token_data: TokenData) -> str:
         """Generate AI analysis of the token data."""
@@ -468,9 +810,11 @@ class TokenAnalyzer:
             f"24h Volume: ${(token_data.volume_24h or 0):,.0f}",
             f"Liquidity: ${(token_data.liquidity_usd or 0):,.0f}",
             f"Market Cap: ${(token_data.market_cap or 0):,.0f}",
+            f"FDV: ${(token_data.fdv or 0):,.0f}",
             "",
             "=== Safety Data ===",
             f"Status: {token_data.safety_status}",
+            f"Risk Score: {token_data.risk_score if token_data.risk_score is not None else 'N/A'}/10",
         ]
         
         # Add safety details
@@ -486,6 +830,26 @@ class TokenAnalyzer:
                 risks = token_data.safety_data.get("risks", [])
                 if risks:
                     lines.append(f"Risks: {', '.join(str(r) for r in risks[:5])}")
+        
+        if token_data.lp_locked_pct is not None:
+            lines.append(f"LP Locked: {token_data.lp_locked_pct:.1f}%")
+        
+        if token_data.contract_open_source is not None:
+            lines.append(f"Contract Open Source: {'Yes' if token_data.contract_open_source else 'No'}")
+
+        if token_data.safety_flags:
+            lines.append(f"Safety Flags: {', '.join(token_data.safety_flags[:5])}")
+        
+        # Token age
+        if token_data.pair_created_at:
+            lines.append(f"Pair Created: {token_data.pair_created_at}")
+        
+        # Holder concentration
+        if token_data.top_10_holders_pct is not None:
+            lines.append("")
+            lines.append("=== Holder Data ===")
+            lines.append(f"Top 10 Holders: {token_data.top_10_holders_pct:.1f}%")
+            lines.append(f"Concentration Risk: {token_data.holder_concentration_risk or 'unknown'}")
         
         # Add pool info
         if token_data.pools:
@@ -672,3 +1036,115 @@ class TokenAnalyzer:
             return float(value)
         except (ValueError, TypeError):
             return None
+
+    def _build_structured_report(
+        self,
+        token_data: TokenData,
+        ai_analysis: StructuredAIAnalysis,
+        verdict: Verdict,
+        generated_at: datetime,
+    ) -> StructuredAnalysisReport:
+        """Build the full structured analysis report for the x402 endpoint."""
+        holder_snapshot = None
+        if token_data.top_10_holders_pct is not None:
+            holder_snapshot = {
+                "top_10_holders_percent": token_data.top_10_holders_pct,
+                "concentration_risk": token_data.holder_concentration_risk or "unknown",
+            }
+
+        human_readable = self._build_human_readable(
+            token_data, ai_analysis, verdict, generated_at
+        )
+
+        return StructuredAnalysisReport(
+            token=token_data.symbol or "Unknown",
+            chain=token_data.chain,
+            address=token_data.address,
+            timestamp=generated_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            price_data={
+                "price_usd": token_data.price_usd,
+                "change_24h_percent": token_data.price_change_24h,
+                "market_cap_usd": token_data.market_cap,
+                "volume_24h_usd": token_data.volume_24h,
+                "fdv_usd": token_data.fdv,
+            },
+            liquidity={
+                "total_usd": token_data.liquidity_usd,
+                "top_pool": token_data.top_pool_name,
+                "top_pool_liquidity_usd": token_data.top_pool_liquidity,
+            },
+            safety={
+                "status": token_data.safety_status.lower(),
+                "risk_score": token_data.risk_score,
+                "risk_level": token_data.risk_level or "unknown",
+                "flags": token_data.safety_flags[:10],
+            },
+            holder_snapshot=holder_snapshot,
+            ai_analysis={
+                "key_strengths": ai_analysis.key_strengths,
+                "key_risks": ai_analysis.key_risks,
+                "whale_signal": ai_analysis.whale_signal,
+                "narrative_momentum": ai_analysis.narrative_momentum,
+            },
+            verdict={
+                "action": verdict.action,
+                "confidence": verdict.confidence,
+                "one_sentence": verdict.one_sentence,
+            },
+            human_readable=human_readable,
+        )
+
+    def _build_human_readable(
+        self,
+        token_data: TokenData,
+        ai_analysis: StructuredAIAnalysis,
+        verdict: Verdict,
+        generated_at: datetime,
+    ) -> str:
+        """Build a human-readable summary from structured data."""
+        safety_emoji = {
+            "Safe": "✅", "Risky": "⚠️", "Honeypot": "❌",
+            "Dangerous": "❌", "Unverified": "❓",
+        }.get(token_data.safety_status, "❓")
+
+        change = token_data.price_change_24h or 0
+        change_emoji = "🟢" if change >= 0 else "🔴"
+
+        price_fmt = format_price(token_data.price_usd)
+        mcap_fmt = format_large_number(token_data.market_cap)
+        vol_fmt = format_large_number(token_data.volume_24h)
+        liq_fmt = format_large_number(token_data.liquidity_usd)
+
+        lines = [
+            "🔍 Token Analysis Report",
+            f"Token: {token_data.symbol or 'Unknown'} | Chain: {token_data.chain.capitalize()}",
+            f"Address: {token_data.address}",
+            "",
+            f"💰 Price: {price_fmt} ({change_emoji} {change:+.2f}%)",
+            f"📊 MCap: {mcap_fmt} | Vol 24h: {vol_fmt} | Liq: {liq_fmt}",
+        ]
+
+        if token_data.top_pool_name:
+            pool_liq_fmt = format_large_number(token_data.top_pool_liquidity)
+            lines.append(f"💧 Top Pool: {token_data.top_pool_name} ({pool_liq_fmt})")
+
+        lines.append(f"🛡️ Safety: {safety_emoji} {token_data.safety_status}")
+
+        if token_data.risk_score is not None:
+            lines.append(f"   Risk Score: {token_data.risk_score}/10 ({token_data.risk_level or 'unknown'})")
+
+        if token_data.top_10_holders_pct is not None:
+            lines.append(f"👥 Top 10 Holders: {token_data.top_10_holders_pct:.1f}% ({token_data.holder_concentration_risk or 'unknown'})")
+
+        if ai_analysis.key_strengths:
+            lines.append(f"\n✅ Strengths: {', '.join(ai_analysis.key_strengths)}")
+        if ai_analysis.key_risks:
+            lines.append(f"⚠️ Risks: {', '.join(ai_analysis.key_risks)}")
+
+        lines.append(f"\n🎯 Verdict: {verdict.action.upper()} ({verdict.confidence} confidence)")
+        lines.append(f"   {verdict.one_sentence}")
+
+        timestamp = generated_at.strftime("%Y-%m-%d %H:%M UTC")
+        lines.append(f"\n⏰ {timestamp}")
+
+        return "\n".join(lines)

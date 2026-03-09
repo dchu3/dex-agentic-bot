@@ -60,8 +60,10 @@ function makeMcpServer(): McpServer {
   server.tool(
     "analyze_token",
     "Full AI-powered token safety and market analysis using Gemini. " +
-      "Returns safety verdict, market metrics, and a detailed AI report. " +
-      "Costs USDC per call (x402 protocol).",
+      "Returns a structured JSON report with price_data, liquidity, safety, " +
+      "holder_snapshot, ai_analysis (key_strengths, key_risks, whale_signal, " +
+      "narrative_momentum), verdict (action, confidence, one_sentence), and " +
+      "human_readable summary. Costs $0.75 USDC per call (x402 protocol).",
     {
       address: z.string().describe("Token contract address"),
       chain: z
@@ -98,10 +100,9 @@ function makeMcpServer(): McpServer {
             isError: true,
           };
         }
-        const report =
-          String(data["telegram_message"] ?? data["ai_analysis"] ?? "").trim() ||
-          "No report generated.";
-        return { content: [{ type: "text", text: report }] };
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
       } catch (error: unknown) {
         const message =
           error instanceof Error && error.name === "AbortError"
