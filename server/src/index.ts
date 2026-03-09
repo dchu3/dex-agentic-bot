@@ -54,7 +54,7 @@ function parseTimeoutMs(
 }
 
 /** Create a fresh McpServer for each stateless request. */
-function makeMcpServer(): McpServer {
+function makeMcpServer(priceDescription: string): McpServer {
   const server = new McpServer({ name: "dex-analysis", version: "1.0.0" });
 
   server.tool(
@@ -63,7 +63,7 @@ function makeMcpServer(): McpServer {
       "Returns a structured JSON report with price_data, liquidity, safety, " +
       "holder_snapshot, ai_analysis (key_strengths, key_risks, whale_signal, " +
       "narrative_momentum), verdict (action, confidence, one_sentence), and " +
-      "human_readable summary. Costs $0.75 USDC per call (x402 protocol).",
+      `human_readable summary. ${priceDescription} (x402 protocol).`,
     {
       address: z.string().describe("Token contract address"),
       chain: z
@@ -156,6 +156,7 @@ async function settlePayment(
 }
 
 const paymentRequirements = buildPaymentRequirements();
+const analyzePrice = paymentRequirements[0]?.description ?? "USDC per call";
 const app = express();
 
 app.post(
@@ -209,7 +210,7 @@ app.post(
     }
 
     // Dispatch through a fresh stateless MCP server instance
-    const server = makeMcpServer();
+    const server = makeMcpServer(analyzePrice);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // Stateless: no session state
     });

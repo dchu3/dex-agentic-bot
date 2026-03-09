@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.config import load_settings
 from app.mcp_client import MCPManager
@@ -81,7 +81,7 @@ class SafetyResponse(BaseModel):
     status: str
     risk_score: Optional[float] = None
     risk_level: str = "unknown"
-    flags: List[str] = []
+    flags: List[str] = Field(default_factory=list)
 
 
 class HolderSnapshotResponse(BaseModel):
@@ -90,8 +90,8 @@ class HolderSnapshotResponse(BaseModel):
 
 
 class AIAnalysisResponse(BaseModel):
-    key_strengths: List[str] = []
-    key_risks: List[str] = []
+    key_strengths: List[str] = Field(default_factory=list)
+    key_risks: List[str] = Field(default_factory=list)
     whale_signal: str = "unknown"
     narrative_momentum: str = "neutral"
 

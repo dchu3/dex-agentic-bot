@@ -462,7 +462,7 @@ class TokenAnalyzer:
             if is_honeypot or honeypot_result.get("isHoneypot"):
                 token_data.safety_status = "Honeypot"
                 token_data.risk_score = 10.0
-                token_data.risk_level = "critical"
+                token_data.risk_level = "high"
                 token_data.safety_flags.append("honeypot detected")
             else:
                 # Check for high taxes or other risks
@@ -629,7 +629,7 @@ class TokenAnalyzer:
                         for acc in accounts[:10]:
                             if isinstance(acc, dict):
                                 amount = self._safe_float(
-                                    acc.get("amount", acc.get("uiAmount", 0))
+                                    acc.get("uiAmount", acc.get("amount", 0))
                                 )
                                 if amount:
                                     pct = (amount / total_supply) * 100
