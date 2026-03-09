@@ -286,20 +286,35 @@ class TokenAnalyzer:
             self._log("error", f"Data collection task 'dexscreener' failed: {e}")
             token_data.errors.append(f"dexscreener error: {e}")
         
-        # Use resolved chain for safety + holder fetches (run in parallel)
+        # Use resolved chain for safety + holder fetches
         resolved_chain = token_data.chain
-        tasks = [
-            self._fetch_safety_data(address, resolved_chain, token_data),
-            self._fetch_holder_data(address, resolved_chain, token_data),
-        ]
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                task_name = ["safety", "holder"][i]
-                self._log("error", f"Data collection task '{task_name}' failed: {result}")
-                token_data.errors.append(f"{task_name} error: {result}")
+
+        if resolved_chain == "solana":
+            # Solana: run safety first (rugcheck populates safety_data with
+            # holder info), then holder fetch reads it — avoids unnecessary
+            # Solana RPC fallback calls.
+            try:
+                await self._fetch_safety_data(address, resolved_chain, token_data)
+            except Exception as e:
+                self._log("error", f"Data collection task 'safety' failed: {e}")
+                token_data.errors.append(f"safety error: {e}")
+            try:
+                await self._fetch_holder_data(address, resolved_chain, token_data)
+            except Exception as e:
+                self._log("error", f"Data collection task 'holder' failed: {e}")
+                token_data.errors.append(f"holder error: {e}")
+        else:
+            # EVM: safety (honeypot) and holder (blockscout) are independent
+            tasks = [
+                self._fetch_safety_data(address, resolved_chain, token_data),
+                self._fetch_holder_data(address, resolved_chain, token_data),
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    task_name = ["safety", "holder"][i]
+                    self._log("error", f"Data collection task '{task_name}' failed: {result}")
+                    token_data.errors.append(f"{task_name} error: {result}")
         
         return token_data
 
@@ -748,16 +763,23 @@ class TokenAnalyzer:
             if not isinstance(data, dict):
                 return default_analysis, default_verdict
 
+            raw_strengths = data.get("key_strengths", [])
+            raw_risks = data.get("key_risks", [])
+            if not isinstance(raw_strengths, list):
+                raw_strengths = [str(raw_strengths)] if raw_strengths else []
+            if not isinstance(raw_risks, list):
+                raw_risks = [str(raw_risks)] if raw_risks else []
+
             analysis = StructuredAIAnalysis(
-                key_strengths=data.get("key_strengths", [])[:4],
-                key_risks=data.get("key_risks", [])[:4],
-                whale_signal=data.get("whale_signal", "unknown"),
-                narrative_momentum=data.get("narrative_momentum", "neutral"),
+                key_strengths=[str(s) for s in raw_strengths][:4],
+                key_risks=[str(r) for r in raw_risks][:4],
+                whale_signal=str(data.get("whale_signal", "unknown")),
+                narrative_momentum=str(data.get("narrative_momentum", "neutral")),
             )
             verdict = Verdict(
-                action=data.get("action", "hold"),
-                confidence=data.get("confidence", "low"),
-                one_sentence=data.get("one_sentence", "Insufficient data for analysis."),
+                action=str(data.get("action", "hold")),
+                confidence=str(data.get("confidence", "low")),
+                one_sentence=str(data.get("one_sentence", "Insufficient data for analysis.")),
             )
             return analysis, verdict
 
