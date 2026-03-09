@@ -279,28 +279,27 @@ class TokenAnalyzer:
         """Collect token data from various MCP sources."""
         token_data = TokenData(address=address, chain=chain)
         
-        # Run data collection in parallel
+        # DexScreener first — it may resolve/correct the chain for the token
+        try:
+            await self._fetch_dexscreener_data(address, chain, token_data)
+        except Exception as e:
+            self._log("error", f"Data collection task 'dexscreener' failed: {e}")
+            token_data.errors.append(f"dexscreener error: {e}")
+        
+        # Use resolved chain for safety + holder fetches (run in parallel)
+        resolved_chain = token_data.chain
         tasks = [
-            self._fetch_dexscreener_data(address, chain, token_data),
-            self._fetch_safety_data(address, chain, token_data),
+            self._fetch_safety_data(address, resolved_chain, token_data),
+            self._fetch_holder_data(address, resolved_chain, token_data),
         ]
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # Log any silently swallowed exceptions
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                task_name = ["dexscreener", "safety"][i]
+                task_name = ["safety", "holder"][i]
                 self._log("error", f"Data collection task '{task_name}' failed: {result}")
                 token_data.errors.append(f"{task_name} error: {result}")
-        
-        # Fetch holder data (depends on chain detection from dexscreener)
-        actual_chain = token_data.chain
-        try:
-            await self._fetch_holder_data(address, actual_chain, token_data)
-        except Exception as e:
-            self._log("error", f"Holder data fetch failed: {e}")
-            token_data.errors.append(f"holder data error: {e}")
         
         return token_data
 
@@ -553,6 +552,7 @@ class TokenAnalyzer:
             token_data.lp_locked_pct = self._safe_float(lp_locked)
         
         # Normalize score to 0-10 scale (rugcheck: 0-10000, lower is better)
+        score = self._safe_float(score) or 0
         normalized = min(10.0, score / 1000.0) if score else 0
         token_data.risk_score = round(normalized, 1)
         

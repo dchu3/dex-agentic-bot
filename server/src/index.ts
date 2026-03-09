@@ -101,7 +101,7 @@ function makeMcpServer(priceDescription: string): McpServer {
           };
         }
         return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify(data) }],
         };
       } catch (error: unknown) {
         const message =

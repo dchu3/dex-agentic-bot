@@ -69,7 +69,7 @@ export function buildPaymentRequirements(): PaymentRequirements[] {
   const priceInput = process.env.SERVER_PRICE_ANALYZE ?? "0.75";
   const amountMicrounits = toUsdcMicrounits(priceInput);
   const priceDisplay = formatUsdFromMicrounits(amountMicrounits);
-  // USDC has 6 decimal places: $0.50 → 500_000 raw units
+  // USDC has 6 decimal places, e.g. $1.00 → 1_000_000 raw units
   const amountRaw = amountMicrounits.toString();
 
   const network = process.env.SERVER_SOLANA_NETWORK ?? "solana";
