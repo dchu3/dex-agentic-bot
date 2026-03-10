@@ -155,92 +155,99 @@ async function settlePayment(
   }
 }
 
-const paymentRequirements = buildPaymentRequirements();
-const analyzePrice = paymentRequirements[0]?.description ?? "USDC per call";
-const app = express();
+async function main(): Promise<void> {
+  const paymentRequirements = await buildPaymentRequirements();
+  const analyzePrice = paymentRequirements[0]?.description ?? "USDC per call";
+  const app = express();
 
-app.post(
-  "/mcp",
-  express.json({ limit: "1mb" }),
-  async (req: Request, res: Response): Promise<void> => {
-    const body = req.body as Record<string, unknown>;
+  app.post(
+    "/mcp",
+    express.json({ limit: "1mb" }),
+    async (req: Request, res: Response): Promise<void> => {
+      const body = req.body as Record<string, unknown>;
 
-    // Reject JSON-RPC batch requests — the MCP SDK processes arrays natively,
-    // which would bypass per-method payment enforcement below.
-    if (Array.isArray(body)) {
-      res.status(400).json({ error: "Batch requests are not supported" });
-      return;
-    }
+      // Reject JSON-RPC batch requests — the MCP SDK processes arrays natively,
+      // which would bypass per-method payment enforcement below.
+      if (Array.isArray(body)) {
+        res.status(400).json({ error: "Batch requests are not supported" });
+        return;
+      }
 
-    const method = body?.["method"] as string | undefined;
+      const method = body?.["method"] as string | undefined;
 
-    // Only enforce x402 payment for the paid analyze_token tool.
-    // For other tool names, let the MCP server handle the request and
-    // return a protocol-consistent JSON-RPC error response.
-    if (method === "tools/call") {
-      const params = body?.["params"] as Record<string, unknown> | undefined;
-      const toolName = params?.["name"];
+      // Only enforce x402 payment for the paid analyze_token tool.
+      // For other tool names, let the MCP server handle the request and
+      // return a protocol-consistent JSON-RPC error response.
+      if (method === "tools/call") {
+        const params = body?.["params"] as Record<string, unknown> | undefined;
+        const toolName = params?.["name"];
 
-      if (toolName === "analyze_token") {
-        const rawPaymentHeader = req.headers["x-payment"];
-        let paymentHeader: string | undefined;
-        if (Array.isArray(rawPaymentHeader)) {
-          if (rawPaymentHeader.length !== 1) {
-            res.status(400).json({
-              error: "Invalid x-payment header — multiple values are not allowed",
+        if (toolName === "analyze_token") {
+          const rawPaymentHeader = req.headers["x-payment"];
+          let paymentHeader: string | undefined;
+          if (Array.isArray(rawPaymentHeader)) {
+            if (rawPaymentHeader.length !== 1) {
+              res.status(400).json({
+                error: "Invalid x-payment header — multiple values are not allowed",
+              });
+              return;
+            }
+            paymentHeader = rawPaymentHeader[0];
+          } else {
+            paymentHeader = rawPaymentHeader;
+          }
+
+          if (!paymentHeader) {
+            res.status(402).json({
+              x402Version: 1,
+              error: "Payment required",
+              accepts: paymentRequirements,
             });
             return;
           }
-          paymentHeader = rawPaymentHeader[0];
-        } else {
-          paymentHeader = rawPaymentHeader;
-        }
 
-        if (!paymentHeader) {
-          res.status(402).json({
-            x402Version: 1,
-            error: "Payment required",
-            accepts: paymentRequirements,
-          });
-          return;
-        }
-
-        const settled = await settlePayment(paymentHeader, paymentRequirements[0]);
-        if (!settled) {
-          res.status(402).json({
-            x402Version: 1,
-            error: "Payment settlement failed — invalid or already-used payment",
-            accepts: paymentRequirements,
-          });
-          return;
+          const settled = await settlePayment(paymentHeader, paymentRequirements[0]);
+          if (!settled) {
+            res.status(402).json({
+              x402Version: 1,
+              error: "Payment settlement failed — invalid or already-used payment",
+              accepts: paymentRequirements,
+            });
+            return;
+          }
         }
       }
+
+      // Dispatch through a fresh stateless MCP server instance
+      const server = makeMcpServer(analyzePrice);
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined, // Stateless: no session state
+      });
+
+      try {
+        await server.connect(transport);
+        await transport.handleRequest(req, res, body);
+      } finally {
+        // Best-effort cleanup; ignore close errors
+        await server.close().catch(() => undefined);
+      }
     }
-
-    // Dispatch through a fresh stateless MCP server instance
-    const server = makeMcpServer(analyzePrice);
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined, // Stateless: no session state
-    });
-
-    try {
-      await server.connect(transport);
-      await transport.handleRequest(req, res, body);
-    } finally {
-      // Best-effort cleanup; ignore close errors
-      await server.close().catch(() => undefined);
-    }
-  }
-);
-
-app.get("/health", (_req: Request, res: Response) => {
-  res.json({ status: "ok", facilitator: FACILITATOR_URL });
-});
-
-app.listen(SERVER_PORT, () => {
-  console.log(`DEX Analysis MCP server listening on port ${SERVER_PORT}`);
-  console.log(
-    `Tool calls require USDC payment via x402 (facilitator: ${FACILITATOR_URL})`
   );
-  console.log(`Python API: ${PYTHON_API_URL}`);
+
+  app.get("/health", (_req: Request, res: Response) => {
+    res.json({ status: "ok", facilitator: FACILITATOR_URL });
+  });
+
+  app.listen(SERVER_PORT, () => {
+    console.log(`DEX Analysis MCP server listening on port ${SERVER_PORT}`);
+    console.log(
+      `Tool calls require USDC payment via x402 (facilitator: ${FACILITATOR_URL})`
+    );
+    console.log(`Python API: ${PYTHON_API_URL}`);
+  });
+}
+
+main().catch((err) => {
+  console.error("Fatal:", err instanceof Error ? err.message : String(err));
+  process.exit(1);
 });

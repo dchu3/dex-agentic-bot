@@ -21,6 +21,22 @@ const USDC_MAINNET = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 /** USDC mint on Solana devnet. */
 const USDC_DEVNET = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 
+/** Solana CAIP-2 chain identifiers. */
+const SOLANA_MAINNET_CAIP2 = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+const SOLANA_DEVNET_CAIP2 = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+
+/**
+ * Accepted SERVER_SOLANA_NETWORK values and their canonical CAIP-2 mapping.
+ *
+ * Accepts both legacy v1 names ("solana", "solana-devnet") and CAIP-2 IDs.
+ */
+const NETWORK_MAP: Record<string, { caip2: string; devnet: boolean }> = {
+  solana: { caip2: SOLANA_MAINNET_CAIP2, devnet: false },
+  "solana-devnet": { caip2: SOLANA_DEVNET_CAIP2, devnet: true },
+  [SOLANA_MAINNET_CAIP2]: { caip2: SOLANA_MAINNET_CAIP2, devnet: false },
+  [SOLANA_DEVNET_CAIP2]: { caip2: SOLANA_DEVNET_CAIP2, devnet: true },
+};
+
 /** Wire-format payment requirements object (x402 spec §4.1). */
 export interface PaymentRequirements {
   scheme: string;
@@ -33,7 +49,7 @@ export interface PaymentRequirements {
   maxTimeoutSeconds: number;
   asset: string;
   outputSchema: null;
-  extra: null;
+  extra: { feePayer: string } | null;
 }
 
 function formatUsdFromMicrounits(amountMicrounits: bigint): string {
@@ -59,8 +75,55 @@ function toUsdcMicrounits(priceStr: string): bigint {
   return amount;
 }
 
+/**
+ * Fetch the facilitator's fee-payer address for the given network.
+ *
+ * The x402 SVM SDK requires `extra.feePayer` in payment requirements — this is
+ * the Solana address that pays transaction fees when the facilitator settles.
+ */
+async function fetchFacilitatorFeePayer(network: string): Promise<string> {
+  const res = await fetch(`${FACILITATOR_URL}/supported`);
+  if (!res.ok) {
+    throw new Error(
+      `Failed to fetch facilitator /supported (${res.status}): ${res.statusText}`,
+    );
+  }
+
+  const data = (await res.json()) as {
+    kinds: Array<{
+      scheme: string;
+      network: string;
+      extra?: { feePayer?: string };
+    }>;
+    signers?: Record<string, string[]>;
+  };
+
+  // Try to find an exact match for the configured network in the supported kinds.
+  for (const kind of data.kinds) {
+    if (kind.network === network && kind.extra?.feePayer) {
+      return kind.extra.feePayer;
+    }
+  }
+
+  // Fall back to the wildcard signer list (e.g., "solana:*").
+  if (data.signers) {
+    for (const [pattern, addresses] of Object.entries(data.signers)) {
+      if (pattern.endsWith(":*") && network.startsWith(pattern.slice(0, -2))) {
+        if (addresses.length > 0) {
+          return addresses[0];
+        }
+      }
+    }
+  }
+
+  throw new Error(
+    `Facilitator does not list a feePayer for network "${network}". ` +
+      `Check SERVER_SOLANA_NETWORK and X402_FACILITATOR_URL.`,
+  );
+}
+
 /** Build payment requirements from environment variables. */
-export function buildPaymentRequirements(): PaymentRequirements[] {
+export async function buildPaymentRequirements(): Promise<PaymentRequirements[]> {
   const walletAddress = process.env.SERVER_WALLET_ADDRESS;
   if (!walletAddress) {
     throw new Error("SERVER_WALLET_ADDRESS must be set");
@@ -72,14 +135,23 @@ export function buildPaymentRequirements(): PaymentRequirements[] {
   // USDC has 6 decimal places, e.g. $1.00 → 1_000_000 raw units
   const amountRaw = amountMicrounits.toString();
 
-  const network = process.env.SERVER_SOLANA_NETWORK ?? "solana";
-  const isDevnet = network.includes("devnet");
-  const asset = isDevnet ? USDC_DEVNET : USDC_MAINNET;
+  const rawNetwork = process.env.SERVER_SOLANA_NETWORK ?? "solana";
+  const resolved = NETWORK_MAP[rawNetwork];
+  if (!resolved) {
+    throw new Error(
+      `Unsupported SERVER_SOLANA_NETWORK "${rawNetwork}". ` +
+        `Accepted values: ${Object.keys(NETWORK_MAP).join(", ")}`,
+    );
+  }
+  const asset = resolved.devnet ? USDC_DEVNET : USDC_MAINNET;
+
+  const feePayer = await fetchFacilitatorFeePayer(resolved.caip2);
+  console.log(`Facilitator feePayer for ${resolved.caip2}: ${feePayer}`);
 
   return [
     {
       scheme: "exact",
-      network,
+      network: resolved.caip2,
       maxAmountRequired: amountRaw,
       resource: "/mcp",
       description: `DEX AI token analysis — $${priceDisplay} USDC`,
@@ -88,7 +160,7 @@ export function buildPaymentRequirements(): PaymentRequirements[] {
       maxTimeoutSeconds: 300,
       asset,
       outputSchema: null,
-      extra: null,
+      extra: { feePayer },
     },
   ];
 }
