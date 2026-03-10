@@ -26,15 +26,32 @@ const SOLANA_MAINNET_CAIP2 = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
 const SOLANA_DEVNET_CAIP2 = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 
 /**
- * Accepted SERVER_SOLANA_NETWORK values and their canonical CAIP-2 mapping.
+ * Accepted SERVER_SOLANA_NETWORK values and their canonical identifiers.
  *
  * Accepts both legacy v1 names ("solana", "solana-devnet") and CAIP-2 IDs.
+ * The `v1Name` is used in payment requirements (x402 v1 protocol), while
+ * `caip2` is used for facilitator API calls which expect CAIP-2 format.
  */
-const NETWORK_MAP: Record<string, { caip2: string; devnet: boolean }> = {
-  solana: { caip2: SOLANA_MAINNET_CAIP2, devnet: false },
-  "solana-devnet": { caip2: SOLANA_DEVNET_CAIP2, devnet: true },
-  [SOLANA_MAINNET_CAIP2]: { caip2: SOLANA_MAINNET_CAIP2, devnet: false },
-  [SOLANA_DEVNET_CAIP2]: { caip2: SOLANA_DEVNET_CAIP2, devnet: true },
+const NETWORK_MAP: Record<
+  string,
+  { caip2: string; v1Name: string; devnet: boolean }
+> = {
+  solana: { caip2: SOLANA_MAINNET_CAIP2, v1Name: "solana", devnet: false },
+  "solana-devnet": {
+    caip2: SOLANA_DEVNET_CAIP2,
+    v1Name: "solana-devnet",
+    devnet: true,
+  },
+  [SOLANA_MAINNET_CAIP2]: {
+    caip2: SOLANA_MAINNET_CAIP2,
+    v1Name: "solana",
+    devnet: false,
+  },
+  [SOLANA_DEVNET_CAIP2]: {
+    caip2: SOLANA_DEVNET_CAIP2,
+    v1Name: "solana-devnet",
+    devnet: true,
+  },
 };
 
 /** Wire-format payment requirements object (x402 spec §4.1). */
@@ -151,7 +168,7 @@ export async function buildPaymentRequirements(): Promise<PaymentRequirements[]>
   return [
     {
       scheme: "exact",
-      network: resolved.caip2,
+      network: resolved.v1Name,
       maxAmountRequired: amountRaw,
       resource: "/mcp",
       description: `DEX AI token analysis — $${priceDisplay} USDC`,
