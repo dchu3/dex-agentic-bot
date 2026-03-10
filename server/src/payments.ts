@@ -33,7 +33,7 @@ export interface PaymentRequirements {
   maxTimeoutSeconds: number;
   asset: string;
   outputSchema: null;
-  extra: null;
+  extra: { feePayer: string } | null;
 }
 
 function formatUsdFromMicrounits(amountMicrounits: bigint): string {
@@ -59,8 +59,55 @@ function toUsdcMicrounits(priceStr: string): bigint {
   return amount;
 }
 
+/**
+ * Fetch the facilitator's fee-payer address for the given network.
+ *
+ * The x402 SVM SDK requires `extra.feePayer` in payment requirements — this is
+ * the Solana address that pays transaction fees when the facilitator settles.
+ */
+async function fetchFacilitatorFeePayer(network: string): Promise<string> {
+  const res = await fetch(`${FACILITATOR_URL}/supported`);
+  if (!res.ok) {
+    throw new Error(
+      `Failed to fetch facilitator /supported (${res.status}): ${res.statusText}`,
+    );
+  }
+
+  const data = (await res.json()) as {
+    kinds: Array<{
+      scheme: string;
+      network: string;
+      extra?: { feePayer?: string };
+    }>;
+    signers?: Record<string, string[]>;
+  };
+
+  // Try to find an exact match for the configured network in the supported kinds.
+  for (const kind of data.kinds) {
+    if (kind.network === network && kind.extra?.feePayer) {
+      return kind.extra.feePayer;
+    }
+  }
+
+  // Fall back to the wildcard signer list (e.g., "solana:*").
+  if (data.signers) {
+    for (const [pattern, addresses] of Object.entries(data.signers)) {
+      if (pattern.endsWith(":*") && network.startsWith(pattern.slice(0, -2))) {
+        if (addresses.length > 0) {
+          return addresses[0];
+        }
+      }
+    }
+  }
+
+  throw new Error(
+    `Facilitator does not list a feePayer for network "${network}". ` +
+      `Check SERVER_SOLANA_NETWORK and X402_FACILITATOR_URL.`,
+  );
+}
+
 /** Build payment requirements from environment variables. */
-export function buildPaymentRequirements(): PaymentRequirements[] {
+export async function buildPaymentRequirements(): Promise<PaymentRequirements[]> {
   const walletAddress = process.env.SERVER_WALLET_ADDRESS;
   if (!walletAddress) {
     throw new Error("SERVER_WALLET_ADDRESS must be set");
@@ -76,6 +123,9 @@ export function buildPaymentRequirements(): PaymentRequirements[] {
   const isDevnet = network.includes("devnet");
   const asset = isDevnet ? USDC_DEVNET : USDC_MAINNET;
 
+  const feePayer = await fetchFacilitatorFeePayer(network);
+  console.log(`Facilitator feePayer for ${network}: ${feePayer}`);
+
   return [
     {
       scheme: "exact",
@@ -88,7 +138,7 @@ export function buildPaymentRequirements(): PaymentRequirements[] {
       maxTimeoutSeconds: 300,
       asset,
       outputSchema: null,
-      extra: null,
+      extra: { feePayer },
     },
   ];
 }
