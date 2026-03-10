@@ -21,6 +21,22 @@ const USDC_MAINNET = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 /** USDC mint on Solana devnet. */
 const USDC_DEVNET = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 
+/** Solana CAIP-2 chain identifiers. */
+const SOLANA_MAINNET_CAIP2 = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+const SOLANA_DEVNET_CAIP2 = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+
+/**
+ * Accepted SERVER_SOLANA_NETWORK values and their canonical CAIP-2 mapping.
+ *
+ * Accepts both legacy v1 names ("solana", "solana-devnet") and CAIP-2 IDs.
+ */
+const NETWORK_MAP: Record<string, { caip2: string; devnet: boolean }> = {
+  solana: { caip2: SOLANA_MAINNET_CAIP2, devnet: false },
+  "solana-devnet": { caip2: SOLANA_DEVNET_CAIP2, devnet: true },
+  [SOLANA_MAINNET_CAIP2]: { caip2: SOLANA_MAINNET_CAIP2, devnet: false },
+  [SOLANA_DEVNET_CAIP2]: { caip2: SOLANA_DEVNET_CAIP2, devnet: true },
+};
+
 /** Wire-format payment requirements object (x402 spec §4.1). */
 export interface PaymentRequirements {
   scheme: string;
@@ -119,17 +135,23 @@ export async function buildPaymentRequirements(): Promise<PaymentRequirements[]>
   // USDC has 6 decimal places, e.g. $1.00 → 1_000_000 raw units
   const amountRaw = amountMicrounits.toString();
 
-  const network = process.env.SERVER_SOLANA_NETWORK ?? "solana";
-  const isDevnet = network.includes("devnet");
-  const asset = isDevnet ? USDC_DEVNET : USDC_MAINNET;
+  const rawNetwork = process.env.SERVER_SOLANA_NETWORK ?? "solana";
+  const resolved = NETWORK_MAP[rawNetwork];
+  if (!resolved) {
+    throw new Error(
+      `Unsupported SERVER_SOLANA_NETWORK "${rawNetwork}". ` +
+        `Accepted values: ${Object.keys(NETWORK_MAP).join(", ")}`,
+    );
+  }
+  const asset = resolved.devnet ? USDC_DEVNET : USDC_MAINNET;
 
-  const feePayer = await fetchFacilitatorFeePayer(network);
-  console.log(`Facilitator feePayer for ${network}: ${feePayer}`);
+  const feePayer = await fetchFacilitatorFeePayer(resolved.caip2);
+  console.log(`Facilitator feePayer for ${resolved.caip2}: ${feePayer}`);
 
   return [
     {
       scheme: "exact",
-      network,
+      network: resolved.caip2,
       maxAmountRequired: amountRaw,
       resource: "/mcp",
       description: `DEX AI token analysis — $${priceDisplay} USDC`,
