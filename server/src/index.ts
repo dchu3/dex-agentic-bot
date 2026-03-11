@@ -134,21 +134,44 @@ async function settlePayment(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), SETTLE_TIMEOUT_MS);
   try {
+    // The X-PAYMENT header is base64(JSON.stringify(paymentPayload)).
+    // The facilitator expects the decoded JSON object, not the raw base64 string.
+    let paymentPayload: Record<string, unknown>;
+    try {
+      const decoded = Buffer.from(paymentHeader, "base64").toString("utf-8");
+      paymentPayload = JSON.parse(decoded) as Record<string, unknown>;
+    } catch {
+      console.error("Failed to decode X-PAYMENT header as base64 JSON");
+      return false;
+    }
+
     const res = await fetch(`${FACILITATOR_URL}/settle`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        paymentPayload: paymentHeader,
+        x402Version: paymentPayload.x402Version ?? 1,
+        paymentPayload,
         paymentRequirements: requirements,
       }),
       signal: controller.signal,
     });
 
-    if (!res.ok) return false;
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error(`Facilitator /settle returned ${res.status}: ${text}`);
+      return false;
+    }
 
     const body = (await res.json()) as Record<string, unknown>;
+    if (body["success"] !== true) {
+      console.error(`Facilitator /settle response: ${JSON.stringify(body)}`);
+    }
     return body["success"] === true;
-  } catch {
+  } catch (err) {
+    console.error(
+      "Settlement error:",
+      err instanceof Error ? err.message : String(err),
+    );
     return false;
   } finally {
     clearTimeout(timeoutId);
