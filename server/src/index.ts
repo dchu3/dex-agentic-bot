@@ -208,7 +208,10 @@ async function main(): Promise<void> {
         const toolName = params?.["name"];
 
         if (toolName === "analyze_token") {
-          const rawPaymentHeader = req.headers["x-payment"];
+          // x402 v2 uses PAYMENT-SIGNATURE; v1 used X-PAYMENT.
+          // Accept both for backwards compatibility.
+          const rawPaymentHeader =
+            req.headers["payment-signature"] ?? req.headers["x-payment"];
           let paymentHeader: string | undefined;
           if (Array.isArray(rawPaymentHeader)) {
             if (rawPaymentHeader.length !== 1) {
@@ -225,7 +228,7 @@ async function main(): Promise<void> {
           if (!paymentHeader) {
             const { body: respBody, headerValue } = buildPaymentRequiredResponse(
               paymentConfig,
-              "X-PAYMENT header is required",
+              "PAYMENT-SIGNATURE header is required",
             );
             res
               .status(402)
