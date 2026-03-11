@@ -222,7 +222,7 @@ async function main(): Promise<void> {
 
           if (!paymentHeader) {
             res.status(402).json({
-              x402Version: 1,
+              x402Version: 2,
               error: "Payment required",
               accepts: paymentRequirements,
             });
@@ -232,7 +232,7 @@ async function main(): Promise<void> {
           const settled = await settlePayment(paymentHeader, paymentRequirements[0]);
           if (!settled) {
             res.status(402).json({
-              x402Version: 1,
+              x402Version: 2,
               error: "Payment settlement failed — invalid or already-used payment",
               accepts: paymentRequirements,
             });
