@@ -14,13 +14,15 @@ from app.token_analyzer import (
     StructuredAnalysisReport,
 )
 
+_VALID_EVM_ADDR = "0x" + "a" * 40
+
 
 def _make_structured_report(**overrides):
     """Build a StructuredAnalysisReport with sensible defaults."""
     defaults = dict(
         token="PEPE",
         chain="ethereum",
-        address="0x123",
+        address=_VALID_EVM_ADDR,
         timestamp="2026-01-01T00:00:00Z",
         price_data={
             "price_usd": 0.00001234,
@@ -75,7 +77,7 @@ def reset_server_state(monkeypatch):
 async def test_analyze_returns_503_when_service_not_ready():
     transport = ASGITransport(app=api_server.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/analyze", json={"address": "0x123"})
+        response = await client.post("/analyze", json={"address": _VALID_EVM_ADDR})
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Analysis service not ready"
@@ -125,7 +127,7 @@ async def test_analyze_happy_path_returns_structured_response(monkeypatch):
     mock_analyzer.analyze = AsyncMock(
         return_value=AnalysisReport(
             token_data=TokenData(
-                address="0x123",
+                address=_VALID_EVM_ADDR,
                 chain="ethereum",
                 symbol="PEPE",
                 name="Pepe",
@@ -141,7 +143,7 @@ async def test_analyze_happy_path_returns_structured_response(monkeypatch):
 
     transport = ASGITransport(app=api_server.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/analyze", json={"address": " 0x123 ", "chain": " ETH "})
+        response = await client.post("/analyze", json={"address": f" {_VALID_EVM_ADDR} ", "chain": " ETH "})
 
     assert response.status_code == 200
     data = response.json()
@@ -149,7 +151,7 @@ async def test_analyze_happy_path_returns_structured_response(monkeypatch):
     # Verify structured response shape
     assert data["token"] == "PEPE"
     assert data["chain"] == "ethereum"
-    assert data["address"] == "0x123"
+    assert data["address"] == _VALID_EVM_ADDR
     assert "price_data" in data
     assert data["price_data"]["price_usd"] == 0.00001234
     assert "liquidity" in data
@@ -162,7 +164,7 @@ async def test_analyze_happy_path_returns_structured_response(monkeypatch):
     assert "human_readable" in data
 
     mock_analyzer.analyze.assert_awaited_once_with(
-        "0x123",
+        _VALID_EVM_ADDR,
         "ethereum",
         structured=True,
         legacy_output=False,
@@ -180,7 +182,7 @@ async def test_analyze_with_holder_snapshot(monkeypatch):
     mock_analyzer = MagicMock()
     mock_analyzer.analyze = AsyncMock(
         return_value=AnalysisReport(
-            token_data=TokenData(address="0x123", chain="ethereum", safety_status="Safe"),
+            token_data=TokenData(address=_VALID_EVM_ADDR, chain="ethereum", safety_status="Safe"),
             ai_analysis="Report.",
             generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
             telegram_message="Report",
@@ -191,7 +193,7 @@ async def test_analyze_with_holder_snapshot(monkeypatch):
 
     transport = ASGITransport(app=api_server.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/analyze", json={"address": "0x123"})
+        response = await client.post("/analyze", json={"address": _VALID_EVM_ADDR})
 
     assert response.status_code == 200
     data = response.json()
@@ -207,7 +209,7 @@ async def test_analyze_internal_error_returns_generic_message(monkeypatch):
 
     transport = ASGITransport(app=api_server.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/analyze", json={"address": "0x123", "chain": "ethereum"})
+        response = await client.post("/analyze", json={"address": _VALID_EVM_ADDR, "chain": "ethereum"})
 
     assert response.status_code == 500
     assert response.json()["detail"] == "Analysis failed due to an internal error"

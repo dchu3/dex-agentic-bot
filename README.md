@@ -336,6 +336,56 @@ Payment is settled on-chain through a facilitator service. The default facilitat
 | `X402_FACILITATOR_URL` | ❌ | `https://facilitator.payai.network` | x402 payment facilitator (use `https://x402.org/facilitator` for devnet testing) |
 | `PYTHON_API_URL` | ❌ | `http://localhost:8080` | Internal analysis service URL |
 | `SERVER_PORT` | ❌ | `4022` | MCP server listen port |
+| `RATE_LIMIT_WINDOW_MS` | ❌ | `900000` | Global rate limit window (ms) |
+| `RATE_LIMIT_MAX` | ❌ | `100` | Max requests per window |
+| `RATE_LIMIT_MCP_MAX` | ❌ | `20` | Max `/mcp` requests per minute |
+| `CORS_ALLOWED_ORIGINS` | ❌ | `*` | Comma-separated allowed origins |
+
+### Production Deployment
+
+For exposing the paid analysis server to external clients with TLS, rate limiting, and container hardening.
+
+**Prerequisites:** A server with Docker, a public domain name, and a funded Solana wallet.
+
+**1. Configure environment:**
+
+```bash
+cp .env.production.example .env
+# Edit .env — set DOMAIN, GEMINI_API_KEY, SERVER_WALLET_ADDRESS (required)
+# Optionally adjust SERVER_PRICE_ANALYZE, rate limits, CORS origins
+```
+
+**2. Deploy with Caddy reverse proxy (automatic HTTPS):**
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+This starts three services:
+- **Caddy** — reverse proxy on ports 80/443, auto-provisions Let's Encrypt TLS certificates
+- **analysis-server** — Express.js MCP server (internal only, not directly exposed)
+- **api-service** — FastAPI Python backend (internal only)
+
+**3. Verify:**
+
+```bash
+curl https://your-domain.com/health
+# → {"status":"ok"}
+```
+
+**Security features (production compose):**
+
+| Layer | Feature |
+|-------|---------|
+| **TLS** | Automatic HTTPS via Caddy + Let's Encrypt |
+| **Rate limiting** | Global (100/15min) + endpoint-specific (20/min) |
+| **CORS** | Configurable allowed origins |
+| **Security headers** | HSTS, CSP, X-Frame-Options, X-Content-Type-Options via Helmet + Caddy |
+| **Input validation** | Address format (Solana base58 / EVM hex) + chain enum |
+| **Error sanitization** | No internal details leaked to clients |
+| **Container hardening** | Non-root user, read-only filesystem, no-new-privileges, resource limits |
+| **Health checks** | All services monitored with restart on failure |
+| **Audit logging** | Structured JSON logs for all requests + x402 payment events |
 
 ## CLI Options
 

@@ -26,6 +26,16 @@ import {
   type PaymentRequirements,
   type PaymentConfig,
 } from "./payments.js";
+import {
+  globalRateLimiter,
+  mcpRateLimiter,
+  buildCorsMiddleware,
+  securityHeaders,
+  requestId,
+  requestLogger,
+  validateAnalyzeArgs,
+  globalErrorHandler,
+} from "./middleware.js";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8080";
 const SERVER_PORT = parseInt(process.env.SERVER_PORT ?? "4022", 10);
@@ -185,8 +195,19 @@ async function main(): Promise<void> {
   const analyzePrice = paymentConfig.priceDescription;
   const app = express();
 
+  // Trust proxy (for correct client IP behind Caddy/nginx)
+  app.set("trust proxy", 1);
+
+  // Security middleware
+  app.use(requestId);
+  app.use(requestLogger);
+  app.use(securityHeaders);
+  app.use(buildCorsMiddleware());
+  app.use(globalRateLimiter);
+
   app.post(
     "/mcp",
+    mcpRateLimiter,
     express.json({ limit: "1mb" }),
     async (req: Request, res: Response): Promise<void> => {
       const body = req.body as Record<string, unknown>;
@@ -208,6 +229,14 @@ async function main(): Promise<void> {
         const toolName = params?.["name"];
 
         if (toolName === "analyze_token") {
+          // Validate tool arguments before processing payment
+          const toolArgs = params?.["arguments"] as Record<string, unknown> | undefined;
+          const validationError = validateAnalyzeArgs(toolArgs);
+          if (validationError) {
+            res.status(validationError.status).json({ error: validationError.error });
+            return;
+          }
+
           // x402 v2 uses PAYMENT-SIGNATURE; v1 used X-PAYMENT.
           // Accept both for backwards compatibility.
           const rawPaymentHeader =
@@ -238,6 +267,17 @@ async function main(): Promise<void> {
           }
 
           const settled = await settlePayment(paymentHeader, paymentConfig.accepts[0]);
+
+          // Audit log: payment result
+          console.log(JSON.stringify({
+            event: "x402_payment",
+            timestamp: new Date().toISOString(),
+            tool: "analyze_token",
+            ip: req.ip,
+            request_id: req.headers["x-request-id"],
+            success: settled,
+          }));
+
           if (!settled) {
             const { body: respBody, headerValue } = buildPaymentRequiredResponse(
               paymentConfig,
@@ -269,8 +309,11 @@ async function main(): Promise<void> {
   );
 
   app.get("/health", (_req: Request, res: Response) => {
-    res.json({ status: "ok", facilitator: FACILITATOR_URL });
+    res.json({ status: "ok" });
   });
+
+  // Global error handler (must be registered last)
+  app.use(globalErrorHandler);
 
   app.listen(SERVER_PORT, () => {
     console.log(`DEX Analysis MCP server listening on port ${SERVER_PORT}`);
