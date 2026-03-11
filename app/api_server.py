@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response as StarletteResponse
 
 from app.config import load_settings
 from app.mcp_client import MCPManager
@@ -55,6 +62,39 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
 
 
 app = FastAPI(title="DEX Analysis API", lifespan=lifespan)
+
+
+# -- Security middleware (applied in reverse registration order) --
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        response: StarletteResponse = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+trusted_hosts = os.environ.get(
+    "TRUSTED_HOSTS", "localhost,api-service,127.0.0.1,test,testserver"
+).split(",")
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=[h.strip() for h in trusted_hosts])
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://analysis-server:4022"],
+    allow_methods=["POST"],
+    allow_headers=["Content-Type"],
+)
+
+# -- Address validation patterns --
+
+SOLANA_ADDRESS_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+EVM_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+ALLOWED_CHAINS = {"solana", "ethereum", "bsc", "base"}
 
 
 class AnalyzeRequest(BaseModel):
@@ -124,7 +164,13 @@ async def analyze_token(request: AnalyzeRequest) -> AnalyzeResponse:
     if not address:
         raise HTTPException(status_code=400, detail="address is required")
 
+    if not SOLANA_ADDRESS_RE.match(address) and not EVM_ADDRESS_RE.match(address):
+        raise HTTPException(status_code=400, detail="Invalid address format")
+
     normalized_chain = normalize_chain_identifier(request.chain)
+
+    if normalized_chain is not None and normalized_chain not in ALLOWED_CHAINS:
+        raise HTTPException(status_code=400, detail="Invalid chain parameter")
 
     try:
         report: AnalysisReport = await _token_analyzer.analyze(
