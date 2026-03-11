@@ -58,19 +58,37 @@ const NETWORK_MAP: Record<
   },
 };
 
-/** Wire-format payment requirements object (x402 spec §4.1). */
+/** Wire-format payment requirements object (x402 v2 spec §5.1.2). */
 export interface PaymentRequirements {
   scheme: string;
   network: string;
-  maxAmountRequired: string;
-  resource: string;
-  description: string;
-  mimeType: string;
+  amount: string;
+  asset: string;
   payTo: string;
   maxTimeoutSeconds: number;
-  asset: string;
-  outputSchema: null;
   extra: { feePayer: string } | null;
+}
+
+/** Resource metadata included in the top-level 402 response (x402 v2 spec §5.1.2). */
+export interface ResourceInfo {
+  url: string;
+  description: string;
+  mimeType: string;
+}
+
+/** Full 402 response body (x402 v2 spec §5.1.1). */
+export interface PaymentRequiredBody {
+  x402Version: 2;
+  error: string;
+  resource: ResourceInfo;
+  accepts: PaymentRequirements[];
+}
+
+/** Result of buildPaymentConfig — everything needed to construct 402 responses. */
+export interface PaymentConfig {
+  resource: ResourceInfo;
+  accepts: PaymentRequirements[];
+  priceDescription: string;
 }
 
 function formatUsdFromMicrounits(amountMicrounits: bigint): string {
@@ -143,8 +161,8 @@ async function fetchFacilitatorFeePayer(network: string): Promise<string> {
   );
 }
 
-/** Build payment requirements from environment variables. */
-export async function buildPaymentRequirements(): Promise<PaymentRequirements[]> {
+/** Build payment config from environment variables. */
+export async function buildPaymentConfig(): Promise<PaymentConfig> {
   const walletAddress = process.env.SERVER_WALLET_ADDRESS;
   if (!walletAddress) {
     throw new Error("SERVER_WALLET_ADDRESS must be set");
@@ -153,7 +171,6 @@ export async function buildPaymentRequirements(): Promise<PaymentRequirements[]>
   const priceInput = process.env.SERVER_PRICE_ANALYZE ?? "0.75";
   const amountMicrounits = toUsdcMicrounits(priceInput);
   const priceDisplay = formatUsdFromMicrounits(amountMicrounits);
-  // USDC has 6 decimal places, e.g. $1.00 → 1_000_000 raw units
   const amountRaw = amountMicrounits.toString();
 
   const rawNetwork = process.env.SERVER_SOLANA_NETWORK ?? "solana";
@@ -169,19 +186,38 @@ export async function buildPaymentRequirements(): Promise<PaymentRequirements[]>
   const feePayer = await fetchFacilitatorFeePayer(resolved.caip2);
   console.log(`Facilitator feePayer for ${resolved.caip2}: ${feePayer}`);
 
-  return [
-    {
-      scheme: "exact",
-      network: resolved.caip2,
-      maxAmountRequired: amountRaw,
-      resource: "/mcp",
+  return {
+    resource: {
+      url: "/mcp",
       description: `DEX AI token analysis — $${priceDisplay} USDC`,
       mimeType: "application/json",
-      payTo: walletAddress,
-      maxTimeoutSeconds: 300,
-      asset,
-      outputSchema: null,
-      extra: { feePayer },
     },
-  ];
+    accepts: [
+      {
+        scheme: "exact",
+        network: resolved.caip2,
+        amount: amountRaw,
+        payTo: walletAddress,
+        maxTimeoutSeconds: 300,
+        asset,
+        extra: { feePayer },
+      },
+    ],
+    priceDescription: `DEX AI token analysis — $${priceDisplay} USDC`,
+  };
+}
+
+/** Build the full 402 response body and base64-encoded header value. */
+export function buildPaymentRequiredResponse(
+  config: PaymentConfig,
+  error: string,
+): { body: PaymentRequiredBody; headerValue: string } {
+  const body: PaymentRequiredBody = {
+    x402Version: 2,
+    error,
+    resource: config.resource,
+    accepts: config.accepts,
+  };
+  const headerValue = Buffer.from(JSON.stringify(body)).toString("base64");
+  return { body, headerValue };
 }

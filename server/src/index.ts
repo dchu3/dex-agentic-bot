@@ -20,9 +20,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import {
-  buildPaymentRequirements,
+  buildPaymentConfig,
+  buildPaymentRequiredResponse,
   FACILITATOR_URL,
   type PaymentRequirements,
+  type PaymentConfig,
 } from "./payments.js";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8080";
@@ -149,7 +151,7 @@ async function settlePayment(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        x402Version: paymentPayload.x402Version ?? 1,
+        x402Version: paymentPayload.x402Version ?? 2,
         paymentPayload,
         paymentRequirements: requirements,
       }),
@@ -179,8 +181,8 @@ async function settlePayment(
 }
 
 async function main(): Promise<void> {
-  const paymentRequirements = await buildPaymentRequirements();
-  const analyzePrice = paymentRequirements[0]?.description ?? "USDC per call";
+  const paymentConfig = await buildPaymentConfig();
+  const analyzePrice = paymentConfig.priceDescription;
   const app = express();
 
   app.post(
@@ -221,21 +223,27 @@ async function main(): Promise<void> {
           }
 
           if (!paymentHeader) {
-            res.status(402).json({
-              x402Version: 2,
-              error: "Payment required",
-              accepts: paymentRequirements,
-            });
+            const { body: respBody, headerValue } = buildPaymentRequiredResponse(
+              paymentConfig,
+              "X-PAYMENT header is required",
+            );
+            res
+              .status(402)
+              .set("PAYMENT-REQUIRED", headerValue)
+              .json(respBody);
             return;
           }
 
-          const settled = await settlePayment(paymentHeader, paymentRequirements[0]);
+          const settled = await settlePayment(paymentHeader, paymentConfig.accepts[0]);
           if (!settled) {
-            res.status(402).json({
-              x402Version: 2,
-              error: "Payment settlement failed — invalid or already-used payment",
-              accepts: paymentRequirements,
-            });
+            const { body: respBody, headerValue } = buildPaymentRequiredResponse(
+              paymentConfig,
+              "Payment settlement failed — invalid or already-used payment",
+            );
+            res
+              .status(402)
+              .set("PAYMENT-REQUIRED", headerValue)
+              .json(respBody);
             return;
           }
         }
