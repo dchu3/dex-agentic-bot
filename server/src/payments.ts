@@ -3,8 +3,11 @@
  *
  * The x402 protocol (https://x402.org) enables machine-to-machine HTTP payments.
  * Clients must include a signed USDC TransferChecked transaction in the X-PAYMENT
- * header; the facilitator verifies and settles it on Solana before the server
+ * header; the facilitator verifies and settles it on-chain before the server
  * proceeds with the request.
+ *
+ * Default facilitator: Coinbase CDP (mainnet).
+ * For testing on devnet, set X402_FACILITATOR_URL=https://x402.org/facilitator
  *
  * Payment flow:
  *   1. Client calls tool → server returns 402 + payment requirements
@@ -14,7 +17,7 @@
  */
 
 export const FACILITATOR_URL =
-  process.env.X402_FACILITATOR_URL ?? "https://x402.org/facilitator";
+  process.env.X402_FACILITATOR_URL ?? "https://api.cdp.coinbase.com/platform/v2/x402";
 
 /** USDC mint on Solana mainnet (6 decimals). */
 const USDC_MAINNET = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";

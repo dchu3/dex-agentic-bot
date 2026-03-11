@@ -326,7 +326,7 @@ The x402 MCP endpoint (`POST /mcp`) returns a structured JSON report designed fo
 | `SERVER_WALLET_ADDRESS` | ✅ | — | Solana wallet to receive USDC payments |
 | `SERVER_PRICE_ANALYZE` | ❌ | `0.75` | Price per analysis in USDC |
 | `SERVER_SOLANA_NETWORK` | ❌ | `solana` | `solana` (mainnet) or `solana-devnet` |
-| `X402_FACILITATOR_URL` | ❌ | `https://x402.org/facilitator` | x402 payment facilitator |
+| `X402_FACILITATOR_URL` | ❌ | `https://api.cdp.coinbase.com/platform/v2/x402` | x402 payment facilitator (use `https://x402.org/facilitator` for devnet testing) |
 | `PYTHON_API_URL` | ❌ | `http://localhost:8080` | Internal analysis service URL |
 | `SERVER_PORT` | ❌ | `4022` | MCP server listen port |
 
