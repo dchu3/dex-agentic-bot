@@ -70,6 +70,7 @@ def reset_server_state(monkeypatch):
     """Reset module-level state so tests do not depend on app lifespan startup."""
     monkeypatch.setattr(api_server, "_token_analyzer", None)
     monkeypatch.setattr(api_server, "_mcp_manager", None)
+    monkeypatch.setattr(api_server, "_internal_api_secret", "")
     monkeypatch.setattr(api_server.app.router, "lifespan_context", _noop_lifespan)
 
 
@@ -213,3 +214,79 @@ async def test_analyze_internal_error_returns_generic_message(monkeypatch):
 
     assert response.status_code == 500
     assert response.json()["detail"] == "Analysis failed due to an internal error"
+
+
+@pytest.mark.asyncio
+async def test_analyze_returns_403_without_secret_when_configured(monkeypatch):
+    """When INTERNAL_API_SECRET is set, requests without the header are rejected."""
+    monkeypatch.setattr(api_server, "_internal_api_secret", "supersecret")
+    monkeypatch.setattr(api_server, "_token_analyzer", MagicMock())
+
+    transport = ASGITransport(app=api_server.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/analyze", json={"address": _VALID_EVM_ADDR})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Forbidden"
+
+
+@pytest.mark.asyncio
+async def test_analyze_returns_403_with_wrong_secret(monkeypatch):
+    """Requests bearing an incorrect X-Internal-API-Key are rejected."""
+    monkeypatch.setattr(api_server, "_internal_api_secret", "supersecret")
+    monkeypatch.setattr(api_server, "_token_analyzer", MagicMock())
+
+    transport = ASGITransport(app=api_server.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/analyze",
+            json={"address": _VALID_EVM_ADDR},
+            headers={"X-Internal-API-Key": "wrongsecret"},
+        )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Forbidden"
+
+
+@pytest.mark.asyncio
+async def test_analyze_proceeds_with_correct_secret(monkeypatch):
+    """Requests bearing the correct X-Internal-API-Key are forwarded."""
+    monkeypatch.setattr(api_server, "_internal_api_secret", "supersecret")
+    # No analyzer set → expect 503, not 403 (proves middleware passed)
+    monkeypatch.setattr(api_server, "_token_analyzer", None)
+
+    transport = ASGITransport(app=api_server.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/analyze",
+            json={"address": _VALID_EVM_ADDR},
+            headers={"X-Internal-API-Key": "supersecret"},
+        )
+
+    assert response.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_analyze_no_secret_configured_allows_all(monkeypatch):
+    """When INTERNAL_API_SECRET is empty, no header is required (backward compat)."""
+    monkeypatch.setattr(api_server, "_internal_api_secret", "")
+    monkeypatch.setattr(api_server, "_token_analyzer", None)
+
+    transport = ASGITransport(app=api_server.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/analyze", json={"address": _VALID_EVM_ADDR})
+
+    # No secret configured → middleware is a no-op; service-not-ready check runs
+    assert response.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_health_not_gated_by_internal_secret(monkeypatch):
+    """The /health endpoint is not protected by the internal API key check."""
+    monkeypatch.setattr(api_server, "_internal_api_secret", "supersecret")
+
+    transport = ASGITransport(app=api_server.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/health")
+
+    assert response.status_code == 200

@@ -38,6 +38,7 @@ import {
 } from "./middleware.js";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8080";
+const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET ?? "";
 const SERVER_PORT = parseInt(process.env.SERVER_PORT ?? "4022", 10);
 const ANALYZE_TIMEOUT_MS = parseTimeoutMs(
   process.env.SERVER_ANALYZE_TIMEOUT_MS,
@@ -89,9 +90,15 @@ function makeMcpServer(priceDescription: string): McpServer {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), ANALYZE_TIMEOUT_MS);
       try {
+        const internalHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (INTERNAL_API_SECRET) {
+          internalHeaders["X-Internal-API-Key"] = INTERNAL_API_SECRET;
+        }
         const res = await fetch(`${PYTHON_API_URL}/analyze`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: internalHeaders,
           body: JSON.stringify({ address, chain: chain ?? null }),
           signal: controller.signal,
         });
