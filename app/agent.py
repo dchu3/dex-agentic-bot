@@ -88,14 +88,14 @@ For multiple tokens/pools, use horizontal tables:
 
 | Token | Price | 24h Change | Volume | Safety |
 |-------|-------|------------|--------|--------|
-| PEPE/WETH | $0.00001234 | +15.2% | $1.2M | ✅ Safe |
+| BONK/SOL | $0.00001234 | +15.2% | $1.2M | ✅ Safe |
 
 For single token details, use a compact vertical format:
 
 | Field | Value |
 |-------|-------|
-| Token | PEPE |
-| Address | 0x6982508... |
+| Token | BONK |
+| Address | DezXAZ8z... |
 
 Safety column values:
 - ✅ Safe - safety check passed
