@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import re
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.requests import Request as StarletteRequest
-from starlette.responses import Response as StarletteResponse
+from starlette.responses import JSONResponse, Response as StarletteResponse
 
 from app.config import load_settings
 from app.mcp_client import MCPManager
@@ -24,12 +25,15 @@ logger = logging.getLogger(__name__)
 
 _mcp_manager: Optional[MCPManager] = None
 _token_analyzer: Optional[TokenAnalyzer] = None
+_internal_api_secret: str = ""
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[type-arg]
-    global _mcp_manager, _token_analyzer
+    global _mcp_manager, _token_analyzer, _internal_api_secret
     settings = load_settings()
+
+    _internal_api_secret = settings.internal_api_secret
 
     _mcp_manager = MCPManager(
         dexscreener_cmd=settings.mcp_dexscreener_cmd,
@@ -76,6 +80,26 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class InternalAPIKeyMiddleware(BaseHTTPMiddleware):
+    """Reject requests to /analyze that do not carry a valid X-Internal-API-Key.
+
+    When INTERNAL_API_SECRET is configured, only requests bearing the matching
+    header are forwarded to the route handler.  This prevents direct bypass of
+    the x402 payment enforcement layer in the TypeScript MCP gateway.
+
+    When INTERNAL_API_SECRET is not set the middleware is a no-op so that local
+    development (no shared secret configured) continues to work.
+    """
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        if request.url.path == "/analyze" and _internal_api_secret:
+            provided = request.headers.get("X-Internal-API-Key", "")
+            if not hmac.compare_digest(provided, _internal_api_secret):
+                return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+        return await call_next(request)
+
+
+app.add_middleware(InternalAPIKeyMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
 trusted_hosts = os.environ.get(

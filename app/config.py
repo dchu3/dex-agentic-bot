@@ -98,6 +98,12 @@ class Settings(BaseSettings):
         alias="SOLANA_RPC_URL",
     )
 
+    # Internal API secret — shared between the MCP gateway and the FastAPI analysis
+    # service.  Must be set to a strong random value in production.  When set, the
+    # FastAPI /analyze endpoint rejects any request that does not carry the matching
+    # X-Internal-API-Key header, preventing direct bypass of x402 payment enforcement.
+    internal_api_secret: str = Field(default="", alias="INTERNAL_API_SECRET")
+
     # Trader MCP environment — forwarded to the trader subprocess
     solana_private_key: str = Field(default="", alias="SOLANA_PRIVATE_KEY")
     jupiter_api_base: str = Field(default="", alias="JUPITER_API_BASE")
