@@ -36,7 +36,7 @@ def _parse_token_and_chain(args: List[str]) -> Tuple[str, Optional[str]]:
     Examples:
         ["OLIVE", "OIL"] -> ("OLIVE OIL", None)
         ["OLIVE", "OIL", "solana"] -> ("OLIVE OIL", "solana")
-        ["PEPE", "ethereum"] -> ("PEPE", "ethereum")
+        ["PEPE", "solana"] -> ("PEPE", "solana")
         ["PEPE"] -> ("PEPE", None)
     """
     if not args:

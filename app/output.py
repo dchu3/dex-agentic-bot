@@ -344,7 +344,7 @@ class CLIOutput:
             print("  /portfolio set [param] [val] View/change runtime params")
             print("\n  /help             Show this help")
             print("\nExamples:")
-            print("  > search for PEPE on ethereum")
+            print("  > search for BONK on solana")
             print("  > trending tokens on solana")
             print("  > /portfolio run")
             return
@@ -387,7 +387,7 @@ class CLIOutput:
         # Examples
         examples = Text()
         examples.append("\n📝 Examples:\n", style="bold")
-        examples.append("  > search for PEPE on ethereum\n", style="dim italic")
+        examples.append("  > search for BONK on solana\n", style="dim italic")
         examples.append("  > trending tokens on solana\n", style="dim italic")
         examples.append("  > /portfolio run", style="dim italic")
 

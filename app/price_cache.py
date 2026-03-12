@@ -48,7 +48,7 @@ class PriceCache:
         """Get cached price data if available and not expired.
         
         Args:
-            chain: Blockchain network (e.g., 'ethereum', 'solana')
+            chain: Blockchain network (e.g., 'solana')
             token_address: Token contract address
             
         Returns:
