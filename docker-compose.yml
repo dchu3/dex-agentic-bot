@@ -43,7 +43,7 @@ services:
       PYTHON_API_URL: http://api-service:8080
       # INTERNAL_API_SECRET is forwarded from the .env file via env_file above;
       # listing it here makes the dependency explicit.
-      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-}
     ports:
       - "4022:4022"
     depends_on:
