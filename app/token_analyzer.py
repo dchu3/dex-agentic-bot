@@ -874,7 +874,7 @@ class TokenAnalyzer:
         """Build DexScreener URL for the token.
         
         Args:
-            chain: Blockchain name (e.g., 'solana', 'ethereum')
+            chain: Blockchain name (e.g., 'solana')
             pair_address: Liquidity pair address (preferred)
             token_address: Token contract address (fallback for search)
             
