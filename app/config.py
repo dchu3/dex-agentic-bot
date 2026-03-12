@@ -33,10 +33,6 @@ class Settings(BaseSettings):
         default="dexpaprika-mcp",
         alias="MCP_DEXPAPRIKA_CMD",
     )
-    mcp_honeypot_cmd: str = Field(
-        default="node /path/to/dex-honeypot-mcp/dist/index.js",
-        alias="MCP_HONEYPOT_CMD",
-    )
     mcp_rugcheck_cmd: str = Field(
         default="",
         alias="MCP_RUGCHECK_CMD",
@@ -44,10 +40,6 @@ class Settings(BaseSettings):
     mcp_solana_rpc_cmd: str = Field(
         default="",
         alias="MCP_SOLANA_RPC_CMD",
-    )
-    mcp_blockscout_cmd: str = Field(
-        default="",
-        alias="MCP_BLOCKSCOUT_CMD",
     )
     mcp_trader_cmd: str = Field(
         default="",

@@ -11,7 +11,6 @@ from app.token_analyzer import (
     detect_chain,
     is_valid_token_address,
     normalize_chain_identifier,
-    EVM_ADDRESS_PATTERN,
     SOLANA_ADDRESS_PATTERN,
 )
 from app.formatting import format_price, format_large_number
@@ -21,11 +20,10 @@ class TestAddressDetection:
     """Tests for address detection functions."""
 
     def test_detect_evm_address(self):
-        """Test EVM address detection."""
-        # Valid EVM addresses
-        assert detect_chain("0x6982508145454Ce325dDbE47a25d4ec3d2311933") == "ethereum"
-        assert detect_chain("0xdAC17F958D2ee523a2206206994597C13D831ec7") == "ethereum"
-        assert detect_chain("0x0000000000000000000000000000000000000000") == "ethereum"
+        """EVM addresses are no longer detected (Solana-only)."""
+        assert detect_chain("0x6982508145454Ce325dDbE47a25d4ec3d2311933") is None
+        assert detect_chain("0xdAC17F958D2ee523a2206206994597C13D831ec7") is None
+        assert detect_chain("0x0000000000000000000000000000000000000000") is None
         
     def test_detect_solana_address(self):
         """Test Solana address detection."""
@@ -42,11 +40,11 @@ class TestAddressDetection:
         assert detect_chain("hello world") is None
 
     def test_is_valid_token_address_evm(self):
-        """Test EVM address validation."""
-        assert is_valid_token_address("0x6982508145454Ce325dDbE47a25d4ec3d2311933")
-        assert is_valid_token_address("  0x6982508145454Ce325dDbE47a25d4ec3d2311933  ")  # With whitespace
-        assert not is_valid_token_address("0x123")  # Too short
-        assert not is_valid_token_address("0xGGGG508145454Ce325dDbE47a25d4ec3d2311933")  # Invalid hex
+        """EVM addresses are no longer considered valid (Solana-only)."""
+        assert not is_valid_token_address("0x6982508145454Ce325dDbE47a25d4ec3d2311933")
+        assert not is_valid_token_address("  0x6982508145454Ce325dDbE47a25d4ec3d2311933  ")
+        assert not is_valid_token_address("0x123")
+        assert not is_valid_token_address("0xGGGG508145454Ce325dDbE47a25d4ec3d2311933")
 
     def test_is_valid_token_address_solana(self):
         """Test Solana address validation."""
@@ -62,11 +60,12 @@ class TestAddressDetection:
 
     def test_normalize_chain_identifier(self):
         """Test chain alias normalization."""
-        assert normalize_chain_identifier(" ETH ") == "ethereum"
-        assert normalize_chain_identifier("Ethereum") == "ethereum"
         assert normalize_chain_identifier(" SOL ") == "solana"
-        assert normalize_chain_identifier("Binance Smart Chain") == "bsc"
+        assert normalize_chain_identifier("Solana") == "solana"
         assert normalize_chain_identifier("  ") is None
+        # EVM aliases are no longer mapped
+        assert normalize_chain_identifier("ETH") == "eth"
+        assert normalize_chain_identifier("Ethereum") == "ethereum"
 
 
 class TestTokenData:
@@ -75,22 +74,22 @@ class TestTokenData:
     def test_create_token_data(self):
         """Test creating TokenData."""
         data = TokenData(
-            address="0x6982508145454Ce325dDbE47a25d4ec3d2311933",
-            chain="ethereum",
-            symbol="PEPE",
-            name="Pepe",
+            address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+            chain="solana",
+            symbol="BONK",
+            name="Bonk",
             price_usd=0.00001234,
         )
-        assert data.address == "0x6982508145454Ce325dDbE47a25d4ec3d2311933"
-        assert data.chain == "ethereum"
-        assert data.symbol == "PEPE"
+        assert data.address == "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+        assert data.chain == "solana"
+        assert data.symbol == "BONK"
         assert data.safety_status == "Unverified"
         assert data.pools == []
         assert data.errors == []
 
     def test_token_data_defaults(self):
         """Test TokenData default values."""
-        data = TokenData(address="0x123", chain="ethereum")
+        data = TokenData(address="So11111111111111111111111111111111111111112", chain="solana")
         assert data.symbol is None
         assert data.price_usd is None
         assert data.safety_data is None
@@ -120,13 +119,6 @@ class TestTokenAnalyzer:
             }]
         })
         
-        # Mock honeypot client
-        honeypot = AsyncMock()
-        honeypot.call_tool = AsyncMock(return_value={
-            "isHoneypot": False,
-            "simulationResult": {"buyTax": 0, "sellTax": 0},
-        })
-        
         # Mock rugcheck client
         rugcheck = AsyncMock()
         rugcheck.call_tool = AsyncMock(return_value={
@@ -135,10 +127,6 @@ class TestTokenAnalyzer:
             "score_normalised": 100,
         })
         
-        # Mock blockscout client (returns no holders by default)
-        blockscout = AsyncMock()
-        blockscout.call_tool = AsyncMock(return_value={"items": []})
-        
         # Mock solana client (returns no holders by default)
         solana = AsyncMock()
         solana.call_tool = AsyncMock(return_value={"value": []})
@@ -146,9 +134,7 @@ class TestTokenAnalyzer:
         def get_client(name):
             clients = {
                 "dexscreener": dexscreener,
-                "honeypot": honeypot,
                 "rugcheck": rugcheck,
-                "blockscout": blockscout,
                 "solana": solana,
             }
             return clients.get(name)
@@ -262,8 +248,8 @@ class TestTokenAnalyzer:
         assert token_data.holder_concentration_risk == "medium"
 
     @pytest.mark.asyncio
-    async def test_analyze_evm_token(self, mock_mcp_manager):
-        """Test analyzing an EVM token."""
+    async def test_analyze_solana_token_basic(self, mock_mcp_manager):
+        """Test analyzing a Solana token (basic path)."""
         with patch("app.token_analyzer.genai") as mock_genai:
             # Mock Gemini responses: structured JSON + free-text (tweet reuses verdict)
             structured_response = MagicMock()
@@ -304,12 +290,12 @@ class TestTokenAnalyzer:
             )
             
             report = await analyzer.analyze(
-                "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
-                "ethereum"
+                "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+                "solana"
             )
             
             assert isinstance(report, AnalysisReport)
-            assert report.token_data.chain == "ethereum"
+            assert report.token_data.chain == "solana"
             assert report.token_data.symbol == "PEPE"
             assert report.token_data.safety_status == "Safe"
             assert report.structured is not None
@@ -408,11 +394,11 @@ class TestTokenAnalyzer:
 
             analyzer = TokenAnalyzer(api_key="test-key", mcp_manager=mock_mcp_manager)
             report = await analyzer.analyze(
-                "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
-                " ETH ",
+                "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+                " SOL ",
             )
 
-            assert report.token_data.chain == "ethereum"
+            assert report.token_data.chain == "solana"
 
     @pytest.mark.asyncio
     async def test_analyze_structured_only_skips_legacy_generation(self, mock_mcp_manager):
@@ -443,8 +429,8 @@ class TestTokenAnalyzer:
 
             analyzer = TokenAnalyzer(api_key="test-key", mcp_manager=mock_mcp_manager)
             report = await analyzer.analyze(
-                "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
-                "ethereum",
+                "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+                "solana",
                 structured=True,
                 legacy_output=False,
             )
@@ -463,8 +449,8 @@ class TestTokenAnalyzer:
 
         with pytest.raises(ValueError, match="At least one"):
             await analyzer.analyze(
-                "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
-                "ethereum",
+                "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+                "solana",
                 structured=False,
                 legacy_output=False,
             )
@@ -523,9 +509,9 @@ class TestTokenAnalyzer:
                 mcp_manager=mock_mcp_manager,
             )
             
-            # EVM address - should auto-detect as ethereum
-            report = await analyzer.analyze("0x6982508145454Ce325dDbE47a25d4ec3d2311933")
-            assert report.token_data.chain == "ethereum"
+            # EVM address - should no longer auto-detect (Solana-only)
+            with pytest.raises(ValueError):
+                await analyzer.analyze("0x6982508145454Ce325dDbE47a25d4ec3d2311933")
             
             # Solana address - should auto-detect as solana
             report = await analyzer.analyze("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263")
@@ -576,8 +562,8 @@ class TestTokenAnalyzer:
             )
 
             report = await analyzer.analyze(
-                "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
-                "ethereum",
+                "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+                "solana",
             )
             assert any("Invalid pair data" in e for e in report.token_data.errors)
 
@@ -588,17 +574,17 @@ class TestTelegramReportFormatting:
     def test_format_telegram_report_structure(self):
         """Test that Telegram report has expected structure."""
         token_data = TokenData(
-            address="0x6982508145454Ce325dDbE47a25d4ec3d2311933",
-            chain="ethereum",
-            symbol="PEPE",
-            name="Pepe",
+            address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+            chain="solana",
+            symbol="BONK",
+            name="Bonk",
             price_usd=0.00001234,
             price_change_24h=5.5,
             volume_24h=1000000,
             liquidity_usd=5000000,
             market_cap=5000000000,
             safety_status="Safe",
-            pools=[{"dex": "uniswap", "liquidity": 3000000}],
+            pools=[{"dex": "raydium", "liquidity": 3000000}],
         )
         
         with patch("app.token_analyzer.genai"):
@@ -611,8 +597,8 @@ class TestTelegramReportFormatting:
             
             # Check expected sections
             assert "Token Analysis Report" in report
-            assert "PEPE" in report
-            assert "Ethereum" in report
+            assert "BONK" in report
+            assert "Solana" in report
             assert "Price &amp; Market" in report
             assert "Liquidity" in report
             assert "Safety Check" in report
@@ -623,17 +609,17 @@ class TestTelegramReportFormatting:
     def test_format_tweet_report_structure(self):
         """Test that tweet report has expected concise structure."""
         token_data = TokenData(
-            address="0x6982508145454Ce325dDbE47a25d4ec3d2311933",
-            chain="ethereum",
-            symbol="PEPE",
-            name="Pepe",
+            address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+            chain="solana",
+            symbol="BONK",
+            name="Bonk",
             price_usd=0.00001234,
             price_change_24h=5.5,
             volume_24h=1000000,
             liquidity_usd=5000000,
             market_cap=5000000000,
             safety_status="Safe",
-            pools=[{"dex": "uniswap", "pair": "0xabc", "liquidity": 3000000}],
+            pools=[{"dex": "raydium", "pair": "So1anapair", "liquidity": 3000000}],
         )
         
         with patch("app.token_analyzer.genai"):
@@ -644,8 +630,8 @@ class TestTelegramReportFormatting:
             
             report = analyzer._format_tweet_report(token_data, "Looks solid.")
             
-            assert "PEPE" in report
-            assert "Ethereum" in report
+            assert "BONK" in report
+            assert "Solana" in report
             assert "✅ Safe" in report
             assert "Looks solid." in report
             assert "+5.50%" in report
@@ -657,15 +643,15 @@ class TestTelegramReportFormatting:
     def test_format_tweet_report_length(self):
         """Test that tweet report stays concise."""
         token_data = TokenData(
-            address="0x6982508145454Ce325dDbE47a25d4ec3d2311933",
-            chain="ethereum",
-            symbol="PEPE",
-            name="Pepe",
+            address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+            chain="solana",
+            symbol="BONK",
+            name="Bonk",
             price_usd=0.00001234,
             price_change_24h=-12.3,
             market_cap=5000000000,
             safety_status="Risky",
-            pools=[{"dex": "uniswap", "pair": "0xabc", "liquidity": 3000000}],
+            pools=[{"dex": "raydium", "pair": "So1anapair", "liquidity": 3000000}],
         )
         
         with patch("app.token_analyzer.genai"):
@@ -830,96 +816,3 @@ class TestRugcheckResultHandling:
         await analyzer._fetch_rugcheck_data("So1ana", token_data)
         assert token_data.safety_status == "Unverified"
         assert any("not available" in e.lower() for e in token_data.errors)
-
-
-class TestEVMHolderConcentration:
-    """Tests for _fetch_holder_data_evm via Blockscout."""
-
-    @pytest.fixture
-    def analyzer_with_blockscout(self):
-        """Analyzer with blockscout mock, no other clients."""
-        manager = MagicMock()
-        blockscout = AsyncMock()
-        manager.get_client = lambda name: blockscout if name == "blockscout" else None
-
-        with patch("app.token_analyzer.genai"):
-            analyzer = TokenAnalyzer(api_key="test-key", mcp_manager=manager)
-
-        return analyzer, blockscout
-
-    @pytest.mark.asyncio
-    async def test_low_concentration(self, analyzer_with_blockscout):
-        """<30% total -> concentration_risk='low'."""
-        analyzer, blockscout = analyzer_with_blockscout
-        blockscout.call_tool = AsyncMock(return_value={
-            "items": [{"percentage": 5.0}, {"percentage": 4.5}, {"percentage": 4.0}]
-        })
-        token_data = TokenData(address="0xABC", chain="ethereum")
-        await analyzer._fetch_holder_data_evm("0xABC", "ethereum", token_data)
-
-        assert token_data.top_10_holders_pct == 13.5
-        assert token_data.holder_concentration_risk == "low"
-
-    @pytest.mark.asyncio
-    async def test_medium_concentration(self, analyzer_with_blockscout):
-        """>=30% and <60% total -> concentration_risk='medium'."""
-        analyzer, blockscout = analyzer_with_blockscout
-        blockscout.call_tool = AsyncMock(return_value={
-            "items": [{"percentage": 20.0}, {"percentage": 15.0}, {"percentage": 5.0}]
-        })
-        token_data = TokenData(address="0xABC", chain="ethereum")
-        await analyzer._fetch_holder_data_evm("0xABC", "ethereum", token_data)
-
-        assert token_data.top_10_holders_pct == 40.0
-        assert token_data.holder_concentration_risk == "medium"
-
-    @pytest.mark.asyncio
-    async def test_high_concentration(self, analyzer_with_blockscout):
-        """>=60% total -> concentration_risk='high'."""
-        analyzer, blockscout = analyzer_with_blockscout
-        blockscout.call_tool = AsyncMock(return_value={
-            "items": [{"percentage": 40.0}, {"percentage": 25.0}]
-        })
-        token_data = TokenData(address="0xABC", chain="ethereum")
-        await analyzer._fetch_holder_data_evm("0xABC", "ethereum", token_data)
-
-        assert token_data.top_10_holders_pct == 65.0
-        assert token_data.holder_concentration_risk == "high"
-
-    @pytest.mark.asyncio
-    async def test_empty_items_no_concentration(self, analyzer_with_blockscout):
-        """Empty items leaves holder data unset."""
-        analyzer, blockscout = analyzer_with_blockscout
-        blockscout.call_tool = AsyncMock(return_value={"items": []})
-        token_data = TokenData(address="0xABC", chain="ethereum")
-        await analyzer._fetch_holder_data_evm("0xABC", "ethereum", token_data)
-
-        assert token_data.top_10_holders_pct is None
-        assert token_data.holder_concentration_risk is None
-
-    @pytest.mark.asyncio
-    async def test_zero_percentage_items_no_concentration(self, analyzer_with_blockscout):
-        """All-zero percentage items must not produce a phantom 0.0% low-risk snapshot."""
-        analyzer, blockscout = analyzer_with_blockscout
-        blockscout.call_tool = AsyncMock(return_value={
-            "items": [{"percentage": 0.0}, {"percentage": 0.0}]
-        })
-        token_data = TokenData(address="0xABC", chain="ethereum")
-        await analyzer._fetch_holder_data_evm("0xABC", "ethereum", token_data)
-
-        assert token_data.top_10_holders_pct is None
-        assert token_data.holder_concentration_risk is None
-
-    @pytest.mark.asyncio
-    async def test_no_blockscout_client(self):
-        """Missing blockscout client leaves holder data unset."""
-        manager = MagicMock()
-        manager.get_client = lambda name: None
-
-        with patch("app.token_analyzer.genai"):
-            analyzer = TokenAnalyzer(api_key="test-key", mcp_manager=manager)
-
-        token_data = TokenData(address="0xABC", chain="ethereum")
-        await analyzer._fetch_holder_data_evm("0xABC", "ethereum", token_data)
-
-        assert token_data.top_10_holders_pct is None

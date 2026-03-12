@@ -83,7 +83,7 @@ function makeMcpServer(priceDescription: string): McpServer {
         .string()
         .optional()
         .describe(
-          "Blockchain network, e.g. solana, ethereum, base (auto-detected if omitted)"
+          "Blockchain network (currently only 'solana' is supported, auto-detected if omitted)"
         ),
     },
     async ({ address, chain }) => {

@@ -20,13 +20,12 @@ HELP_MESSAGE = """🔍 <b>Token Safety &amp; Analysis Bot</b>
 Send me any token address and I'll analyze it for you!
 
 <b>Supported Formats:</b>
-• EVM (Ethereum/BSC/Base): <code>0x...</code>
-• Solana: Base58 address
+• Solana: Base58 address (e.g., <code>So11111111111111111111111111111111111111112</code>)
 
 <b>What You Get:</b>
 📊 Price &amp; market data
 💧 Liquidity info
-🛡️ Safety check (honeypot/rugcheck)
+🛡️ Safety check (rugcheck)
 🤖 AI-powered analysis
 
 <b>Commands:</b>

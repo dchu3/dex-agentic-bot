@@ -118,7 +118,6 @@ curl -X POST http://localhost:4022/mcp \
     │
     ├── DexScreener MCP    ← price data
     ├── Rugcheck MCP       ← Solana safety
-    ├── Honeypot MCP       ← EVM safety
     └── Gemini API         ← AI synthesis
     ▼
 Full report returned to paying client

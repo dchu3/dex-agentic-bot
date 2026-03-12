@@ -38,10 +38,8 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
     _mcp_manager = MCPManager(
         dexscreener_cmd=settings.mcp_dexscreener_cmd,
         dexpaprika_cmd=settings.mcp_dexpaprika_cmd,
-        honeypot_cmd=settings.mcp_honeypot_cmd,
         rugcheck_cmd=settings.mcp_rugcheck_cmd,
         solana_rpc_cmd=settings.mcp_solana_rpc_cmd,
-        blockscout_cmd=settings.mcp_blockscout_cmd,
         call_timeout=float(settings.mcp_call_timeout),
         solana_rpc_url=settings.solana_rpc_url,
     )
@@ -117,8 +115,7 @@ app.add_middleware(
 # -- Address validation patterns --
 
 SOLANA_ADDRESS_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
-EVM_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
-ALLOWED_CHAINS = {"solana", "ethereum", "bsc", "base"}
+ALLOWED_CHAINS = {"solana"}
 
 
 class AnalyzeRequest(BaseModel):
@@ -188,7 +185,7 @@ async def analyze_token(request: AnalyzeRequest) -> AnalyzeResponse:
     if not address:
         raise HTTPException(status_code=400, detail="address is required")
 
-    if not SOLANA_ADDRESS_RE.match(address) and not EVM_ADDRESS_RE.match(address):
+    if not SOLANA_ADDRESS_RE.match(address):
         raise HTTPException(status_code=400, detail="Invalid address format")
 
     normalized_chain = normalize_chain_identifier(request.chain)

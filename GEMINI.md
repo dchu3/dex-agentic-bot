@@ -4,8 +4,8 @@ The DEX Agentic Bot is a CLI and Telegram bot for token safety analysis and auto
 
 ## Key Features:
 - **Agentic AI:** Gemini AI for natural language understanding and intelligent tool selection.
-- **Blockchain Agnostic:** Supports Ethereum, BSC, Base, and Solana.
-- **Safety Checks:** Honeypot detection (EVM) and Rugcheck (Solana).
+- **Solana-Focused:** Full end-to-end support for Solana tokens.
+- **Safety Checks:** Rugcheck token safety analysis (Solana).
 - **Interactive CLI:** REPL mode with conversation memory and context management.
 - **Telegram Bot:** Send a token address, get an AI-powered analysis report.
 - **Portfolio Strategy:** Autonomous token discovery, position management, and exit execution with trailing stops (Solana).
@@ -45,8 +45,8 @@ User Query → AgenticPlanner → Gemini AI ─┬→ MCP Clients → External A
                      │
     ┌────────┬───────┼───────┬────────┬────────┐
     ▼        ▼       ▼       ▼        ▼        ▼
-DexScreener DexPap Honeypot Rugcheck Blockscout Trader
-  (price)  (pools)  (EVM)  (Solana)   (Base)  (Solana)
+DexScreener DexPap Rugcheck Solana  Trader
+  (price)  (pools) (safety)  (RPC) (trading)
 ```
 
 The **Portfolio Strategy** runs as a separate subsystem:
@@ -117,7 +117,7 @@ Copy `.env.example` to `.env` and fill in your `GEMINI_API_KEY` and MCP server p
 
 ```bash
 # Single query
-./scripts/start.sh "search for PEPE on ethereum"
+./scripts/start.sh "search for BONK on solana"
 
 # Interactive mode
 ./scripts/start.sh --interactive
@@ -141,7 +141,7 @@ python -m app "your query"
 
 ### Tool Naming
 
-MCP tools are namespaced as `{client}_{method}` (e.g., `dexscreener_search_pairs`, `honeypot_check_honeypot`). The `parse_function_call_name()` function in `tool_converter.py` splits these back into client and method.
+MCP tools are namespaced as `{client}_{method}` (e.g., `dexscreener_search_pairs`, `rugcheck_check_token`). The `parse_function_call_name()` function in `tool_converter.py` splits these back into client and method.
 
 ### Async Patterns
 

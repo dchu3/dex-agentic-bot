@@ -19,11 +19,11 @@ An AI-powered CLI and Telegram bot for token safety checks, market analysis, and
 ## Features
 
 - 🔍 **AI Token Analysis** — Send a token address (CLI or Telegram), get a detailed safety & market report
-- 🛡️ **Safety Checks** — Honeypot detection (EVM) and Rugcheck (Solana)
+- 🛡️ **Safety Checks** — Rugcheck token safety analysis (Solana)
 - 📊 **Market Data** — Price, volume, liquidity, market cap via DexScreener & DexPaprika
 - 📈 **Portfolio Strategy** — Autonomous token discovery → buy → hold → exit at TP/SL with trailing stops (Solana)
 - 🤖 **Gemini AI** — Natural language queries, intelligent tool selection, risk assessment
-- ⚡ **Multi-Chain** — Supports Ethereum, BSC, Base, and Solana
+- ⚡ **Solana-Focused** — Full end-to-end support: analysis, safety, trading, and portfolio management
 
 ## Quick Start
 
@@ -35,7 +35,7 @@ The easiest way to get started. All MCP servers are pre-built and bundled in the
 git clone https://github.com/dchu3/dex-agentic-bot && cd dex-agentic-bot
 cp .env.example .env
 # Edit .env — set GEMINI_API_KEY (required). Docker injects MCP commands automatically.
-docker compose run --rm bot "search for PEPE on ethereum"
+docker compose run --rm bot "search for BONK on solana"
 ```
 
 **Run modes:**
@@ -45,7 +45,7 @@ docker compose run --rm bot "search for PEPE on ethereum"
 docker compose up
 
 # Single query
-docker compose run --rm bot "search for PEPE on ethereum"
+docker compose run --rm bot "search for BONK on solana"
 
 # Telegram bot only
 docker compose run --rm bot --telegram-only
@@ -83,10 +83,8 @@ GEMINI_MODEL=gemini-3-flash-preview
 # MCP Servers (token data sources)
 MCP_DEXSCREENER_CMD=node /path/to/dex-screener-mcp/dist/index.js
 MCP_DEXPAPRIKA_CMD=dexpaprika-mcp
-MCP_HONEYPOT_CMD=node /path/to/dex-honeypot-mcp/dist/index.js
 MCP_RUGCHECK_CMD=node /path/to/dex-rugcheck-mcp/dist/index.js
 MCP_SOLANA_RPC_CMD=node /path/to/solana-rpc-mcp/dist/index.js
-MCP_BLOCKSCOUT_CMD=node /path/to/dex-blockscout-mcp/dist/index.js
 MCP_TRADER_CMD=node /path/to/dex-trader-mcp/dist/index.js
 
 # Timeout (seconds) for MCP tool calls (default: 90)
@@ -138,7 +136,7 @@ To find your chat ID, send a message to your bot and check the logs, or use [@us
 ./scripts/start.sh --interactive
 
 # Single query
-./scripts/start.sh "search for PEPE on ethereum"
+./scripts/start.sh "search for BONK on solana"
 
 # Portfolio strategy (dry-run)
 ./scripts/start.sh --interactive --portfolio
@@ -151,8 +149,7 @@ To find your chat ID, send a message to your bot and check the logs, or use [@us
 
 ### Telegram Bot
 
-Send any token address to your bot:
-- EVM: `0x6982508145454Ce325dDbE47a25d4ec3d2311933`
+Send any Solana token address to your bot:
 - Solana: `DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263`
 
 | Command | Description |
@@ -250,12 +247,12 @@ The Telegram/CLI bot shows a human-readable report:
 
 ```
 🔍 Token Analysis Report
-Token: PEPE | Chain: Ethereum
-Address: 0x6982508145454Ce325dDbE47a25d4ec3d2311933
+Token: BONK | Chain: Solana
+Address: DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263
 
 💰 Price: $0.00001234 (🟢 +5.20%)
 📊 MCap: $5.20B | Vol 24h: $234M | Liq: $45.2M
-💧 Top Pool: uniswap ($23.0M)
+💧 Top Pool: raydium ($23.0M)
 🛡️ Safety: ✅ Safe
    Risk Score: 0.0/10 (low)
 
@@ -285,9 +282,9 @@ Payment is settled on-chain through a facilitator service. The default facilitat
 
 ```json
 {
-  "token": "PEPE",
-  "chain": "ethereum",
-  "address": "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+  "token": "BONK",
+  "chain": "solana",
+  "address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
   "timestamp": "2026-03-09T08:07:00Z",
   "price_data": {
     "price_usd": 0.00001234,
@@ -298,7 +295,7 @@ Payment is settled on-chain through a facilitator service. The default facilitat
   },
   "liquidity": {
     "total_usd": 45200000,
-    "top_pool": "uniswap",
+    "top_pool": "raydium",
     "top_pool_liquidity_usd": 23000000
   },
   "safety": {
@@ -381,7 +378,7 @@ curl https://your-domain.com/health
 | **Rate limiting** | Global (100/15min) + endpoint-specific (20/min) |
 | **CORS** | Configurable allowed origins |
 | **Security headers** | HSTS, CSP, X-Frame-Options, X-Content-Type-Options via Helmet + Caddy |
-| **Input validation** | Address format (Solana base58 / EVM hex) + chain enum |
+| **Input validation** | Address format (Solana base58) + chain enum |
 | **Error sanitization** | No internal details leaked to clients |
 | **Container hardening** | Non-root user, read-only filesystem, no-new-privileges, resource limits |
 | **Health checks** | All services monitored with restart on failure |
@@ -397,9 +394,7 @@ curl https://your-domain.com/health
 | `--stdin` | Read query from stdin |
 | `--telegram-only` | Run only the Telegram bot (no CLI) |
 | `--no-telegram` | Disable Telegram in interactive mode |
-| `--no-honeypot` | Disable honeypot MCP server |
 | `--no-rugcheck` | Disable rugcheck MCP server |
-| `--no-blockscout` | Disable blockscout MCP server |
 | `--no-trader` | Disable trader MCP server |
 | `--portfolio` | Enable portfolio strategy scheduler |
 | `--portfolio-live` | Run portfolio strategy with live execution |
@@ -426,10 +421,10 @@ curl https://your-domain.com/health
          │  (JSON-RPC / stdio)   │
          └───────────┬───────────┘
                      │
-    ┌────────┬───────┼───────┬────────┬────────┐
-    ▼        ▼       ▼       ▼        ▼        ▼
-DexScreener DexPap Honeypot Rugcheck Blockscout Trader
-  (price)  (pools)  (EVM)  (Solana)   (Base)  (Solana)
+    ┌────────┬───────┼───────┬────────┐
+    ▼        ▼       ▼       ▼        ▼
+DexScreener DexPap Rugcheck Solana  Trader
+  (price)  (pools) (safety)  (RPC) (trading)
 ```
 
 **Portfolio Strategy** runs as a separate subsystem:
@@ -467,10 +462,8 @@ python -m app "your query"
 |--------|---------|--------|
 | [dex-screener-mcp](https://github.com/dchu3/dex-screener-mcp) | Token prices, pools, volume | All |
 | [dexpaprika-mcp](https://github.com/coinpaprika/dexpaprika-mcp) | Pool details, OHLCV data | All |
-| [dex-honeypot-mcp](https://github.com/dchu3/dex-honeypot-mcp) | Honeypot detection | Ethereum, BSC, Base |
 | [dex-rugcheck-mcp](https://github.com/dchu3/dex-rugcheck-mcp) | Token safety | Solana |
 | [solana-rpc-mcp](https://github.com/dchu3/solana-rpc-mcp) | Direct Solana RPC queries | Solana |
-| [dex-blockscout-mcp](https://github.com/dchu3/dex-blockscout-mcp) | Block explorer data | Base, Ethereum |
 | [dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp) | Token trading via Jupiter | Solana |
 
 Each MCP server runs with its project root as the working directory and loads its own `.env` independently.
