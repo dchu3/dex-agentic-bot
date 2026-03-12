@@ -407,7 +407,7 @@ class TokenAnalyzer:
                 token_data.errors.append("Invalid pair data format")
                 return
             
-            # Update chain from actual result (important for EVM auto-detection)
+            # Update chain from actual DexScreener result
             actual_chain = best_pair.get("chainId")
             if actual_chain:
                 token_data.chain = actual_chain
@@ -820,7 +820,7 @@ class TokenAnalyzer:
         # Add safety details
         if token_data.safety_data:
             if isinstance(token_data.safety_data, dict):
-                # Honeypot data
+                # Simulation data (buy/sell tax)
                 sim = token_data.safety_data.get("simulationResult", {})
                 if sim:
                     lines.append(f"Buy Tax: {sim.get('buyTax', 'N/A')}%")

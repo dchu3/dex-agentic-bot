@@ -61,7 +61,6 @@ User Query → AgenticPlanner → Gemini AI ─┬→ MCP Clients → External A
 External servers that expose tools to the AI agent:
 - **dexscreener** - Token search, trending, pair data
 - **dexpaprika** - Pool details, OHLCV, network info
-- **honeypot** - Token safety checks (Ethereum/BSC/Base)
 - **rugcheck** - Solana token safety analysis
 - **solana** - Direct Solana RPC queries
 
@@ -77,7 +76,7 @@ External servers that expose tools to the AI agent:
 
 ### Tool Naming
 
-MCP tools are namespaced as `{client}_{method}` (e.g., `dexscreener_search_pairs`, `honeypot_check_honeypot`). The `parse_function_call_name()` function in `tool_converter.py` splits these back into client and method.
+MCP tools are namespaced as `{client}_{method}` (e.g., `dexscreener_search_pairs`, `rugcheck_check_token`). The `parse_function_call_name()` function in `tool_converter.py` splits these back into client and method.
 
 ### Async Patterns
 

@@ -100,7 +100,7 @@ For single token details, use a compact vertical format:
 Safety column values:
 - ✅ Safe - safety check passed
 - ⚠️ Risky - safety check shows concerns
-- ❌ Honeypot/Rug - confirmed dangerous, avoid
+- ❌ Dangerous/Rug - confirmed dangerous, avoid
 - Unverified - chain not supported or check failed
 
 ## Guidelines
