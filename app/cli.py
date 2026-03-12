@@ -23,12 +23,7 @@ from app.portfolio_strategy import PortfolioStrategyConfig, PortfolioStrategyEng
 
 # Known blockchain chain identifiers for parsing multi-word token names
 KNOWN_CHAINS = frozenset({
-    "ethereum", "eth", "solana", "sol", "base", "arbitrum", "arb",
-    "polygon", "matic", "bsc", "bnb", "avalanche", "avax", "optimism",
-    "op", "fantom", "ftm", "cronos", "cro", "gnosis", "celo", "moonbeam",
-    "moonriver", "harmony", "aurora", "metis", "boba", "kava", "linea",
-    "zksync", "scroll", "mantle", "blast", "mode", "sei", "sui", "aptos",
-    "near", "ton", "tron", "pulsechain", "pulse",
+    "solana", "sol",
 })
 
 
@@ -635,9 +630,9 @@ async def async_main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python -m app "search for PEPE on ethereum"
+  python -m app "search for BONK on solana"
   python -m app --interactive
-  python -m app --output json "top pools on base"
+  python -m app --output json "top pools on solana"
   python -m app "trending tokens"
         """,
     )
@@ -669,19 +664,9 @@ Examples:
         help="Read query from stdin",
     )
     parser.add_argument(
-        "--no-honeypot",
-        action="store_true",
-        help="Disable honeypot MCP server (faster startup)",
-    )
-    parser.add_argument(
         "--no-rugcheck",
         action="store_true",
         help="Disable rugcheck MCP server (faster startup)",
-    )
-    parser.add_argument(
-        "--no-blockscout",
-        action="store_true",
-        help="Disable blockscout MCP server (faster startup)",
     )
     parser.add_argument(
         "--no-trader",
@@ -758,19 +743,9 @@ Examples:
         _validate_command_exists(settings.mcp_dexscreener_cmd, "DexScreener")
         _validate_command_exists(settings.mcp_dexpaprika_cmd, "DexPaprika")
         _validate_command_exists(
-            settings.mcp_honeypot_cmd,
-            "Honeypot",
-            optional=args.no_honeypot or not settings.mcp_honeypot_cmd,
-        )
-        _validate_command_exists(
             settings.mcp_rugcheck_cmd,
             "Rugcheck",
             optional=args.no_rugcheck or not settings.mcp_rugcheck_cmd,
-        )
-        _validate_command_exists(
-            settings.mcp_blockscout_cmd,
-            "Blockscout",
-            optional=args.no_blockscout or not settings.mcp_blockscout_cmd,
         )
         _validate_command_exists(
             settings.mcp_trader_cmd,
@@ -797,10 +772,8 @@ Examples:
     mcp_manager = MCPManager(
         dexscreener_cmd=settings.mcp_dexscreener_cmd,
         dexpaprika_cmd=settings.mcp_dexpaprika_cmd,
-        honeypot_cmd="" if args.no_honeypot else settings.mcp_honeypot_cmd,
         rugcheck_cmd="" if args.no_rugcheck else settings.mcp_rugcheck_cmd,
         solana_rpc_cmd=settings.mcp_solana_rpc_cmd,
-        blockscout_cmd="" if args.no_blockscout else settings.mcp_blockscout_cmd,
         trader_cmd="" if args.no_trader else settings.mcp_trader_cmd,
         call_timeout=float(settings.mcp_call_timeout),
         solana_rpc_url=settings.solana_rpc_url,

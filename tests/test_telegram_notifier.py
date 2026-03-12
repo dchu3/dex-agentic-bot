@@ -214,10 +214,10 @@ async def test_handle_full_command(notifier):
         notifier, "_handle_token_address", new_callable=AsyncMock
     ) as mock_handle:
         await notifier._handle_command(
-            "/full 0x6982508145454Ce325dDbE47a25d4ec3d2311933", "123456"
+            "/full DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "123456"
         )
         mock_handle.assert_called_once_with(
-            "0x6982508145454Ce325dDbE47a25d4ec3d2311933", "123456", full=True
+            "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "123456", full=True
         )
 
 
@@ -248,10 +248,10 @@ async def test_handle_analyze_routes_without_full(notifier):
         notifier, "_handle_token_address", new_callable=AsyncMock
     ) as mock_handle:
         await notifier._handle_command(
-            "/analyze 0x6982508145454Ce325dDbE47a25d4ec3d2311933", "123456"
+            "/analyze DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "123456"
         )
         mock_handle.assert_called_once_with(
-            "0x6982508145454Ce325dDbE47a25d4ec3d2311933", "123456"
+            "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "123456"
         )
 
 
@@ -268,7 +268,7 @@ async def test_raw_address_routes_without_full(notifier):
     with patch.object(notifier, "send_message_to", new_callable=AsyncMock):
         with patch.object(notifier, "_send_long_message", new_callable=AsyncMock) as mock_send:
             await notifier._handle_token_address(
-                "0x6982508145454Ce325dDbE47a25d4ec3d2311933", "123456"
+                "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "123456"
             )
             mock_send.assert_called_once()
             sent_text = mock_send.call_args[0][1]
@@ -492,7 +492,7 @@ class TestPrivateMode:
         update = {
             "message": {
                 "chat": {"id": "stranger_chat"},
-                "text": "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+                "text": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
                 "from": {"username": "stranger"},
             }
         }

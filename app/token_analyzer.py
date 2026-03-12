@@ -22,7 +22,6 @@ if TYPE_CHECKING:
 LogCallback = Callable[[str, str, Optional[Dict[str, Any]]], None]
 
 # Regex patterns for address detection
-EVM_ADDRESS_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
 SOLANA_ADDRESS_PATTERN = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
 
@@ -118,16 +117,11 @@ def detect_chain(address: str) -> Optional[str]:
         address: Token address to analyze
         
     Returns:
-        Chain name ('ethereum', 'solana') or None if unrecognized
+        'solana' if the address matches Solana format, None otherwise
     """
     address = address.strip()
     
-    if EVM_ADDRESS_PATTERN.match(address):
-        return "ethereum"  # Default EVM chain, can be overridden
-    
     if SOLANA_ADDRESS_PATTERN.match(address):
-        # Additional check: Solana addresses don't start with 0x
-        # and typically have mixed case
         if not address.startswith("0x"):
             return "solana"
     
@@ -144,16 +138,8 @@ def normalize_chain_identifier(chain: Optional[str]) -> Optional[str]:
         return None
 
     aliases = {
-        "eth": "ethereum",
-        "ethereum": "ethereum",
         "sol": "solana",
         "solana": "solana",
-        "bsc": "bsc",
-        "bnb": "bsc",
-        "binance": "bsc",
-        "binance-smart-chain": "bsc",
-        "binance smart chain": "bsc",
-        "base": "base",
     }
     return aliases.get(normalized, normalized)
 
@@ -168,7 +154,7 @@ def is_valid_token_address(text: str) -> bool:
         True if text appears to be a token address
     """
     text = text.strip()
-    return bool(EVM_ADDRESS_PATTERN.match(text) or SOLANA_ADDRESS_PATTERN.match(text))
+    return bool(SOLANA_ADDRESS_PATTERN.match(text))
 
 
 # System prompt for token analysis (legacy free-text)
@@ -178,7 +164,7 @@ ANALYSIS_SYSTEM_PROMPT = """You are a crypto token analyst providing comprehensi
 Analyze the provided token data and generate a clear, actionable report for the user.
 
 ## Analysis Focus Areas
-1. **Safety Assessment**: Evaluate honeypot/rugcheck results, identify red flags
+1. **Safety Assessment**: Evaluate rugcheck results, identify red flags
 2. **Market Health**: Analyze liquidity depth, volume trends, price stability
 3. **Risk Factors**: Identify potential concerns (low liquidity, high taxes, centralized ownership)
 4. **Overall Rating**: Provide a clear safety verdict
@@ -281,8 +267,10 @@ class TokenAnalyzer:
         if not chain:
             chain = detect_chain(address)
             if not chain:
-                # Default to ethereum for unknown formats
-                chain = "ethereum"
+                raise ValueError(
+                    f"Unable to detect chain for address '{address}'. "
+                    "Only Solana addresses are supported."
+                )
         
         self._log("info", f"Analyzing token {address} on {chain}")
         
@@ -360,17 +348,8 @@ class TokenAnalyzer:
                 self._log("error", f"Data collection task 'holder' failed: {e}")
                 token_data.errors.append(f"holder error: {e}")
         else:
-            # EVM: safety (honeypot) and holder (blockscout) are independent
-            tasks = [
-                self._fetch_safety_data(address, resolved_chain, token_data),
-                self._fetch_holder_data(address, resolved_chain, token_data),
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    task_name = ["safety", "holder"][i]
-                    self._log("error", f"Data collection task '{task_name}' failed: {result}")
-                    token_data.errors.append(f"{task_name} error: {result}")
+            token_data.safety_status = "Unverified"
+            token_data.safety_data = {"note": f"Safety checks not available for {resolved_chain}"}
         
         return token_data
 
@@ -384,18 +363,13 @@ class TokenAnalyzer:
                 token_data.errors.append("DexScreener client not available")
                 return
             
-            # For EVM addresses with default chain, use search_pairs to auto-detect actual chain
-            if chain in ("ethereum", "eth") and EVM_ADDRESS_PATTERN.match(address):
-                self._log("tool", f"→ dexscreener_search_pairs({address})")
-                result = await client.call_tool("search_pairs", {"query": address})
-                self._log("tool", "✓ dexscreener_search_pairs")
-            else:
-                self._log("tool", f"→ dexscreener_get_token_pools({chain}, {address})")
-                result = await client.call_tool("get_token_pools", {
-                    "chainId": chain,
-                    "tokenAddress": address,
-                })
-                self._log("tool", "✓ dexscreener_get_token_pools")
+            # For Solana, use get_token_pools with chain
+            self._log("tool", f"→ dexscreener_get_token_pools({chain}, {address})")
+            result = await client.call_tool("get_token_pools", {
+                "chainId": chain,
+                "tokenAddress": address,
+            })
+            self._log("tool", "✓ dexscreener_get_token_pools")
             
             if not result:
                 token_data.errors.append("No data from DexScreener")
@@ -489,12 +463,10 @@ class TokenAnalyzer:
     async def _fetch_safety_data(
         self, address: str, chain: str, token_data: TokenData
     ) -> None:
-        """Fetch safety data from appropriate source based on chain."""
+        """Fetch safety data from rugcheck for Solana tokens."""
         try:
             if chain == "solana":
                 await self._fetch_rugcheck_data(address, token_data)
-            elif chain in ("ethereum", "eth", "bsc", "base"):
-                await self._fetch_honeypot_data(address, chain, token_data)
             else:
                 token_data.safety_status = "Unverified"
                 token_data.safety_data = {"note": f"Safety checks not available for {chain}"}
@@ -502,67 +474,6 @@ class TokenAnalyzer:
             self._log("error", f"Safety check failed: {str(e)}")
             token_data.safety_status = "Unverified"
             token_data.errors.append(f"Safety check error: {str(e)}")
-
-    async def _fetch_honeypot_data(
-        self, address: str, chain: str, token_data: TokenData
-    ) -> None:
-        """Fetch honeypot data for EVM chains."""
-        client = self.mcp_manager.get_client("honeypot")
-        if not client:
-            token_data.safety_status = "Unverified"
-            token_data.errors.append("Honeypot client not available")
-            return
-        
-        # Map chain names
-        chain_map = {"ethereum": "ethereum", "eth": "ethereum", "bsc": "bsc", "base": "base"}
-        api_chain = chain_map.get(chain.lower(), "ethereum")
-        
-        self._log("tool", f"→ honeypot_check_honeypot({address}, {api_chain})")
-        result = await client.call_tool("check_honeypot", {
-            "address": address,
-            "chain": api_chain,
-        })
-        self._log("tool", "✓ honeypot_check_honeypot")
-        
-        token_data.safety_data = result
-        
-        # Parse safety status
-        if isinstance(result, dict):
-            is_honeypot = result.get("isHoneypot", False)
-            honeypot_result = result.get("honeypotResult", {})
-            
-            if is_honeypot or honeypot_result.get("isHoneypot"):
-                token_data.safety_status = "Honeypot"
-                token_data.risk_score = 10.0
-                token_data.risk_level = "high"
-                token_data.safety_flags.append("honeypot detected")
-            else:
-                # Check for high taxes or other risks
-                simulation = result.get("simulationResult", {})
-                buy_tax = self._safe_float(simulation.get("buyTax", 0)) or 0
-                sell_tax = self._safe_float(simulation.get("sellTax", 0)) or 0
-                
-                if buy_tax > 10 or sell_tax > 10:
-                    token_data.safety_status = "Risky"
-                    token_data.risk_score = min(10.0, 5.0 + max(buy_tax, sell_tax) / 10)
-                    token_data.risk_level = "high"
-                    if buy_tax > 10:
-                        token_data.safety_flags.append(f"high buy tax ({buy_tax:.1f}%)")
-                    if sell_tax > 10:
-                        token_data.safety_flags.append(f"high sell tax ({sell_tax:.1f}%)")
-                else:
-                    token_data.safety_status = "Safe"
-                    token_data.risk_score = max(0, (buy_tax + sell_tax) / 4)
-                    token_data.risk_level = "low" if token_data.risk_score < 3 else "medium"
-            
-            # Extract contract open source status
-            contract_code = result.get("contractCode", {})
-            if isinstance(contract_code, dict):
-                open_source = contract_code.get("openSource")
-                if open_source is not None:
-                    token_data.contract_open_source = bool(open_source)
-                    if not open_source:
-                        token_data.safety_flags.append("contract not open source")
 
     async def _fetch_rugcheck_data(
         self, address: str, token_data: TokenData
@@ -662,8 +573,6 @@ class TokenAnalyzer:
         """Fetch holder concentration data for the token."""
         if chain == "solana":
             await self._fetch_holder_data_solana(address, token_data)
-        elif chain in ("ethereum", "eth", "bsc", "base"):
-            await self._fetch_holder_data_evm(address, chain, token_data)
 
     async def _fetch_holder_data_solana(
         self, address: str, token_data: TokenData
@@ -775,46 +684,6 @@ class TokenAnalyzer:
             if isinstance(value, dict):
                 return self._extract_solana_ui_amount(value)
         return None
-
-    async def _fetch_holder_data_evm(
-        self, address: str, chain: str, token_data: TokenData
-    ) -> None:
-        """Fetch holder data from Blockscout for EVM chains."""
-        client = self.mcp_manager.get_client("blockscout")
-        if not client:
-            self._log("info", "Blockscout client not available for holder data")
-            return
-
-        chain_map = {"ethereum": "ethereum", "eth": "ethereum", "bsc": "bsc", "base": "base"}
-        api_chain = chain_map.get(chain.lower(), "ethereum")
-
-        try:
-            self._log("tool", f"→ blockscout_get_token_holders({address}, {api_chain})")
-            result = await client.call_tool("get_token_holders", {
-                "address_hash": address,
-                "chain": api_chain,
-            })
-            self._log("tool", "✓ blockscout_get_token_holders")
-
-            if isinstance(result, str):
-                try:
-                    result = json.loads(result)
-                except (json.JSONDecodeError, ValueError):
-                    return
-
-            if isinstance(result, dict):
-                items = result.get("items", [])
-                if items and isinstance(items, list):
-                    holder_list = []
-                    for item in items[:10]:
-                        if isinstance(item, dict):
-                            pct = self._safe_float(item.get("percentage"))
-                            if pct:
-                                holder_list.append({"pct": pct})
-                    if holder_list:
-                        self._compute_holder_concentration(holder_list, token_data)
-        except Exception as e:
-            self._log("error", f"Blockscout holder data fetch failed: {e}")
 
     def _compute_holder_concentration(
         self, holders: List[Any], token_data: TokenData

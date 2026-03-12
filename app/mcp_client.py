@@ -373,10 +373,8 @@ class MCPManager:
         self,
         dexscreener_cmd: str,
         dexpaprika_cmd: str,
-        honeypot_cmd: str = "",
         rugcheck_cmd: str = "",
         solana_rpc_cmd: str = "",
-        blockscout_cmd: str = "",
         trader_cmd: str = "",
         call_timeout: float = 90.0,
         solana_rpc_url: str = "",
@@ -388,11 +386,9 @@ class MCPManager:
         mc = max_concurrent_per_server
         self.dexscreener = MCPClient("dexscreener", dexscreener_cmd, call_timeout=call_timeout, max_concurrent=mc)
         self.dexpaprika = MCPClient("dexpaprika", dexpaprika_cmd, call_timeout=call_timeout, max_concurrent=mc)
-        self.honeypot = MCPClient("honeypot", honeypot_cmd, call_timeout=call_timeout, max_concurrent=mc) if honeypot_cmd else None
         self.rugcheck = MCPClient("rugcheck", rugcheck_cmd, call_timeout=call_timeout, max_concurrent=mc) if rugcheck_cmd else None
         solana_extra_env = {"SOLANA_RPC_URL": solana_rpc_url} if solana_rpc_url else None
         self.solana = MCPClient("solana", solana_rpc_cmd, call_timeout=call_timeout, extra_env=solana_extra_env, max_concurrent=mc) if solana_rpc_cmd else None
-        self.blockscout = MCPClient("blockscout", blockscout_cmd, call_timeout=call_timeout, max_concurrent=mc) if blockscout_cmd else None
         # retry_on_timeout=False: trader executes swaps; retrying on timeout risks a double submission.
         self.trader = MCPClient("trader", trader_cmd, call_timeout=call_timeout, retry_on_timeout=False, extra_env=trader_env, max_concurrent=mc) if trader_cmd else None
         self._gemini_functions_cache: Optional[List["types.FunctionDeclaration"]] = None
@@ -402,14 +398,10 @@ class MCPManager:
             self.dexscreener.start(),
             self.dexpaprika.start(),
         ]
-        if self.honeypot:
-            tasks.append(self.honeypot.start())
         if self.rugcheck:
             tasks.append(self.rugcheck.start())
         if self.solana:
             tasks.append(self.solana.start())
-        if self.blockscout:
-            tasks.append(self.blockscout.start())
         if self.trader:
             tasks.append(self.trader.start())
         await asyncio.gather(*tasks)
@@ -420,14 +412,10 @@ class MCPManager:
             self.dexscreener.stop(),
             self.dexpaprika.stop(),
         ]
-        if self.honeypot:
-            tasks.append(self.honeypot.stop())
         if self.rugcheck:
             tasks.append(self.rugcheck.stop())
         if self.solana:
             tasks.append(self.solana.stop())
-        if self.blockscout:
-            tasks.append(self.blockscout.stop())
         if self.trader:
             tasks.append(self.trader.stop())
         await asyncio.gather(*tasks)
@@ -440,14 +428,10 @@ class MCPManager:
 
         all_functions: List["types.FunctionDeclaration"] = []
         clients = [self.dexscreener, self.dexpaprika]
-        if self.honeypot:
-            clients.append(self.honeypot)
         if self.rugcheck:
             clients.append(self.rugcheck)
         if self.solana:
             clients.append(self.solana)
-        if self.blockscout:
-            clients.append(self.blockscout)
         if self.trader:
             clients.append(self.trader)
         for client in clients:
@@ -491,14 +475,10 @@ class MCPManager:
         """Format all available tools as a string for inclusion in the system prompt."""
         lines = []
         clients = [self.dexscreener, self.dexpaprika]
-        if self.honeypot:
-            clients.append(self.honeypot)
         if self.rugcheck:
             clients.append(self.rugcheck)
         if self.solana:
             clients.append(self.solana)
-        if self.blockscout:
-            clients.append(self.blockscout)
         if self.trader:
             clients.append(self.trader)
         for client in clients:
@@ -544,10 +524,8 @@ class MCPManager:
         clients: Dict[str, Optional[Any]] = {
             "dexscreener": self.dexscreener,
             "dexpaprika": self.dexpaprika,
-            "honeypot": self.honeypot,
             "rugcheck": self.rugcheck,
             "solana": self.solana,
-            "blockscout": self.blockscout,
             "trader": self.trader,
         }
         return clients.get(name)

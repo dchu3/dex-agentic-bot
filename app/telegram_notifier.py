@@ -26,7 +26,7 @@ Send me any token address and I'll analyze it for you!
 <b>What You Get:</b>
 📊 Price &amp; market data
 💧 Liquidity info
-🛡️ Safety check (honeypot/rugcheck)
+🛡️ Safety check (rugcheck)
 🤖 AI-powered analysis
 
 <b>Commands:</b>

@@ -8,52 +8,27 @@ import pytest
 from app.mcp_client import MCPClient, MCPManager, MCPTimeoutError
 
 
-def test_mcp_manager_with_honeypot():
-    """Test MCPManager initializes honeypot client when cmd is provided."""
+def test_mcp_manager_basic_init():
+    """Test MCPManager initializes with core clients."""
     manager = MCPManager(
         dexscreener_cmd="echo dexscreener",
         dexpaprika_cmd="echo dexpaprika",
-        honeypot_cmd="echo honeypot",
     )
     
-    assert manager.honeypot is not None
-    assert manager.honeypot.name == "honeypot"
+    assert manager.dexscreener is not None
+    assert manager.dexpaprika is not None
 
 
-def test_mcp_manager_without_honeypot():
-    """Test MCPManager skips honeypot client when cmd is empty."""
+def test_mcp_manager_get_client_returns_none_for_unknown():
+    """Test get_client returns None for unknown client names."""
     manager = MCPManager(
         dexscreener_cmd="echo dexscreener",
         dexpaprika_cmd="echo dexpaprika",
-        honeypot_cmd="",
     )
     
-    assert manager.honeypot is None
-
-
-def test_mcp_manager_get_client_with_honeypot():
-    """Test get_client returns honeypot when configured."""
-    manager = MCPManager(
-        dexscreener_cmd="echo dexscreener",
-        dexpaprika_cmd="echo dexpaprika",
-        honeypot_cmd="echo honeypot",
-    )
-    
-    client = manager.get_client("honeypot")
-    assert client is not None
-    assert client.name == "honeypot"
-
-
-def test_mcp_manager_get_client_without_honeypot():
-    """Test get_client returns None when honeypot is not configured."""
-    manager = MCPManager(
-        dexscreener_cmd="echo dexscreener",
-        dexpaprika_cmd="echo dexpaprika",
-        honeypot_cmd="",
-    )
-    
-    client = manager.get_client("honeypot")
-    assert client is None
+    assert manager.get_client("honeypot") is None
+    assert manager.get_client("blockscout") is None
+    assert manager.get_client("nonexistent") is None
 
 
 def test_format_tools_for_system_prompt_with_tools():
@@ -61,7 +36,6 @@ def test_format_tools_for_system_prompt_with_tools():
     manager = MCPManager(
         dexscreener_cmd="echo dexscreener",
         dexpaprika_cmd="echo dexpaprika",
-        honeypot_cmd="",
     )
     
     # Simulate tools being loaded
@@ -102,7 +76,6 @@ def test_format_tools_for_system_prompt_empty_tools():
     manager = MCPManager(
         dexscreener_cmd="echo dexscreener",
         dexpaprika_cmd="echo dexpaprika",
-        honeypot_cmd="",
     )
     
     # No tools loaded
@@ -119,7 +92,6 @@ def test_format_tools_for_system_prompt_description_truncation():
     manager = MCPManager(
         dexscreener_cmd="echo dexscreener",
         dexpaprika_cmd="echo dexpaprika",
-        honeypot_cmd="",
     )
     
     long_description = "This is a very long description that should be truncated at a word boundary to avoid cutting words in half"
@@ -157,54 +129,6 @@ def test_truncate_description_at_word_boundary():
     assert len(result) <= 33  # 30 + "..."
     # Should break at word boundary
     assert result in ["This is a test description...", "This is a test..."]
-
-
-def test_mcp_manager_with_blockscout():
-    """Test MCPManager initializes blockscout client when cmd is provided."""
-    manager = MCPManager(
-        dexscreener_cmd="echo dexscreener",
-        dexpaprika_cmd="echo dexpaprika",
-        blockscout_cmd="echo blockscout",
-    )
-
-    assert manager.blockscout is not None
-    assert manager.blockscout.name == "blockscout"
-
-
-def test_mcp_manager_without_blockscout():
-    """Test MCPManager skips blockscout client when cmd is empty."""
-    manager = MCPManager(
-        dexscreener_cmd="echo dexscreener",
-        dexpaprika_cmd="echo dexpaprika",
-        blockscout_cmd="",
-    )
-
-    assert manager.blockscout is None
-
-
-def test_mcp_manager_get_client_blockscout():
-    """Test get_client returns blockscout when configured."""
-    manager = MCPManager(
-        dexscreener_cmd="echo dexscreener",
-        dexpaprika_cmd="echo dexpaprika",
-        blockscout_cmd="echo blockscout",
-    )
-
-    client = manager.get_client("blockscout")
-    assert client is not None
-    assert client.name == "blockscout"
-
-
-def test_mcp_manager_get_client_without_blockscout():
-    """Test get_client returns None when blockscout is not configured."""
-    manager = MCPManager(
-        dexscreener_cmd="echo dexscreener",
-        dexpaprika_cmd="echo dexpaprika",
-        blockscout_cmd="",
-    )
-
-    client = manager.get_client("blockscout")
-    assert client is None
 
 
 def test_mcp_manager_with_trader():
@@ -518,10 +442,8 @@ def test_mcp_manager_call_timeout_applied_to_all_clients():
     manager = MCPManager(
         dexscreener_cmd="echo dexscreener",
         dexpaprika_cmd="echo dexpaprika",
-        honeypot_cmd="echo honeypot",
         rugcheck_cmd="echo rugcheck",
         solana_rpc_cmd="echo solana",
-        blockscout_cmd="echo blockscout",
         trader_cmd="echo trader",
         call_timeout=120.0,
     )
@@ -529,10 +451,8 @@ def test_mcp_manager_call_timeout_applied_to_all_clients():
     clients = [
         manager.dexscreener,
         manager.dexpaprika,
-        manager.honeypot,
         manager.rugcheck,
         manager.solana,
-        manager.blockscout,
         manager.trader,
     ]
     for client in clients:

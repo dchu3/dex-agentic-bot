@@ -81,8 +81,7 @@ export function requestLogger(req: Request, res: Response, next: NextFunction): 
 
 // --- Input Validation ---
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-const EVM_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
-const ALLOWED_CHAINS = new Set(["solana", "ethereum", "bsc", "base"]);
+const ALLOWED_CHAINS = new Set(["solana"]);
 
 export interface ValidationError {
   status: number;
@@ -106,7 +105,7 @@ export function validateAnalyzeArgs(
   }
 
   const trimmed = address.trim();
-  if (!SOLANA_ADDRESS_RE.test(trimmed) && !EVM_ADDRESS_RE.test(trimmed)) {
+  if (!SOLANA_ADDRESS_RE.test(trimmed)) {
     return { status: 400, error: "Invalid address format" };
   }
 
