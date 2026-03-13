@@ -206,12 +206,12 @@ function makeMcpServer(
       }
 
       try {
-        // Fetch SOL balance (returns lamports)
-        const lamports = await solanaRpc<number>("getBalance", [
+        // Fetch SOL balance (returns { value: lamports })
+        const solResponse = await solanaRpc<{ value: number }>("getBalance", [
           address.trim(),
           { commitment: "confirmed" },
         ]);
-        const solBalance = lamports / 1e9;
+        const solBalance = solResponse.value / 1e9;
 
         // Fetch USDC token accounts for this wallet
         let usdcBalance = 0;
