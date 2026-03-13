@@ -346,6 +346,42 @@ The `get_wallet_balance` tool lets clients verify they have sufficient USDC befo
 | `RATE_LIMIT_MCP_MAX` | ❌ | `20` | Max `/mcp` requests per minute |
 | `CORS_ALLOWED_ORIGINS` | ❌ | `*` | Comma-separated allowed origins |
 
+#### Connecting from an MCP Client
+
+The analysis server uses **StreamableHTTP** transport at `/mcp`. Any MCP-compatible client can connect to it by pointing at the server URL.
+
+**Gemini CLI** — add to `~/.gemini/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "dex-analysis": {
+      "url": "https://your-domain.com/mcp"
+    }
+  }
+}
+```
+
+**Claude Desktop / Cursor / other clients** that don't yet support remote HTTP servers natively — use the `mcp-remote` bridge:
+
+```json
+{
+  "mcpServers": {
+    "dex-analysis": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://your-domain.com/mcp"]
+    }
+  }
+}
+```
+
+For local development, replace the URL with `http://localhost:4022/mcp`.
+
+> **Caveats:**
+> - `analyze_token` is gated by [x402](https://x402.org) payment. The client must support the x402 payment flow (402 → pay USDC → retry with `PAYMENT-SIGNATURE` header). Most MCP clients **do not** handle this natively yet, so `analyze_token` calls will return a 402 error unless your client has x402 support.
+> - `get_wallet_balance` is free and works with any MCP client immediately.
+> - The server is stateless — no session initialization or persistent connection is required.
+
 ### Production Deployment
 
 For exposing the paid analysis server to external clients with TLS, rate limiting, and container hardening.
