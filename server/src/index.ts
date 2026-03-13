@@ -1,9 +1,11 @@
 /**
  * DEX Analysis MCP Server — payment gateway for the Gemini token analysis service.
  *
- * Exposes a single MCP tool `analyze_token` behind an x402 USDC paywall on Solana.
- * Each tool call requires a valid USDC payment; the analysis itself is delegated
- * to the Python FastAPI service (app/api_server.py) running alongside.
+ * Exposes two MCP tools:
+ *   - `analyze_token` — paid (x402 USDC paywall), full AI-powered token analysis
+ *   - `get_wallet_balance` — free, check SOL/USDC balance before paying
+ *
+ * The analysis itself is delegated to the Python FastAPI service (app/api_server.py).
  *
  * Usage (as MCP client, e.g. Claude Desktop or AI agent):
  *   transport: StreamableHTTP
@@ -35,6 +37,7 @@ import {
   requestLogger,
   validateAnalyzeArgs,
   globalErrorHandler,
+  SOLANA_ADDRESS_RE,
 } from "./middleware.js";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL ?? "http://localhost:8080";
@@ -49,6 +52,13 @@ const SETTLE_TIMEOUT_MS = parseTimeoutMs(
   process.env.SERVER_SETTLE_TIMEOUT_MS,
   10000,
   "SERVER_SETTLE_TIMEOUT_MS"
+);
+const SOLANA_RPC_URL =
+  process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com";
+const BALANCE_TIMEOUT_MS = parseTimeoutMs(
+  process.env.SERVER_BALANCE_TIMEOUT_MS,
+  10000,
+  "SERVER_BALANCE_TIMEOUT_MS"
 );
 
 function parseTimeoutMs(
@@ -66,8 +76,37 @@ function parseTimeoutMs(
   return parsed;
 }
 
+/** Make a JSON-RPC call to the Solana cluster. */
+async function solanaRpc<T>(
+  method: string,
+  params: unknown[],
+  timeoutMs: number = BALANCE_TIMEOUT_MS,
+): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(SOLANA_RPC_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      signal: controller.signal,
+    });
+    const body = (await res.json()) as { result?: T; error?: { message: string } };
+    if (body.error) {
+      throw new Error(`Solana RPC error: ${body.error.message}`);
+    }
+    return body.result as T;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /** Create a fresh McpServer for each stateless request. */
-function makeMcpServer(priceDescription: string): McpServer {
+function makeMcpServer(
+  priceDescription: string,
+  usdcMint: string,
+  analysisPriceMicrounits: string,
+): McpServer {
   const server = new McpServer({ name: "dex-analysis", version: "1.0.0" });
 
   server.tool(
@@ -142,6 +181,86 @@ function makeMcpServer(priceDescription: string): McpServer {
     }
   );
 
+  // --- Free tool: get_wallet_balance ---
+  const analysisPriceUsdc =
+    Number(analysisPriceMicrounits) / 1_000_000;
+
+  server.tool(
+    "get_wallet_balance",
+    "Check a Solana wallet's SOL and USDC balances. " +
+      "Free — no payment required. Useful for verifying funds before " +
+      "calling the paid analyze_token tool.",
+    {
+      address: z
+        .string()
+        .describe("Solana wallet address to check"),
+    },
+    async ({ address }) => {
+      if (!SOLANA_ADDRESS_RE.test(address.trim())) {
+        return {
+          content: [
+            { type: "text", text: "Invalid Solana wallet address format" },
+          ],
+          isError: true,
+        };
+      }
+
+      try {
+        // Fetch SOL balance (returns lamports)
+        const lamports = await solanaRpc<number>("getBalance", [
+          address.trim(),
+          { commitment: "confirmed" },
+        ]);
+        const solBalance = lamports / 1e9;
+
+        // Fetch USDC token accounts for this wallet
+        let usdcBalance = 0;
+        try {
+          const tokenAccounts = await solanaRpc<{
+            value: Array<{
+              account: {
+                data: { parsed: { info: { tokenAmount: { uiAmount: number } } } };
+              };
+            }>;
+          }>("getTokenAccountsByOwner", [
+            address.trim(),
+            { mint: usdcMint },
+            { encoding: "jsonParsed", commitment: "confirmed" },
+          ]);
+          for (const acc of tokenAccounts.value) {
+            usdcBalance +=
+              acc.account.data.parsed.info.tokenAmount.uiAmount ?? 0;
+          }
+        } catch {
+          // No USDC accounts — balance stays 0
+        }
+
+        const result = {
+          address: address.trim(),
+          sol_balance: solBalance,
+          usdc_balance: usdcBalance,
+          analysis_price_usdc: analysisPriceUsdc,
+          can_afford_analysis: usdcBalance >= analysisPriceUsdc,
+        };
+
+        return {
+          content: [{ type: "text", text: JSON.stringify(result) }],
+        };
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error && error.name === "AbortError"
+            ? "Balance check timed out. Please try again later."
+            : error instanceof Error
+              ? error.message
+              : "Failed to fetch wallet balance.";
+        return {
+          content: [{ type: "text", text: message }],
+          isError: true,
+        };
+      }
+    }
+  );
+
   return server;
 }
 
@@ -200,6 +319,8 @@ async function settlePayment(
 async function main(): Promise<void> {
   const paymentConfig = await buildPaymentConfig();
   const analyzePrice = paymentConfig.priceDescription;
+  const usdcMint = paymentConfig.accepts[0].asset;
+  const analysisPriceMicrounits = paymentConfig.accepts[0].amount;
   const app = express();
 
   // Trust proxy (for correct client IP behind Caddy/nginx)
@@ -300,7 +421,7 @@ async function main(): Promise<void> {
       }
 
       // Dispatch through a fresh stateless MCP server instance
-      const server = makeMcpServer(analyzePrice);
+      const server = makeMcpServer(analyzePrice, usdcMint, analysisPriceMicrounits);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined, // Stateless: no session state
       });

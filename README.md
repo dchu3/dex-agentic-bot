@@ -276,7 +276,14 @@ Payment is settled on-chain through a facilitator service. The default facilitat
 - **Payment header**: Clients send `PAYMENT-SIGNATURE` (v2) or `X-PAYMENT` (v1) — both are accepted
 - **402 response**: Includes `PAYMENT-REQUIRED` header (base64-encoded JSON) and matching JSON body
 
-**Tool:** `analyze_token(address, chain?)`
+**Tools:**
+
+| Tool | Description | Price |
+|------|-------------|-------|
+| `analyze_token(address, chain?)` | Full AI token safety & market analysis | `$SERVER_PRICE_ANALYZE` USDC |
+| `get_wallet_balance(address)` | Check SOL & USDC balance of a wallet | **Free** |
+
+The `get_wallet_balance` tool lets clients verify they have sufficient USDC before paying for analysis. It returns SOL balance, USDC balance, the current analysis price, and a `can_afford_analysis` boolean.
 
 **Example response:**
 
@@ -333,6 +340,7 @@ Payment is settled on-chain through a facilitator service. The default facilitat
 | `X402_FACILITATOR_URL` | ❌ | `https://facilitator.payai.network` | x402 payment facilitator (use `https://x402.org/facilitator` for devnet testing) |
 | `PYTHON_API_URL` | ❌ | `http://localhost:8080` | Internal analysis service URL |
 | `SERVER_PORT` | ❌ | `4022` | MCP server listen port |
+| `SOLANA_RPC_URL` | ❌ | `https://api.mainnet-beta.solana.com` | Solana RPC endpoint for `get_wallet_balance` |
 | `RATE_LIMIT_WINDOW_MS` | ❌ | `900000` | Global rate limit window (ms) |
 | `RATE_LIMIT_MAX` | ❌ | `100` | Max requests per window |
 | `RATE_LIMIT_MCP_MAX` | ❌ | `20` | Max `/mcp` requests per minute |

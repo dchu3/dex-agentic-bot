@@ -80,7 +80,7 @@ export function requestLogger(req: Request, res: Response, next: NextFunction): 
 }
 
 // --- Input Validation ---
-const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+export const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const ALLOWED_CHAINS = new Set(["solana"]);
 
 export interface ValidationError {
