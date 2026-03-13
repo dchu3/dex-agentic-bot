@@ -267,7 +267,7 @@ Address: DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263
 
 ### x402 Paid Analysis API
 
-The x402 MCP endpoint (`POST /mcp`) returns a structured JSON report designed for agent consumption. Each call requires a USDC payment via the [x402 v2 protocol](https://x402.org) — the default price is **$0.75 USDC** (configurable via `SERVER_PRICE_ANALYZE`).
+The x402 MCP endpoint (`POST /mcp`) returns a structured JSON report designed for agent consumption. Each call requires a USDC payment via the [x402 v2 protocol](https://x402.org) — the default price is **$0.15 USDC** (configurable via `SERVER_PRICE_ANALYZE`).
 
 Payment is settled on-chain through a facilitator service. The default facilitator is [PayAI](https://facilitator.payai.network) (Solana mainnet, no API keys required). For devnet testing, set `X402_FACILITATOR_URL=https://x402.org/facilitator` and `SERVER_SOLANA_NETWORK=solana-devnet`.
 
@@ -328,7 +328,7 @@ Payment is settled on-chain through a facilitator service. The default facilitat
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `SERVER_WALLET_ADDRESS` | ✅ | — | Solana wallet to receive USDC payments |
-| `SERVER_PRICE_ANALYZE` | ❌ | `0.75` | Price per analysis in USDC |
+| `SERVER_PRICE_ANALYZE` | ❌ | `0.15` | Price per analysis in USDC |
 | `SERVER_SOLANA_NETWORK` | ❌ | `solana` | `solana` (mainnet) or `solana-devnet` |
 | `X402_FACILITATOR_URL` | ❌ | `https://facilitator.payai.network` | x402 payment facilitator (use `https://x402.org/facilitator` for devnet testing) |
 | `PYTHON_API_URL` | ❌ | `http://localhost:8080` | Internal analysis service URL |

@@ -168,7 +168,7 @@ export async function buildPaymentConfig(): Promise<PaymentConfig> {
     throw new Error("SERVER_WALLET_ADDRESS must be set");
   }
 
-  const priceInput = process.env.SERVER_PRICE_ANALYZE ?? "0.75";
+  const priceInput = process.env.SERVER_PRICE_ANALYZE ?? "0.15";
   const amountMicrounits = toUsdcMicrounits(priceInput);
   const priceDisplay = formatUsdFromMicrounits(amountMicrounits);
   const amountRaw = amountMicrounits.toString();
