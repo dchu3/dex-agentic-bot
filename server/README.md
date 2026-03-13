@@ -1,12 +1,27 @@
 # DEX Analysis MCP Server
 
-A paid MCP server that exposes a single `analyze_token` tool backed by Gemini AI. Each call requires a USDC payment on Solana via the [x402 protocol](https://x402.org).
+A paid MCP server that exposes AI-powered token analysis behind a USDC paywall, plus a free wallet balance check. Each paid call requires a USDC payment on Solana via the [x402 protocol](https://x402.org).
 
-## Tool
+## Tools
 
 | Tool | Description | Price |
 |------|-------------|-------|
 | `analyze_token(address, chain?)` | Full AI token safety & market analysis | `$SERVER_PRICE_ANALYZE` USDC |
+| `get_wallet_balance(address)` | Check SOL & USDC balance of a Solana wallet | **Free** |
+
+### `get_wallet_balance`
+
+A free tool for clients to check their wallet's SOL and USDC balances before paying for analysis. Returns:
+
+```json
+{
+  "address": "YourWalletAddress",
+  "sol_balance": 1.5,
+  "usdc_balance": 10.25,
+  "analysis_price_usdc": 0.15,
+  "can_afford_analysis": true
+}
+```
 
 ## Payment flow
 
@@ -28,6 +43,7 @@ SERVER_SOLANA_NETWORK=solana                    # or solana-devnet for testing
 SERVER_PRICE_ANALYZE=0.50                       # USD amount charged per call
 SERVER_ANALYZE_TIMEOUT_MS=30000                 # Python API timeout
 SERVER_SETTLE_TIMEOUT_MS=10000                  # x402 facilitator timeout
+SOLANA_RPC_URL=https://api.mainnet-beta.solana.com  # for get_wallet_balance
 ```
 
 ### Run with Docker Compose
@@ -96,6 +112,11 @@ print(result.json())
 ### Manual HTTP (testing)
 
 ```bash
+# Free: check wallet balance before paying
+curl -X POST http://localhost:4022/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_wallet_balance","arguments":{"address":"YourWalletAddress"}},"id":1}'
+
 # Step 1: trigger 402 to see payment requirements
 curl -X POST http://localhost:4022/mcp \
   -H "Content-Type: application/json" \
